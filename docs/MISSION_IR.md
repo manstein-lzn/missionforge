@@ -515,26 +515,43 @@ artifacts instead of hidden runtime branches.
 
 ## Implementation Status
 
-The current Python dataclasses are intentionally behind this document. They
-validate the initial MissionIR skeleton plus the first contract/profile/freeze
-kernels. Remaining runtime objects should still be introduced in order:
+The current Python implementation now covers the contract kernel, deterministic
+profile expansion, verifier routing, controlled steering boundary, work-unit
+harness, SkillFoundry compiler adapter, host adapter shell, and Phase 10
+offline PI Agent runtime hardening path.
 
-Completed:
+Implemented:
 
 1. `CapabilityProfile` and `VerificationProfile`
 2. `ExpandedMission`
-3. `FrozenMissionContract`
-4. `VerificationSpec` and validator result records
-5. `EvidenceRef` and `EvidenceReliability`
-6. `SteeringProposal` and `StateCorrection`
+3. `FrozenMissionContract` and `ContractManifest`
+4. `VerificationSpec`, validator result records, verifier routing, and repair
+   inputs
+5. `EvidenceRef`, `EvidenceReliability`, and `EvidenceLedger`
+6. `SteeringProposal`, `ProposalValidationResult`, `StateCorrection`, and
+   `DecisionLedgerEntry`
+7. proposal boundary validation and deterministic work-unit compilation
+8. `WorkUnitContract`, `ExecutionReport`, `WorkerResult`, and worker adapter
+   result contracts
+9. deterministic SkillFoundry-to-MissionIR compiler adapter
+10. optional host CLI and read-only observation adapter boundaries
+11. `MissionRun`, `RuntimeAttempt`, `RuntimeSafePoint`, and
+    `ArtifactHygieneReport`
+12. default `MissionRuntime -> WorkUnitContract -> pi-agent-runtime ->
+    ExecutionReport -> Verifier` offline runtime path
 
 Remaining:
 
-1. `EvidenceLedger`
-2. verifier execution and repair records
-3. proposal boundary validation
-4. harness execution reports from real attempts
-5. `MissionRun` and adaptive decision records
+1. richer profile fragment generation beyond the deterministic kernel
+2. live LLM `ProposalProvider` and `ReviewerProvider` integration under the
+   controlled steering authority model
+3. Phase 11 operator/product UX for status, diagnosis, resume, review, and
+   validation workflows
+4. broader process resume beyond completed-turn safe points
+5. optional durable state backend beyond JSON files if operational scale
+   requires it
+6. public schema/versioning policy for external hosts once the runtime surface
+   stabilizes
 
 Code should not be expanded until the corresponding module documents are
 updated.

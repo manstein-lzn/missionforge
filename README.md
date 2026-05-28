@@ -106,6 +106,15 @@ docs/
 
 ## Development
 
+Use the Node version declared in `.nvmrc` for `workers/pi-agent-runtime`.
+
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
+./scripts/validate.sh
+```
+
+For a faster local rerun after `workers/pi-agent-runtime/node_modules` is
+already installed:
+
+```bash
+MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 ```
