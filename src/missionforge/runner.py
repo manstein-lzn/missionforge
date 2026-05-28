@@ -52,11 +52,30 @@ class MissionResult:
 class MissionRuntime:
     """Top-level runtime facade."""
 
-    def __init__(self, *, workspace: str | Path = ".", max_attempts: int = 1) -> None:
+    def __init__(self, *, workspace: str | Path = ".", max_attempts: int = 1, pi_agent_config: Any | None = None) -> None:
         self.workspace = workspace
         self.max_attempts = max_attempts
+        self.pi_agent_config = pi_agent_config
 
     def run(self, mission: MissionIR) -> MissionResult:
+        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
+
+        worker = PiAgentRuntimeAdapter(self.pi_agent_config)
         from .runtime import RuntimeEngine
 
-        return RuntimeEngine(workspace=self.workspace, max_attempts=self.max_attempts).run(mission)
+        return RuntimeEngine(workspace=self.workspace, max_attempts=self.max_attempts, worker=worker).run(mission)
+
+    def inspect(self, mission_run_id: str | None = None) -> dict[str, Any]:
+        from .state import inspect_runtime
+
+        return inspect_runtime(self.workspace, mission_run_id)
+
+    def resume(self, mission: MissionIR, *, follow_up_prompt: str = "Resume from the latest completed turn.") -> MissionResult:
+        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
+        from .runtime import RuntimeEngine
+
+        worker = PiAgentRuntimeAdapter(self.pi_agent_config)
+        return RuntimeEngine(workspace=self.workspace, max_attempts=self.max_attempts, worker=worker).resume(
+            mission,
+            follow_up_prompt=follow_up_prompt,
+        )

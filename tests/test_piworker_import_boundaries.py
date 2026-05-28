@@ -7,7 +7,9 @@ import unittest
 
 CORE_ROOT = Path("src/missionforge")
 ADAPTER_ROOT = CORE_ROOT / "adapters"
-PIWORKER_MODULE = "missionforge.adapters.piworker"
+PIWORKER_MODULES = {
+    "missionforge.adapters.piworker",
+}
 PIWORKER_SYMBOLS = {
     "ContractAdjustmentEvidence",
     "FauxPiWorkerAdapter",
@@ -25,8 +27,10 @@ FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "requests",
     "skillfoundry",
     "socket",
-    "subprocess",
     "urllib",
+}
+ALLOWED_SUBPROCESS_IMPORTERS = {
+    ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 
 
@@ -40,12 +44,12 @@ class PiWorkerImportBoundaryTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
-                        if alias.name == PIWORKER_MODULE or alias.name.startswith(f"{PIWORKER_MODULE}."):
+                        if any(alias.name == module or alias.name.startswith(f"{module}.") for module in PIWORKER_MODULES):
                             violations.append(f"{path}: import {alias.name}")
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     alias_names = {alias.name for alias in node.names}
-                    if module == PIWORKER_MODULE or module.startswith(f"{PIWORKER_MODULE}."):
+                    if any(module == piworker_module or module.startswith(f"{piworker_module}.") for piworker_module in PIWORKER_MODULES):
                         violations.append(f"{path}: from {module} import ...")
                     if module == "missionforge.adapters" and ("piworker" in alias_names or alias_names & PIWORKER_SYMBOLS):
                         violations.append(f"{path}: from {module} import {sorted(alias_names)}")
@@ -74,10 +78,14 @@ class PiWorkerImportBoundaryTests(unittest.TestCase):
                         root = alias.name.split(".", 1)[0]
                         if root in FORBIDDEN_LIVE_IMPORT_ROOTS:
                             violations.append(f"{path}: import {alias.name}")
+                        if root == "subprocess" and path not in ALLOWED_SUBPROCESS_IMPORTERS:
+                            violations.append(f"{path}: import {alias.name}")
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     root = module.split(".", 1)[0]
                     if node.level == 0 and root in FORBIDDEN_LIVE_IMPORT_ROOTS:
+                        violations.append(f"{path}: from {module} import ...")
+                    if node.level == 0 and root == "subprocess" and path not in ALLOWED_SUBPROCESS_IMPORTERS:
                         violations.append(f"{path}: from {module} import ...")
 
         forbidden_modules = [

@@ -1,0 +1,27 @@
+{
+  "name": "@missionforge/pi-agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MissionForge dedicated PI Agent runtime worker.",
+  "bin": {
+    "missionforge-pi-agent-runtime": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.76.0",
+    "@earendil-works/pi-ai": "0.76.0",
+    "@earendil-works/pi-coding-agent": "0.76.0",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.4",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

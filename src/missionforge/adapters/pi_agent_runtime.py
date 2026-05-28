@@ -1,0 +1,968 @@
+"""Dedicated PI Agent runtime worker adapter."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import time
+from typing import Any, Mapping, Protocol, Sequence
+
+from ..adapters.contracts import AdapterResult
+from ..contracts import (
+    ContractValidationError,
+    EvidenceTrustLevel,
+    ensure_json_value,
+    require_int_at_least,
+    require_mapping,
+    require_non_empty_str,
+    require_str_list,
+    validate_ref,
+)
+from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
+from ..work_unit import ExecutionReport, WorkUnitContract, WorkerResult
+from ..workers import WorkerAdapterResult
+from .pi_agent_provider_config import resolve_pi_agent_provider_environment
+
+
+PI_AGENT_INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1"
+PI_AGENT_OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1"
+DEFAULT_PI_AGENT_TIMEOUT_SECONDS = 300
+MAX_CAPTURED_STREAM_CHARS = 4000
+
+PI_AGENT_PROVIDER_MODES = {"faux", "live"}
+PI_AGENT_PROVIDER_CONFIG_SOURCES = {"env", "codex_current", "explicit"}
+PI_AGENT_STATUSES = {"completed", "failed", "blocked", "cancelled"}
+PI_AGENT_VERIFICATION_STATUSES = {"passed", "failed", "not_run", "review_required"}
+PI_AGENT_REPAIR_MODES = {"none", "follow_up"}
+PI_AGENT_RESUME_MODES = {"none", "follow_up"}
+
+
+@dataclass(frozen=True)
+class PiAgentRuntimeConfig:
+    """Configuration for the single production PI Agent runtime."""
+
+    command: tuple[str, ...] = ()
+    timeout_seconds: int = DEFAULT_PI_AGENT_TIMEOUT_SECONDS
+    provider_mode: str = "faux"
+    provider_config_source: str = "env"
+    runtime_name: str = "missionforge.pi_agent_runtime"
+    model: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    repair_mode: str = "none"
+    verifier_failures: tuple[str, ...] = ()
+    failed_constraints: tuple[str, ...] = ()
+    previous_output_ref: str | None = None
+    repair_prompt: str | None = None
+    resume_mode: str = "none"
+    resume_boundary: str | None = None
+    resume_savepoint_ref: str | None = None
+    resume_session_ref: str | None = None
+    resume_events_ref: str | None = None
+    resume_prompt: str | None = None
+
+    def __post_init__(self) -> None:
+        command = self.command or default_pi_agent_runtime_command()
+        object.__setattr__(self, "command", tuple(command))
+        if not self.command:
+            raise ContractValidationError("pi_agent_config.command must not be empty")
+        for part in self.command:
+            if not isinstance(part, str) or not part or "\x00" in part:
+                raise ContractValidationError("pi_agent_config.command must contain non-empty strings without NUL bytes")
+        require_int_at_least(self.timeout_seconds, "pi_agent_config.timeout_seconds", 1)
+        if self.provider_mode not in PI_AGENT_PROVIDER_MODES:
+            raise ContractValidationError(f"pi_agent_config.provider_mode must be one of {sorted(PI_AGENT_PROVIDER_MODES)}")
+        if self.provider_config_source not in PI_AGENT_PROVIDER_CONFIG_SOURCES:
+            raise ContractValidationError(
+                f"pi_agent_config.provider_config_source must be one of {sorted(PI_AGENT_PROVIDER_CONFIG_SOURCES)}"
+            )
+        require_non_empty_str(self.runtime_name, "pi_agent_config.runtime_name")
+        if self.model is not None:
+            require_non_empty_str(self.model, "pi_agent_config.model")
+        metadata = ensure_json_value(require_mapping(self.metadata, "pi_agent_config.metadata"), "pi_agent_config.metadata")
+        _reject_sensitive_runtime_metadata(metadata)
+        if self.repair_mode not in PI_AGENT_REPAIR_MODES:
+            raise ContractValidationError(f"pi_agent_config.repair_mode must be one of {sorted(PI_AGENT_REPAIR_MODES)}")
+        object.__setattr__(
+            self,
+            "verifier_failures",
+            tuple(require_str_list(list(self.verifier_failures), "pi_agent_config.verifier_failures")),
+        )
+        object.__setattr__(
+            self,
+            "failed_constraints",
+            tuple(require_str_list(list(self.failed_constraints), "pi_agent_config.failed_constraints")),
+        )
+        if self.previous_output_ref is not None:
+            validate_ref(self.previous_output_ref, "pi_agent_config.previous_output_ref")
+        if self.repair_prompt is not None:
+            require_non_empty_str(self.repair_prompt, "pi_agent_config.repair_prompt")
+        if self.repair_mode == "follow_up":
+            if not self.verifier_failures and not self.failed_constraints:
+                raise ContractValidationError("pi_agent_config follow_up repair requires verifier failures or failed constraints")
+            if not self.previous_output_ref:
+                raise ContractValidationError("pi_agent_config follow_up repair requires previous_output_ref")
+            if not self.repair_prompt:
+                raise ContractValidationError("pi_agent_config follow_up repair requires repair_prompt")
+        if self.resume_mode not in PI_AGENT_RESUME_MODES:
+            raise ContractValidationError(f"pi_agent_config.resume_mode must be one of {sorted(PI_AGENT_RESUME_MODES)}")
+        for field_name in ("resume_savepoint_ref", "resume_session_ref", "resume_events_ref"):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_ref(value, f"pi_agent_config.{field_name}")
+        if self.resume_mode == "follow_up":
+            if self.resume_boundary != "after_completed_turn":
+                raise ContractValidationError("pi_agent_config resume follow_up requires after_completed_turn boundary")
+            if not self.resume_savepoint_ref or not self.resume_session_ref or not self.resume_events_ref:
+                raise ContractValidationError("pi_agent_config resume follow_up requires savepoint/session/events refs")
+            if not self.resume_prompt:
+                raise ContractValidationError("pi_agent_config resume follow_up requires resume_prompt")
+
+
+@dataclass(frozen=True)
+class PiAgentCommandResult:
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+
+
+class PiAgentCommandRunner(Protocol):
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        input_path: Path,
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str],
+    ) -> PiAgentCommandResult:
+        """Run the PI Agent runtime process."""
+
+
+class SubprocessPiAgentCommandRunner:
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        input_path: Path,
+        cwd: Path,
+        timeout_seconds: int,
+        env: Mapping[str, str],
+    ) -> PiAgentCommandResult:
+        child_env = dict(os.environ)
+        child_env.update(dict(env))
+        build_failure = _prepare_default_runtime_command(command, timeout_seconds=timeout_seconds, env=child_env)
+        if build_failure is not None:
+            return build_failure
+        try:
+            completed = subprocess.run(
+                [*command, str(input_path)],
+                cwd=cwd,
+                timeout=timeout_seconds,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=child_env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return PiAgentCommandResult(
+                returncode=-1,
+                stdout=_process_output_text(exc.stdout),
+                stderr=_process_output_text(exc.stderr),
+                timed_out=True,
+            )
+        return PiAgentCommandResult(
+            returncode=completed.returncode,
+            stdout=_process_output_text(completed.stdout),
+            stderr=_process_output_text(completed.stderr),
+        )
+
+
+@dataclass(frozen=True)
+class PiAgentRunResult:
+    work_unit_id: str
+    status: str
+    produced_artifacts: list[str] = field(default_factory=list)
+    changed_refs: list[str] = field(default_factory=list)
+    commands_run: list[str] = field(default_factory=list)
+    tests_run: list[str] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)
+    worker_claims: list[str] = field(default_factory=list)
+    verifier_evidence: list[str] = field(default_factory=list)
+    new_unknowns: list[str] = field(default_factory=list)
+    recommended_next_steps: list[str] = field(default_factory=list)
+    verification_status: str = "not_run"
+    input_ref: str = ""
+    output_ref: str = ""
+    session_ref: str = ""
+    events_ref: str = ""
+    metrics_ref: str = ""
+    savepoints_ref: str = ""
+    duration_ms: int = 0
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        default_work_unit_id: str,
+        default_input_ref: str,
+        default_duration_ms: int,
+    ) -> "PiAgentRunResult":
+        data = require_mapping(payload, "pi_agent_run_result")
+        if data.get("schema_version") != PI_AGENT_OUTPUT_SCHEMA_VERSION:
+            raise ContractValidationError("pi_agent_run_result.schema_version is unsupported")
+        result = cls(
+            work_unit_id=require_non_empty_str(
+                data.get("work_unit_id") or default_work_unit_id,
+                "pi_agent_run_result.work_unit_id",
+            ),
+            status=require_non_empty_str(data.get("status", "failed"), "pi_agent_run_result.status"),
+            produced_artifacts=require_str_list(data.get("produced_artifacts", []), "pi_agent_run_result.produced_artifacts"),
+            changed_refs=require_str_list(data.get("changed_refs", []), "pi_agent_run_result.changed_refs"),
+            commands_run=require_str_list(data.get("commands_run", []), "pi_agent_run_result.commands_run"),
+            tests_run=require_str_list(data.get("tests_run", []), "pi_agent_run_result.tests_run"),
+            failures=require_str_list(data.get("failures", []), "pi_agent_run_result.failures"),
+            worker_claims=require_str_list(data.get("worker_claims", []), "pi_agent_run_result.worker_claims"),
+            verifier_evidence=require_str_list(data.get("verifier_evidence", []), "pi_agent_run_result.verifier_evidence"),
+            new_unknowns=require_str_list(data.get("new_unknowns", []), "pi_agent_run_result.new_unknowns"),
+            recommended_next_steps=require_str_list(
+                data.get("recommended_next_steps", []),
+                "pi_agent_run_result.recommended_next_steps",
+            ),
+            verification_status=require_non_empty_str(
+                data.get("verification_status", "not_run"),
+                "pi_agent_run_result.verification_status",
+            ),
+            input_ref=validate_ref(data.get("input_ref") or default_input_ref, "pi_agent_run_result.input_ref"),
+            output_ref=validate_ref(data.get("output_ref"), "pi_agent_run_result.output_ref"),
+            session_ref=validate_ref(data.get("session_ref"), "pi_agent_run_result.session_ref"),
+            events_ref=validate_ref(data.get("events_ref"), "pi_agent_run_result.events_ref"),
+            metrics_ref=validate_ref(data.get("metrics_ref"), "pi_agent_run_result.metrics_ref"),
+            savepoints_ref=validate_ref(data.get("savepoints_ref"), "pi_agent_run_result.savepoints_ref"),
+            duration_ms=require_int_at_least(
+                data.get("duration_ms", default_duration_ms),
+                "pi_agent_run_result.duration_ms",
+                0,
+            ),
+            metrics=ensure_json_value(require_mapping(data.get("metrics", {}), "pi_agent_run_result.metrics"), "pi_agent_run_result.metrics"),
+        )
+        result.validate()
+        return result
+
+    def validate(self) -> None:
+        require_non_empty_str(self.work_unit_id, "pi_agent_run_result.work_unit_id")
+        if self.status not in PI_AGENT_STATUSES:
+            raise ContractValidationError(f"pi_agent_run_result.status must be one of {sorted(PI_AGENT_STATUSES)}")
+        if self.verification_status not in PI_AGENT_VERIFICATION_STATUSES:
+            raise ContractValidationError(
+                f"pi_agent_run_result.verification_status must be one of {sorted(PI_AGENT_VERIFICATION_STATUSES)}"
+            )
+        for field_name in ("produced_artifacts", "changed_refs", "verifier_evidence", "new_unknowns"):
+            for ref in getattr(self, field_name):
+                validate_ref(ref, f"pi_agent_run_result.{field_name}[]")
+        for field_name in ("input_ref", "output_ref", "session_ref", "events_ref", "metrics_ref", "savepoints_ref"):
+            validate_ref(getattr(self, field_name), f"pi_agent_run_result.{field_name}")
+        for field_name in ("commands_run", "tests_run", "failures", "worker_claims", "recommended_next_steps"):
+            require_str_list(getattr(self, field_name), f"pi_agent_run_result.{field_name}")
+        require_int_at_least(self.duration_ms, "pi_agent_run_result.duration_ms", 0)
+        ensure_json_value(require_mapping(self.metrics, "pi_agent_run_result.metrics"), "pi_agent_run_result.metrics")
+
+
+class PiAgentRuntimeAdapter:
+    """Invoke the dedicated PI Agent runtime and normalize refs-only evidence."""
+
+    adapter_id = "pi_agent_runtime"
+
+    def __init__(
+        self,
+        config: PiAgentRuntimeConfig | None = None,
+        *,
+        runner: PiAgentCommandRunner | None = None,
+        environ: Mapping[str, str] | None = None,
+        codex_home: str | Path | None = None,
+    ) -> None:
+        self.config = config or PiAgentRuntimeConfig()
+        self.runner = runner or SubprocessPiAgentCommandRunner()
+        self.environ = dict(environ) if environ is not None else None
+        self.codex_home = codex_home
+
+    def with_repair(
+        self,
+        *,
+        verifier_failures: Sequence[str],
+        failed_constraints: Sequence[str],
+        previous_output_ref: str,
+        repair_prompt: str,
+    ) -> "PiAgentRuntimeAdapter":
+        """Clone this adapter for a verifier-driven repair follow-up."""
+
+        repair_config = PiAgentRuntimeConfig(
+            command=self.config.command,
+            timeout_seconds=self.config.timeout_seconds,
+            provider_mode=self.config.provider_mode,
+            provider_config_source=self.config.provider_config_source,
+            runtime_name=self.config.runtime_name,
+            model=self.config.model,
+            metadata=self.config.metadata,
+            repair_mode="follow_up",
+            verifier_failures=tuple(verifier_failures),
+            failed_constraints=tuple(failed_constraints),
+            previous_output_ref=previous_output_ref,
+            repair_prompt=repair_prompt,
+        )
+        return PiAgentRuntimeAdapter(
+            repair_config,
+            runner=self.runner,
+            environ=self.environ,
+            codex_home=self.codex_home,
+        )
+
+    def with_resume(
+        self,
+        *,
+        savepoint_ref: str,
+        session_ref: str,
+        events_ref: str,
+        follow_up_prompt: str,
+    ) -> "PiAgentRuntimeAdapter":
+        """Clone this adapter for a completed-turn resume follow-up."""
+
+        resume_config = PiAgentRuntimeConfig(
+            command=self.config.command,
+            timeout_seconds=self.config.timeout_seconds,
+            provider_mode=self.config.provider_mode,
+            provider_config_source=self.config.provider_config_source,
+            runtime_name=self.config.runtime_name,
+            model=self.config.model,
+            metadata=self.config.metadata,
+            repair_mode=self.config.repair_mode,
+            verifier_failures=self.config.verifier_failures,
+            failed_constraints=self.config.failed_constraints,
+            previous_output_ref=self.config.previous_output_ref,
+            repair_prompt=self.config.repair_prompt,
+            resume_mode="follow_up",
+            resume_boundary="after_completed_turn",
+            resume_savepoint_ref=savepoint_ref,
+            resume_session_ref=session_ref,
+            resume_events_ref=events_ref,
+            resume_prompt=follow_up_prompt,
+        )
+        return PiAgentRuntimeAdapter(
+            resume_config,
+            runner=self.runner,
+            environ=self.environ,
+            codex_home=self.codex_home,
+        )
+
+    def run(
+        self,
+        work_unit: WorkUnitContract,
+        *,
+        workspace: str | Path = ".",
+        evidence_store: EvidenceLedger | None = None,
+    ) -> WorkerAdapterResult:
+        if not isinstance(work_unit, WorkUnitContract):
+            raise ContractValidationError("PiAgentRuntimeAdapter consumes committed WorkUnitContract objects only")
+        work_unit.validate()
+        if not work_unit.expected_outputs:
+            raise ContractValidationError("PiAgentRuntimeAdapter requires at least one expected output")
+        _reject_outputs_outside_scope(work_unit)
+
+        store = evidence_store or InMemoryEvidenceStore()
+        root = Path(workspace).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        refs = _pi_agent_refs(work_unit.work_unit_id)
+        _resolve_workspace_ref(root, refs["attempt_dir"]).mkdir(parents=True, exist_ok=True)
+        provider_env = resolve_pi_agent_provider_environment(
+            provider_mode=self.config.provider_mode,
+            provider_config_source=self.config.provider_config_source,
+            model=self.config.model,
+            metadata=self.config.metadata,
+            environ=self.environ,
+            codex_home=self.codex_home,
+        )
+
+        input_payload = self._build_input_payload(work_unit, refs)
+        input_path = _resolve_workspace_ref(root, refs["input"])
+        _write_json(input_path, input_payload)
+        event_refs = [
+            _record_adapter_event(
+                store,
+                event_type="invocation_started",
+                work_unit_id=work_unit.work_unit_id,
+                payload={
+                    "input_ref": refs["input"],
+                    "provider_mode": self.config.provider_mode,
+                    "provider_config_source": provider_env.source,
+                    "provider_env": _non_secret_env(provider_env.env),
+                    "provider_secret_present": _has_secret_env(provider_env.env),
+                },
+                source_refs=[refs["input"]],
+            )
+        ]
+
+        started = time.monotonic()
+        command_result = self.runner.run(
+            self.config.command,
+            input_path=input_path,
+            cwd=root,
+            timeout_seconds=self.config.timeout_seconds,
+            env=provider_env.env,
+        )
+        duration_ms = _duration_ms(started)
+
+        run_result = self._load_or_failure_result(
+            root=root,
+            work_unit=work_unit,
+            refs=refs,
+            duration_ms=duration_ms,
+            command_result=command_result,
+            env=provider_env.env,
+        )
+        run_result = self._enforce_output_contract(root=root, work_unit=work_unit, refs=refs, result=run_result)
+
+        event_refs.append(
+            _record_adapter_event(
+                store,
+                event_type="invocation_completed" if run_result.status == "completed" else "invocation_failed",
+                work_unit_id=work_unit.work_unit_id,
+                payload={
+                    "status": run_result.status,
+                    "returncode": command_result.returncode,
+                    "timed_out": command_result.timed_out,
+                    "stdout": _redacted_stream(command_result.stdout, provider_env.env),
+                    "stderr": _redacted_stream(command_result.stderr, provider_env.env),
+                    "output_ref": run_result.output_ref,
+                    "session_ref": run_result.session_ref,
+                    "events_ref": run_result.events_ref,
+                    "metrics_ref": run_result.metrics_ref,
+                    "savepoints_ref": run_result.savepoints_ref,
+                },
+                source_refs=[refs["input"], run_result.output_ref],
+                trust_level=EvidenceTrustLevel.COMMAND_RESULT,
+            )
+        )
+        event_refs.append(
+            _record_adapter_event(
+                store,
+                event_type="metrics_recorded",
+                work_unit_id=work_unit.work_unit_id,
+                payload={
+                    "metrics_ref": run_result.metrics_ref,
+                    "savepoints_ref": run_result.savepoints_ref,
+                    "duration_ms": run_result.duration_ms,
+                    "produced_artifact_count": len(run_result.produced_artifacts),
+                    "provider_mode": self.config.provider_mode,
+                },
+                source_refs=[run_result.metrics_ref],
+            )
+        )
+
+        report_ref = refs["report"]
+        report_status = "completed" if run_result.status == "completed" else "failed"
+        report = ExecutionReport(
+            report_id=f"R-{work_unit.work_unit_id}",
+            work_unit_id=work_unit.work_unit_id,
+            status=report_status,
+            produced_artifacts=list(run_result.produced_artifacts),
+            changed_refs=_dedupe_refs([
+                *run_result.changed_refs,
+                refs["output"],
+                refs["session"],
+                refs["events"],
+                refs["metrics"],
+                refs["savepoints"],
+            ]),
+            evidence_refs=_dedupe_refs(event_refs),
+            worker_claims=list(run_result.worker_claims),
+            metrics={
+                "adapter_id": self.adapter_id,
+                "adapter_result_status": report_status,
+                "duration_ms": run_result.duration_ms,
+                "returncode": command_result.returncode,
+                "timed_out": command_result.timed_out,
+                "provider_mode": self.config.provider_mode,
+                "provider_config_source": provider_env.source,
+                "model": self.config.model,
+                "tool_call_count": _non_negative_metric(run_result.metrics, "tool_call_count", "tool_calls"),
+                "token_count": _non_negative_metric(run_result.metrics, "total_tokens", "token_count"),
+                "input_ref": refs["input"],
+                "output_ref": run_result.output_ref,
+                "savepoints_ref": run_result.savepoints_ref,
+            },
+        )
+        _write_json(_resolve_workspace_ref(root, report_ref), report.to_dict())
+
+        adapter_result = AdapterResult(
+            invocation_id=f"invoke-{work_unit.work_unit_id}",
+            adapter_id=self.adapter_id,
+            status=report_status,
+            output_refs=_dedupe_refs([report_ref, refs["input"], run_result.output_ref, run_result.savepoints_ref, *run_result.produced_artifacts]),
+            evidence_refs=list(report.evidence_refs),
+            metrics={
+                "duration_ms": run_result.duration_ms,
+                "returncode": command_result.returncode,
+                "timed_out": command_result.timed_out,
+                "provider_mode": self.config.provider_mode,
+            },
+        )
+        adapter_result.validate()
+
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(status=report_status, execution_report_ref=report_ref),
+            event_evidence_refs=list(event_refs),
+            metrics=dict(adapter_result.metrics),
+        )
+
+    def _build_input_payload(self, work_unit: WorkUnitContract, refs: Mapping[str, str]) -> dict[str, Any]:
+        payload = {
+            "schema_version": PI_AGENT_INPUT_SCHEMA_VERSION,
+            "work_unit_id": work_unit.work_unit_id,
+            "mission_id": work_unit.mission_id,
+            "iteration": work_unit.iteration,
+            "workspace_root": ".",
+            "attempt_dir_ref": refs["attempt_dir"],
+            "input_ref": refs["input"],
+            "output_ref": refs["output"],
+            "session_ref": refs["session"],
+            "events_ref": refs["events"],
+            "metrics_ref": refs["metrics"],
+            "savepoints_ref": refs["savepoints"],
+            "contract": work_unit.to_dict(),
+            "runtime": {
+                "runtime_name": self.config.runtime_name,
+                "timeout_seconds": self.config.timeout_seconds,
+                "model": self.config.model,
+                "metadata": ensure_json_value(dict(self.config.metadata), "pi_agent_config.metadata"),
+            },
+            "repair": {
+                "mode": self.config.repair_mode,
+                "verifier_failures": list(self.config.verifier_failures),
+                "failed_constraints": list(self.config.failed_constraints),
+                "previous_output_ref": self.config.previous_output_ref,
+                "repair_prompt": self.config.repair_prompt,
+            },
+            "resume": {
+                "mode": self.config.resume_mode,
+                "boundary": self.config.resume_boundary,
+                "savepoint_ref": self.config.resume_savepoint_ref,
+                "session_ref": self.config.resume_session_ref,
+                "events_ref": self.config.resume_events_ref,
+                "resume_prompt": self.config.resume_prompt,
+            },
+        }
+        return ensure_json_value(payload, "pi_agent_runtime_input")
+
+    def _load_or_failure_result(
+        self,
+        *,
+        root: Path,
+        work_unit: WorkUnitContract,
+        refs: Mapping[str, str],
+        duration_ms: int,
+        command_result: PiAgentCommandResult,
+        env: Mapping[str, str],
+    ) -> PiAgentRunResult:
+        failure = _command_failure(command_result, self.config.timeout_seconds)
+        output_path = _resolve_workspace_ref(root, refs["output"])
+        if failure is not None:
+            return _write_failure_result(output_path, work_unit=work_unit, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=failure)
+        if not output_path.is_file():
+            return _write_failure_result(output_path, work_unit=work_unit, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is missing: {refs['output']}")
+        try:
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, Mapping):
+                raise ContractValidationError("pi-agent-runtime output artifact must be a JSON object")
+            return PiAgentRunResult.from_dict(
+                payload,
+                default_work_unit_id=work_unit.work_unit_id,
+                default_input_ref=refs["input"],
+                default_duration_ms=duration_ms,
+            )
+        except Exception as exc:
+            return _write_failure_result(output_path, work_unit=work_unit, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is invalid: {exc}")
+
+    def _enforce_output_contract(
+        self,
+        *,
+        root: Path,
+        work_unit: WorkUnitContract,
+        refs: Mapping[str, str],
+        result: PiAgentRunResult,
+    ) -> PiAgentRunResult:
+        if result.work_unit_id != work_unit.work_unit_id:
+            return _rewrite_contract_failure(root, work_unit=work_unit, refs=refs, result=result, failure=f"pi-agent-runtime output work_unit_id mismatch: {result.work_unit_id}")
+        for ref in result.produced_artifacts:
+            if not any(_is_within(ref, scope) for scope in work_unit.allowed_scope):
+                return _rewrite_contract_failure(root, work_unit=work_unit, refs=refs, result=result, failure=f"pi-agent-runtime produced artifact outside allowed scope: {ref}")
+        missing_outputs = [ref for ref in work_unit.expected_outputs if ref not in result.produced_artifacts]
+        missing_files = [ref for ref in result.produced_artifacts if not _resolve_workspace_ref(root, ref).is_file()]
+        if result.status == "completed" and (missing_outputs or missing_files):
+            failures = [f"expected output was not produced: {ref}" for ref in missing_outputs]
+            failures.extend(f"produced artifact is missing on disk: {ref}" for ref in missing_files)
+            return _rewrite_contract_failure(root, work_unit=work_unit, refs=refs, result=result, failure="; ".join(failures))
+        if result.status in {"completed", "cancelled"} and not _resolve_workspace_ref(root, result.savepoints_ref).is_file():
+            return _rewrite_contract_failure(
+                root,
+                work_unit=work_unit,
+                refs=refs,
+                result=result,
+                failure=f"pi-agent-runtime savepoint artifact is missing: {result.savepoints_ref}",
+            )
+        return result
+
+
+def default_pi_agent_runtime_command() -> tuple[str, ...]:
+    runtime_main = Path(__file__).resolve().parents[3] / "workers" / "pi-agent-runtime" / "dist" / "main.js"
+    return ("node", str(runtime_main))
+
+
+def _prepare_default_runtime_command(
+    command: Sequence[str],
+    *,
+    timeout_seconds: int,
+    env: Mapping[str, str],
+) -> PiAgentCommandResult | None:
+    if len(command) < 2 or command[0] != "node":
+        return None
+    main_path = Path(command[1])
+    if main_path.name != "main.js" or main_path.parent.name != "dist":
+        return None
+    if main_path.is_file():
+        return None
+    package_dir = main_path.parent.parent
+    if not (package_dir / "package.json").is_file():
+        return None
+    install = _run_setup_command(("npm", "install"), cwd=package_dir, timeout_seconds=timeout_seconds, env=env)
+    if install.returncode != 0 or install.timed_out:
+        return install
+    build = _run_setup_command(("npm", "run", "build"), cwd=package_dir, timeout_seconds=timeout_seconds, env=env)
+    if build.returncode != 0 or build.timed_out:
+        return build
+    return None
+
+
+def _run_setup_command(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    env: Mapping[str, str],
+) -> PiAgentCommandResult:
+    try:
+        completed = subprocess.run(
+            list(command),
+            cwd=cwd,
+            timeout=timeout_seconds,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=dict(env),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return PiAgentCommandResult(
+            returncode=-1,
+            stdout=_process_output_text(exc.stdout),
+            stderr=_process_output_text(exc.stderr),
+            timed_out=True,
+        )
+    except OSError as exc:
+        return PiAgentCommandResult(returncode=-1, stderr=str(exc))
+    return PiAgentCommandResult(
+        returncode=completed.returncode,
+        stdout=_process_output_text(completed.stdout),
+        stderr=_process_output_text(completed.stderr),
+    )
+
+
+def _write_failure_result(
+    output_path: Path,
+    *,
+    work_unit: WorkUnitContract,
+    refs: Mapping[str, str],
+    duration_ms: int,
+    command_result: PiAgentCommandResult,
+    env: Mapping[str, str],
+    failure: str,
+) -> PiAgentRunResult:
+    payload = _failure_payload(
+        work_unit=work_unit,
+        refs=refs,
+        duration_ms=duration_ms,
+        command_result=command_result,
+        env=env,
+        failures=[failure],
+    )
+    _write_json(output_path, payload)
+    return PiAgentRunResult.from_dict(
+        payload,
+        default_work_unit_id=work_unit.work_unit_id,
+        default_input_ref=refs["input"],
+        default_duration_ms=duration_ms,
+    )
+
+
+def _rewrite_contract_failure(
+    root: Path,
+    *,
+    work_unit: WorkUnitContract,
+    refs: Mapping[str, str],
+    result: PiAgentRunResult,
+    failure: str,
+) -> PiAgentRunResult:
+    payload = {
+        "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
+        "work_unit_id": work_unit.work_unit_id,
+        "status": "failed",
+        "produced_artifacts": list(result.produced_artifacts),
+        "changed_refs": _dedupe_refs([*result.changed_refs, refs["output"], refs["savepoints"]]),
+        "commands_run": list(result.commands_run),
+        "tests_run": list(result.tests_run),
+        "failures": _dedupe_refs([*result.failures, failure]),
+        "worker_claims": list(result.worker_claims),
+        "verifier_evidence": _dedupe_refs([*result.verifier_evidence, refs["output"], refs["savepoints"]]),
+        "new_unknowns": _dedupe_refs([*result.new_unknowns, *work_unit.expected_outputs]),
+        "recommended_next_steps": ["Inspect PI Agent runtime output contract failure before retrying."],
+        "verification_status": "failed",
+        "input_ref": refs["input"],
+        "output_ref": refs["output"],
+        "session_ref": refs["session"],
+        "events_ref": refs["events"],
+        "metrics_ref": refs["metrics"],
+        "savepoints_ref": refs["savepoints"],
+        "duration_ms": result.duration_ms,
+        "metrics": dict(result.metrics),
+    }
+    output_path = _resolve_workspace_ref(root, refs["output"])
+    _write_json(output_path, payload)
+    return PiAgentRunResult.from_dict(
+        payload,
+        default_work_unit_id=work_unit.work_unit_id,
+        default_input_ref=refs["input"],
+        default_duration_ms=result.duration_ms,
+    )
+
+
+def _failure_payload(
+    *,
+    work_unit: WorkUnitContract,
+    refs: Mapping[str, str],
+    duration_ms: int,
+    command_result: PiAgentCommandResult,
+    env: Mapping[str, str],
+    failures: list[str],
+) -> dict[str, Any]:
+    stream_failures = [
+        *_prefixed_stream_lines("stdout", command_result.stdout, env),
+        *_prefixed_stream_lines("stderr", command_result.stderr, env),
+    ]
+    return {
+        "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
+        "work_unit_id": work_unit.work_unit_id,
+        "status": "failed",
+        "produced_artifacts": [],
+        "changed_refs": [refs["output"], refs["savepoints"]],
+        "commands_run": [_format_command([])],
+        "tests_run": [],
+        "failures": [*failures, *stream_failures],
+        "worker_claims": [],
+        "verifier_evidence": [refs["output"], refs["savepoints"]],
+        "new_unknowns": list(work_unit.expected_outputs),
+        "recommended_next_steps": ["Inspect PI Agent runtime failure before retrying."],
+        "verification_status": "failed",
+        "input_ref": refs["input"],
+        "output_ref": refs["output"],
+        "session_ref": refs["session"],
+        "events_ref": refs["events"],
+        "metrics_ref": refs["metrics"],
+        "savepoints_ref": refs["savepoints"],
+        "duration_ms": duration_ms,
+        "metrics": {
+            "duration_ms": duration_ms,
+            "returncode": command_result.returncode,
+            "timed_out": command_result.timed_out,
+        },
+    }
+
+
+def _record_adapter_event(
+    store: EvidenceLedger,
+    *,
+    event_type: str,
+    work_unit_id: str,
+    payload: Mapping[str, Any],
+    source_refs: list[str] | None = None,
+    trust_level: EvidenceTrustLevel = EvidenceTrustLevel.ARTIFACT_REF,
+) -> str:
+    event_payload = {
+        "work_unit_id": work_unit_id,
+        "event_type": event_type,
+        **ensure_json_value(require_mapping(payload, "pi_agent_adapter_event.payload"), "pi_agent_adapter_event.payload"),
+    }
+    evidence_ref = store.append(
+        payload=event_payload,
+        trust_level=trust_level,
+        kind="pi_agent_runtime_event",
+        source_refs=source_refs,
+    )
+    return evidence_ref.evidence_id
+
+
+def _pi_agent_refs(work_unit_id: str) -> dict[str, str]:
+    safe_work_unit_id = require_non_empty_str(work_unit_id, "work_unit_id")
+    attempt_dir = f"attempts/{safe_work_unit_id}"
+    return {
+        "attempt_dir": attempt_dir,
+        "input": f"{attempt_dir}/pi_agent_input.json",
+        "output": f"{attempt_dir}/pi_agent_output.json",
+        "session": f"{attempt_dir}/pi_agent_session.jsonl",
+        "events": f"{attempt_dir}/pi_agent_events.jsonl",
+        "metrics": f"{attempt_dir}/pi_agent_metrics.json",
+        "savepoints": f"{attempt_dir}/pi_agent_savepoints.jsonl",
+        "report": f"{attempt_dir}/pi_agent_execution_report.json",
+    }
+
+
+def _reject_outputs_outside_scope(work_unit: WorkUnitContract) -> None:
+    for output_ref in work_unit.expected_outputs:
+        if not any(_is_within(output_ref, scope) for scope in work_unit.allowed_scope):
+            raise ContractValidationError(f"PI Agent runtime output outside allowed scope: {output_ref}")
+
+
+def _is_within(ref: str, scope: str) -> bool:
+    safe_ref = validate_ref(ref, "ref")
+    safe_scope = validate_ref(scope, "scope")
+    return safe_ref == safe_scope or safe_ref.startswith(f"{safe_scope}/")
+
+
+def _resolve_workspace_ref(root: Path, ref: str) -> Path:
+    safe_ref = validate_ref(ref, "workspace_ref")
+    path = (root / safe_ref).resolve()
+    if root not in path.parents and path != root:
+        raise ContractValidationError("PI Agent runtime ref escapes workspace")
+    return path
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    compatible = ensure_json_value(dict(payload), "json_payload")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(compatible, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _command_failure(command_result: PiAgentCommandResult, timeout_seconds: int) -> str | None:
+    if command_result.timed_out:
+        return f"pi-agent-runtime timed out after {timeout_seconds} seconds"
+    if command_result.returncode != 0:
+        return f"pi-agent-runtime exited with return code {command_result.returncode}"
+    return None
+
+
+def _reject_sensitive_runtime_metadata(value: Any, path: str = "metadata") -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            key_text = str(key)
+            normalized = key_text.lower().replace("-", "_")
+            if normalized in {
+                "api_key",
+                "apikey",
+                "authorization",
+                "auth",
+                "bearer",
+                "token",
+                "access_token",
+                "refresh_token",
+                "secret",
+                "client_secret",
+                "password",
+            }:
+                raise ContractValidationError(
+                    f"PI Agent runtime metadata must not contain sensitive key {path}.{key_text}; "
+                    "use child-process environment variables for secrets"
+                )
+            _reject_sensitive_runtime_metadata(nested, f"{path}.{key_text}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_sensitive_runtime_metadata(item, f"{path}[{index}]")
+
+
+def _redacted_stream(text: str, env: Mapping[str, str]) -> str:
+    redacted = _redact_sensitive_text(text, env)
+    if len(redacted) <= MAX_CAPTURED_STREAM_CHARS:
+        return redacted
+    return redacted[:MAX_CAPTURED_STREAM_CHARS] + "\n[truncated]"
+
+
+def _redact_sensitive_text(text: str, env: Mapping[str, str]) -> str:
+    result = _process_output_text(text)
+    for key, value in env.items():
+        if _is_secret_name(key) and isinstance(value, str) and len(value) >= 4:
+            result = result.replace(value, "<redacted>")
+    result = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s'\"\\]+", r"\1<redacted>", result)
+    result = re.sub(r"(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,'\"\\]+", r"\1<redacted>", result)
+    return result
+
+
+def _prefixed_stream_lines(stream_name: str, text: str, env: Mapping[str, str]) -> list[str]:
+    if not text:
+        return [f"{stream_name}: <empty>"]
+    return [f"{stream_name}: {line}" for line in _redacted_stream(text, env).splitlines()]
+
+
+def _is_secret_name(key: str) -> bool:
+    normalized = key.lower()
+    return any(fragment in normalized for fragment in ("api_key", "authorization", "password", "secret", "token"))
+
+
+def _non_secret_env(env: Mapping[str, str]) -> dict[str, str]:
+    return {key: value for key, value in env.items() if not _is_secret_name(key)}
+
+
+def _has_secret_env(env: Mapping[str, str]) -> bool:
+    return any(_is_secret_name(key) and bool(value) for key, value in env.items())
+
+
+def _process_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _format_command(command: Sequence[str]) -> str:
+    if not command:
+        return "<pi-agent-runtime command>"
+    return shlex.join(list(command))
+
+
+def _non_negative_metric(metrics: Mapping[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = metrics.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return 0
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if not isinstance(ref, str) or not ref:
+            continue
+        if ref in seen:
+            continue
+        result.append(ref)
+        seen.add(ref)
+    return result

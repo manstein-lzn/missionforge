@@ -8,6 +8,8 @@ __pycache__/
 htmlcov/
 dist/
 build/
+workers/pi-agent-runtime/dist/
+workers/pi-agent-runtime/node_modules/
 *.egg-info/
 .local/
 .metaloop/

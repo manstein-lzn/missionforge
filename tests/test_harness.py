@@ -6,13 +6,13 @@ import unittest
 
 from missionforge import (
     DeterministicProposalProvider,
-    FakeWorker,
     InMemoryEvidenceStore,
     ProposalValidationStatus,
     ProposalValidator,
     WorkUnitCompiler,
     WorkUnitHarness,
 )
+from missionforge.fake_worker import FakeWorker
 from tests.test_proposal_validation import valid_proposal
 
 

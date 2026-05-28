@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import EvidenceTrustLevel, FakeWorker, InMemoryEvidenceStore, WorkUnitContract
+from missionforge import EvidenceTrustLevel, InMemoryEvidenceStore, WorkUnitContract
+from missionforge.fake_worker import FakeWorker
 
 
 class FakeWorkerTests(unittest.TestCase):

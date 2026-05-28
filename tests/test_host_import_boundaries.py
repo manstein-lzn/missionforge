@@ -29,8 +29,10 @@ FORBIDDEN_HOST_IMPORT_ROOTS = {
     "openai",
     "requests",
     "socket",
-    "subprocess",
     "urllib",
+}
+ALLOWED_SUBPROCESS_IMPORTERS = {
+    ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 
 
@@ -76,10 +78,14 @@ class HostImportBoundaryTests(unittest.TestCase):
                         root = alias.name.split(".", 1)[0]
                         if root in FORBIDDEN_HOST_IMPORT_ROOTS:
                             violations.append(f"{path}: import {alias.name}")
+                        if root == "subprocess" and path not in ALLOWED_SUBPROCESS_IMPORTERS:
+                            violations.append(f"{path}: import {alias.name}")
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     root = module.split(".", 1)[0]
                     if node.level == 0 and root in FORBIDDEN_HOST_IMPORT_ROOTS:
+                        violations.append(f"{path}: from {module} import ...")
+                    if node.level == 0 and root == "subprocess" and path not in ALLOWED_SUBPROCESS_IMPORTERS:
                         violations.append(f"{path}: from {module} import ...")
 
         forbidden_modules = [

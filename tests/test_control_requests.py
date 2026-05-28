@@ -8,13 +8,13 @@ from missionforge import (
     ControlHalt,
     ControlPoint,
     ControlRequest,
-    FakeWorker,
     InMemoryEvidenceStore,
     ProposalValidator,
     WorkUnitCompiler,
     WorkUnitHarness,
 )
 from missionforge.contracts import ContractValidationError
+from missionforge.fake_worker import FakeWorker
 from tests.test_proposal_validation import valid_proposal
 
 

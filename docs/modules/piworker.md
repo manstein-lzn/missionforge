@@ -2,7 +2,11 @@
 
 ## Goal
 
-Provide the only first-class worker path for MissionForge's first design cycle.
+Historical PiWorker adapter notes for the earlier compatibility path.
+
+The current production direction is `pi-agent-runtime`, not PiWorker. The
+dedicated PI Agent runtime is documented in
+`docs/PI_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md`.
 
 ## Scope
 
@@ -23,14 +27,25 @@ Provide the only first-class worker path for MissionForge's first design cycle.
 
 ## Current Status
 
-Goal 6A now implements a deterministic faux PiWorker adapter. The adapter
-proves MissionForge's PiWorker-facing contract boundary without starting a
-live PiWorker process, loading provider credentials, calling a live LLM,
-depending on LangGraph or HTTP, or importing SkillFoundry adapter behavior.
+Goal 6A implemented a deterministic faux PiWorker adapter. The adapter proves
+MissionForge's PiWorker-facing contract boundary without starting a live
+PiWorker process, loading provider credentials, calling a live LLM, depending
+on LangGraph or HTTP, or importing SkillFoundry adapter behavior.
 
-The reference behavior remains the current SkillFoundry PiWorker integration
-and the PI GitHub project runtime model, but the initial MissionForge adapter
-does not copy PI source code.
+The live-provider integration slice now adds an opt-in command-boundary
+adapter. The deterministic faux adapter remains available and default tests
+remain offline. The command adapter writes a bounded PiWorker input artifact,
+invokes an injected runner or subprocess sidecar, reads normalized output,
+records refs-only evidence, and returns `WorkerAdapterResult`.
+
+Current live provider support reads the current Codex config/auth at runtime
+when `provider_config_source="codex_current"`. It maps model/base URL/API key
+into child-process environment variables and never serializes the API key into
+MissionForge input artifacts, evidence, execution reports, metrics, docs, or
+logs.
+
+This module is now legacy reference material. MissionForge's default runtime
+uses `PiAgentRuntimeAdapter`, which invokes `workers/pi-agent-runtime`.
 
 ## Attribution
 
@@ -49,6 +64,8 @@ Implemented in Goal 6A:
 - `PiWorkerEvent`
 - `PiWorkerMetrics`
 - `ContractAdjustmentEvidence`
+- `PiWorkerRunResult`
+- `PiWorkerProviderEnvironment`
 
 ## Contract Sketch
 
@@ -102,7 +119,13 @@ runtime route logic.
 - Adapter status and metrics are not completion authority. Completion remains
   owned by verifier output.
 
-## Invariants
+## Command Adapter Behavior
+
+The command PiWorker behavior was superseded by `pi-agent-runtime`. Historical
+command adapter code and tests were removed after the dedicated PI Agent
+runtime reached offline parity.
+
+## Legacy Invariants
 
 - PiWorker receives a bounded work-unit contract.
 - PiWorker writes only through allowed tools or write scopes.
@@ -110,6 +133,8 @@ runtime route logic.
 - Metrics are preserved in MissionResult evidence.
 - PiWorker consumes committed WorkUnitContract objects, not raw steering
   proposals.
+- PiWorker command execution is optional and is not the default runtime path.
+- Live provider credentials are child-process environment only.
 - Any worker-requested contract adjustment is evidence for controlled steering,
   not a mutation of the frozen mission contract.
 - MissionForge core must not import the PiWorker adapter.
@@ -152,9 +177,12 @@ git diff --check
 Independent reviewer `Confucius` approved Goal 6A, and MetaLoop verification
 reached `completed_verified`.
 
-## Follow-On Goal
+PI Agent runtime cutover evidence is tracked in
+`docs/PI_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md`.
 
-Recommended launch prompt:
+## Superseded Follow-On Goal
+
+This old launch prompt is retained only as historical context:
 
 ```text
 /goal 使用 $metaloop 按 docs/FOLLOW_ON_GOALS.md 的 Goal 6A 实现

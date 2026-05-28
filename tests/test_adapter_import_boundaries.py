@@ -7,6 +7,10 @@ import unittest
 
 CORE_ROOT = Path("src/missionforge")
 ADAPTER_ROOT = CORE_ROOT / "adapters"
+ALLOWED_CORE_ADAPTER_IMPORTS = {
+    (CORE_ROOT / "runner.py", "missionforge.adapters.pi_agent_runtime"),
+    (CORE_ROOT / "runner.py", "adapters.pi_agent_runtime"),
+}
 
 
 class AdapterImportBoundaryTests(unittest.TestCase):
@@ -20,13 +24,16 @@ class AdapterImportBoundaryTests(unittest.TestCase):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         if alias.name == "missionforge.adapters" or alias.name.startswith("missionforge.adapters."):
-                            violations.append(f"{path}: import {alias.name}")
+                            if (path, alias.name) not in ALLOWED_CORE_ADAPTER_IMPORTS:
+                                violations.append(f"{path}: import {alias.name}")
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     if module == "missionforge.adapters" or module.startswith("missionforge.adapters."):
-                        violations.append(f"{path}: from {module} import ...")
+                        if (path, module) not in ALLOWED_CORE_ADAPTER_IMPORTS:
+                            violations.append(f"{path}: from {module} import ...")
                     if node.level == 1 and (module == "adapters" or module.startswith("adapters.")):
-                        violations.append(f"{path}: from .{module} import ...")
+                        if (path, module) not in ALLOWED_CORE_ADAPTER_IMPORTS:
+                            violations.append(f"{path}: from .{module} import ...")
 
         self.assertEqual(violations, [])
 

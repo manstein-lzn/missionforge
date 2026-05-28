@@ -16,7 +16,6 @@ from .contracts import (
 from .control import ControlHalt, ControlPoint, ControlRequest
 from .evidence import ArtifactRef, EvidenceRef
 from .evidence_store import EvidenceLedger, EvidenceRecord, EvidenceSnapshot, FileEvidenceStore, InMemoryEvidenceStore
-from .fake_worker import FakeWorker, FakeWorkerRunResult
 from .freeze import ContractManifest, ExpandedMission, FrozenMissionContract, expand_mission, freeze_mission
 from .harness import (
     DeterministicProposalProvider,
@@ -39,6 +38,7 @@ from .runner import MissionResult, MissionRuntime
 from .runtime import RuntimeEngine
 from .steering import DecisionLedgerEntry, ProposalValidationResult, StateCorrection, SteeringProposal
 from .state import MissionRunState
+from .state import ArtifactHygieneReport, MissionRun, RuntimeAttempt, RuntimeSafePoint
 from .validators import run_validator
 from .verification import FailedConstraint, MissingEvidence, VerificationResult, VerificationSpec, ValidatorResult, ValidatorSpec
 from .verifier import Verifier, verify_spec
@@ -64,8 +64,6 @@ __all__ = [
     "EvidenceTrustLevel",
     "ExecutionReport",
     "FailedConstraint",
-    "FakeWorker",
-    "FakeWorkerRunResult",
     "FileEvidenceStore",
     "HarnessDispatchResult",
     "ExpandedMission",
@@ -79,6 +77,8 @@ __all__ = [
     "MissionResult",
     "MissionRuntime",
     "MissionRunState",
+    "ArtifactHygieneReport",
+    "MissionRun",
     "MissionValidationError",
     "ProposalValidationResult",
     "ProposalValidationStatus",
@@ -89,6 +89,8 @@ __all__ = [
     "Ref",
     "ReviewerDecision",
     "RuntimeEngine",
+    "RuntimeAttempt",
+    "RuntimeSafePoint",
     "StateCorrection",
     "SteeringProposal",
     "ValidatorMode",
