@@ -149,7 +149,8 @@ npm test --prefix workers/pi-agent-runtime
 
 ## Open Questions
 
-- Phase 11 should decide CLI/product UX on top of the Phase 10 durable state.
+- Phase 11 operator/product UX is now scoped in
+  `docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md`.
 - Broader process resume remains unsupported beyond completed-turn resume.
 - A future implementation may add real bounded retry execution for transient
   provider/tool failures; Phase 10 records retry metrics and separates routes.

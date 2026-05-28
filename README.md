@@ -64,6 +64,9 @@ Implementation should be driven through the hardened development documents:
 - [Follow-On Goals](docs/FOLLOW_ON_GOALS.md): post-runtime-kernel goal
   contracts for adapter boundary preflight, faux PiWorker, SkillFoundry
   compiler, and optional host shells.
+- [Phase 11 Operator Productization Plan](docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md):
+  CLI, inspection, diagnosis, resume, review, and validation workflows on top
+  of the Phase 10 durable runtime state.
 
 ## Package Layout
 

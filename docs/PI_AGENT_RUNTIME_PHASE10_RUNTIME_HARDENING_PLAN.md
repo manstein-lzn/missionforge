@@ -576,3 +576,6 @@ from the existing ledgers:
 
 Only after these answers are clear should Phase 11 add CLI commands, operator
 views, packaged workflows, or higher-level product affordances.
+
+The Phase 11 scope is tracked in
+`docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md`.
