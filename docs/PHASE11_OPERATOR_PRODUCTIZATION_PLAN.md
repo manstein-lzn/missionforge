@@ -280,7 +280,7 @@ without putting SkillFoundry semantics in core:
 
 ```text
 SkillFoundry source refs
-  -> SkillFoundryMissionCompiler
+  -> external SkillFoundry integration compiler
   -> MissionIR
   -> MissionRuntime
   -> pi-agent-runtime
@@ -289,8 +289,9 @@ SkillFoundry source refs
   -> operator inspect/diagnose/resume
 ```
 
-The SkillFoundry adapter remains an adapter. The operator surface should expose
-MissionForge refs and state, not SkillFoundry-specific runtime branches.
+The SkillFoundry bridge is an external product integration, not a MissionForge
+core adapter. The operator surface should expose MissionForge refs and state,
+not SkillFoundry-specific runtime branches.
 
 ## Workstreams
 

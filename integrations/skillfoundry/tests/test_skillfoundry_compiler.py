@@ -5,10 +5,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge.adapters.skillfoundry import SkillFoundryMissionCompiler, SkillFoundrySourceBundle
 from missionforge.contracts import ContractValidationError
 from missionforge.freeze import freeze_mission
 from missionforge.ir import MissionIR
+from missionforge_skillfoundry import SkillFoundryMissionCompiler, SkillFoundrySourceBundle
 
 
 def sample_bundle() -> SkillFoundrySourceBundle:

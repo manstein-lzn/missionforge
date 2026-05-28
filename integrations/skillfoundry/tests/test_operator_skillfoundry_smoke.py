@@ -5,8 +5,8 @@ import tempfile
 import unittest
 
 from missionforge.adapters.cli import MissionCLI
-from missionforge.adapters.skillfoundry import SkillFoundryMissionCompiler
-from tests.test_skillfoundry_compiler import sample_bundle, write_frontdesk_fixture
+from missionforge_skillfoundry import SkillFoundryMissionCompiler
+from test_skillfoundry_compiler import sample_bundle, write_frontdesk_fixture
 
 
 class OperatorSkillFoundrySmokeTests(unittest.TestCase):

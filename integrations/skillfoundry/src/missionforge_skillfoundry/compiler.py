@@ -1,4 +1,4 @@
-"""Deterministic SkillFoundry-to-MissionIR compiler adapter."""
+"""Deterministic SkillFoundry-to-MissionIR integration compiler."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..adapters.contracts import AdapterResult
-from ..contracts import (
+from missionforge.adapters.contracts import AdapterResult
+from missionforge.contracts import (
     ContractValidationError,
     ensure_json_value,
     require_mapping,
@@ -17,9 +17,9 @@ from ..contracts import (
     stable_json_hash,
     validate_ref,
 )
-from ..freeze import freeze_mission
-from ..ir import CapabilityProfileRef, MissionConstraint, MissionIR, MissionObjective
-from ..profiles import ProfileRegistry
+from missionforge.freeze import freeze_mission
+from missionforge.ir import CapabilityProfileRef, MissionConstraint, MissionIR, MissionObjective
+from missionforge.profiles import ProfileRegistry
 
 
 SKILLFOUNDRY_SOURCE_TYPES = {
@@ -554,7 +554,7 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     safe_ref = validate_ref(ref, "workspace_ref")
     path = (root / safe_ref).resolve()
     if root not in path.parents and path != root:
-        raise ContractValidationError("SkillFoundry adapter ref escapes workspace")
+        raise ContractValidationError("SkillFoundry integration ref escapes workspace")
     return path
 
 

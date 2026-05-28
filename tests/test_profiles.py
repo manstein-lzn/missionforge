@@ -25,7 +25,7 @@ class ProfileExpansionTests(unittest.TestCase):
     def test_capability_profile_ref_requirements_are_locked_in_expansion(self) -> None:
         payload = sample_mission_payload()
         payload["capability_profiles"][0]["requirements"] = {
-            "allowed_source_manifest": "frontdesk/task_contract.json",
+            "allowed_source_manifest": "sources/task_contract.json",
             "max_source_age_days": 7,
         }
         mission = MissionIR.from_dict(payload)
@@ -35,7 +35,7 @@ class ProfileExpansionTests(unittest.TestCase):
         self.assertEqual(
             expansion_payload["source_ref_requirements"],
             {
-                "allowed_source_manifest": "frontdesk/task_contract.json",
+                "allowed_source_manifest": "sources/task_contract.json",
                 "max_source_age_days": 7,
             },
         )

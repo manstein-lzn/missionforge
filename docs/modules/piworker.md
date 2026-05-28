@@ -30,7 +30,7 @@ dedicated PI Agent runtime is documented in
 Goal 6A implemented a deterministic faux PiWorker adapter. The adapter proves
 MissionForge's PiWorker-facing contract boundary without starting a live
 PiWorker process, loading provider credentials, calling a live LLM, depending
-on LangGraph or HTTP, or importing SkillFoundry adapter behavior.
+on LangGraph or HTTP, or importing product integration behavior.
 
 The live-provider integration slice now adds an opt-in command-boundary
 adapter. The deterministic faux adapter remains available and default tests
@@ -189,7 +189,7 @@ This old launch prompt is retained only as historical context:
 MissionForge Faux PiWorker Adapter。实现 deterministic faux adapter、
 event-to-evidence mapping、refs-only ExecutionReport、import-boundary tests。
 不要接 live PiWorker、provider credentials、live LLM、LangGraph、HTTP 或
-SkillFoundry adapter。
+产品特定 adapter。
 ```
 
 ## Open Questions

@@ -151,10 +151,10 @@ PiWorker adapter must prove:
 - MissionForge core has no PiWorker imports
 - faux PiWorker tests pass before any live smoke
 
-SkillFoundry adapter must prove:
+Product integration compilers must prove:
 
-- FrontDesk artifacts compile into MissionIR
-- SkillFoundry product semantics stay outside core
+- product artifacts compile into MissionIR
+- product semantics stay outside the `missionforge` package
 - capability bundle generation uses profiles and validators, not runtime
   branches
 - compile results are refs-only

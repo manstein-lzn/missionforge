@@ -373,7 +373,7 @@ Known gaps:
 - work-unit harness execution and controlled steering validation remain Phase 4
   work
 - runtime orchestration remains Phase 5 work
-- live LLM, PiWorker, LangGraph, HTTP, and SkillFoundry adapters remain out of
+- live LLM, PiWorker, LangGraph, HTTP, and product-specific adapters remain out of
   scope
 
 Review gate:
@@ -608,7 +608,7 @@ git diff --check
 Known gaps:
 
 - no full multi-attempt repair planner yet
-- no PiWorker, live LLM, LangGraph, HTTP, host adapter, or SkillFoundry adapter
+- no PiWorker, live LLM, LangGraph, HTTP, host adapter, or product-specific adapter
 - Phase 6 adapter preparation should be split into separate follow-on goals if
   the deterministic runtime vertical slice is accepted
 
@@ -623,7 +623,7 @@ Review gate:
   unsupported routing, and host independence.
 - MetaLoop verification then reached `completed_verified`.
 
-## Phase 6: PiWorker And SkillFoundry Adapter Preparation
+## Phase 6: PiWorker And Product Integration Preparation
 
 Status: `completed_verified`
 
@@ -640,14 +640,14 @@ Recommended order:
 ```text
 Goal 6.0: Adapter Boundary Preflight
 Goal 6A: Faux PiWorker Adapter
-Goal 6B: SkillFoundry MissionIR Compiler
+Goal 6B: External Product Integration Compiler
 Goal 6C: Optional Host Adapter Shell
 ```
 
 Do not combine 6A and 6B in one implementation goal. PiWorker adapter work
-changes worker trust boundaries; SkillFoundry adapter work changes product and
-source-compilation boundaries. Keeping them separate prevents product-specific
-semantics from leaking into the worker/runtime kernel.
+changes worker trust boundaries; product integration compiler work changes
+product and source-compilation boundaries. Keeping them separate prevents
+product-specific semantics from leaking into the worker/runtime kernel.
 
 Phase 6 is complete when Goal 6.0, Goal 6A, Goal 6B, and Goal 6C are all
 `completed_verified`. That condition is now satisfied.
@@ -661,7 +661,7 @@ Primary documentation:
 - `docs/FOLLOW_ON_GOALS.md`
 - `docs/modules/adapter_contracts.md`
 - `docs/modules/piworker.md`
-- `docs/modules/skillfoundry_adapter.md`
+- product integration docs outside `docs/modules/`
 - `docs/modules/host_adapters.md`
 
 Potential modules:
@@ -711,9 +711,9 @@ git diff --check
 Known gaps:
 
 - faux PiWorker remains Goal 6A
-- SkillFoundry compiler remains Goal 6B
+- product integration compiler remains Goal 6B
 - optional host shells remain Goal 6C
-- no real PiWorker, live LLM, LangGraph, HTTP, or SkillFoundry behavior exists
+- no real PiWorker, live LLM, LangGraph, HTTP, or product integration behavior exists
   in Goal 6.0
 
 Review gate:
@@ -817,7 +817,7 @@ Known gaps:
 
 - no live PiWorker process
 - no provider credentials or live LLM
-- no LangGraph, HTTP, or SkillFoundry adapter behavior
+- no LangGraph, HTTP, or product-specific adapter behavior
 - no multi-worker abstraction
 - no copied PI source
 
@@ -831,13 +831,13 @@ Review gate:
   test output.
 - MetaLoop verification then reached `completed_verified`.
 
-### Phase 6B: SkillFoundry Adapter
+### Phase 6B: External Product Integration Compiler
 
 Status: `completed_verified`
 
 Primary modules:
 
-- `src/missionforge/adapters/skillfoundry.py`
+- `integrations/skillfoundry/src/missionforge_skillfoundry/compiler.py`
 
 Public contracts:
 
@@ -848,9 +848,9 @@ Public contracts:
 
 Acceptance:
 
-- SkillFoundry FrontDesk artifacts compile into MissionIR
+- product source artifacts compile into MissionIR
 - capability-bundle behavior is expressed through profiles
-- MissionForge core does not import SkillFoundry
+- MissionForge does not import product integrations
 - registry/product packaging remains outside MissionForge core
 - compile output is refs-only
 - raw transcript input is rejected unless represented as an explicitly allowed
@@ -858,14 +858,14 @@ Acceptance:
 
 Non-goals:
 
-- no SkillFoundry runtime dependency in core
+- no product integration dependency in the `missionforge` package
 - no registry publishing
 - no product-specific runtime branch
 - no live LLM or PiWorker execution
 
 Implemented behavior:
 
-- added `src/missionforge/adapters/skillfoundry.py`
+- added external SkillFoundry integration under `integrations/skillfoundry/`
 - added deterministic refs-only adapter contracts:
   - `FrontDeskArtifactRef`
   - `SkillPackageTarget`
@@ -889,30 +889,24 @@ Implemented behavior:
 - SkillFoundry source bundles fail closed when capability profile refs are
   omitted, so capability-bundle behavior cannot bypass profile expansion
 - MissionForge core and package root do not import or re-export the
-  SkillFoundry adapter
+  SkillFoundry integration
 
 Focused tests:
 
-- `tests/test_skillfoundry_adapter_contracts.py`
-- `tests/test_skillfoundry_compiler.py`
-- `tests/test_skillfoundry_import_boundaries.py`
+- `integrations/skillfoundry/tests/test_skillfoundry_integration_contracts.py`
+- `integrations/skillfoundry/tests/test_skillfoundry_compiler.py`
+- `integrations/skillfoundry/tests/test_skillfoundry_import_boundaries.py`
 
 Verification evidence:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_skillfoundry_adapter_contracts.py tests/test_skillfoundry_compiler.py tests/test_skillfoundry_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
+PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s integrations/skillfoundry/tests
 # Ran 24 tests: OK
-
-PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 124 tests: OK
-
-git diff --check
-# passed
 ```
 
 Known gaps:
 
-- no SkillFoundry runtime dependency in MissionForge core
+- no product integration dependency in the `missionforge` package
 - no registry publishing or packaging side effects
 - no product-specific runtime branch
 - no live LLM, PiWorker execution, LangGraph, or HTTP
@@ -977,7 +971,7 @@ Focused tests:
 Verification evidence:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py tests/test_skillfoundry_import_boundaries.py
+PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
 # Ran 17 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests

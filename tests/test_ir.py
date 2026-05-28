@@ -17,7 +17,7 @@ def sample_mission_payload() -> dict:
             "success_signals": ["Verifier passes."],
         },
         "inputs": {
-            "allowed_sources": ["frontdesk/task_contract.json"],
+            "allowed_sources": ["sources/task_contract.json"],
             "forbidden_sources": ["raw_conversation"],
         },
         "outputs": {
@@ -30,7 +30,7 @@ def sample_mission_payload() -> dict:
                 "kind": "data_boundary",
                 "priority": "must",
                 "statement": "Use only user-provided evidence.",
-                "source_refs": ["frontdesk/task_contract.json"],
+                "source_refs": ["sources/task_contract.json"],
                 "evidence_obligations": ["package/SKILL.md"],
                 "validator": "static_text_boundary",
                 "repair_hints": ["Update the safety section."],

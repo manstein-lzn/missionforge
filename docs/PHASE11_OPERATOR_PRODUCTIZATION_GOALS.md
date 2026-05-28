@@ -561,26 +561,26 @@ Goal 11D 实现 MissionForge control halt 和 review record commands。control
 不要让 CLI/dashboard 覆盖 verifier 或直接修改 MissionRun。
 ```
 
-## Goal 11E: Validate Command And SkillFoundry Smoke
+## Goal 11E: Validate Command And Product Integration Smoke
 
 Status: `completed_verified`
 
 Intent:
 
 ```text
-Make repository validation an operator workflow and prove a SkillFoundry-style
+Make repository validation an operator workflow and keep product integration
+smokes outside default core validation. Product integrations may prove their
 compiled MissionIR can pass through the operator run/inspect path without
-putting SkillFoundry semantics into runtime core.
+putting product semantics into runtime core.
 ```
 
 Primary files:
 
 - `src/missionforge/adapters/cli.py`
 - `scripts/validate.sh`
-- `src/missionforge/adapters/skillfoundry.py`
 - `tests/test_operator_cli_validate.py`
-- `tests/test_operator_skillfoundry_smoke.py`
-- `docs/modules/skillfoundry_adapter.md`
+- `scripts/validate_integrations.sh`
+- `integrations/skillfoundry/tests/test_operator_skillfoundry_smoke.py`
 
 Command shape:
 
@@ -595,9 +595,9 @@ Acceptance:
 - default validation checks Node runtime tests, Python tests, and whitespace,
 - fast mode is explicit and does not become the default,
 - live-provider validation remains opt-in,
-- SkillFoundry smoke compiles adapter source refs into MissionIR, runs through
+- product integration smoke compiles source refs into MissionIR, runs through
   the operator path, and inspects resulting MissionRun state,
-- SkillFoundry-specific behavior stays in adapter/profile data, not runtime
+- product-specific behavior stays in external integration/profile data, not runtime
   branches.
 
 Implemented in this goal:
@@ -605,14 +605,17 @@ Implemented in this goal:
 - `validate` command delegating to `scripts/validate.sh`
 - validation log written by ref under `host_results/validation/`
 - command output includes refs and return code, not raw validation output
-- SkillFoundry compiled MissionIR operator smoke
-- focused tests in `tests/test_operator_cli_validate.py` and
-  `tests/test_operator_skillfoundry_smoke.py`
+- external SkillFoundry compiled MissionIR operator smoke under
+  `integrations/skillfoundry/tests/`
+- focused core test in `tests/test_operator_cli_validate.py`
 
 Verification:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_operator_cli_validate.py tests/test_operator_skillfoundry_smoke.py
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_validate.py
+# passed
+
+./scripts/validate_integrations.sh skillfoundry
 # passed
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
@@ -629,9 +632,9 @@ Suggested `/goal` prompt:
 
 ```text
 /goal 使用 $metaloop 按 docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md 的
-Goal 11E 实现 MissionForge validate command 和 SkillFoundry operator smoke。
-validate 走 scripts/validate.sh；SkillFoundry 只通过 adapter 编译 MissionIR；
-不要在 runtime core 加 SkillFoundry 分支或 live-provider 默认测试。
+Goal 11E 实现 MissionForge validate command 和外部产品 integration smoke。
+validate 走 scripts/validate.sh；产品 integration 只在 integrations/ 下编译
+MissionIR；不要在 runtime core 加产品分支或 live-provider 默认测试。
 ```
 
 ## Goal 11F: Optional JSONL RPC

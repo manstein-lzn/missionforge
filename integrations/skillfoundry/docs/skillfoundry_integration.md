@@ -1,9 +1,10 @@
-# Module: SkillFoundry Adapter
+# Integration: SkillFoundry
 
 ## Goal
 
 Compile SkillFoundry-facing source artifacts into MissionForge `MissionIR`
-without making MissionForge core depend on SkillFoundry product semantics.
+without making the `missionforge` Python package depend on SkillFoundry product
+semantics.
 
 SkillFoundry should become an application shell on top of MissionForge, not a
 set of runtime branches inside MissionForge.
@@ -15,12 +16,12 @@ set of runtime branches inside MissionForge.
 - capability-bundle MissionIR compilation
 - profile ref selection
 - Skill package output target declaration
-- adapter import-boundary checks
+- product integration import-boundary checks
 - refs-only compile result
 
 ## Non-Goals
 
-- no SkillFoundry dependency in `missionforge` core
+- no SkillFoundry dependency in the `missionforge` Python package
 - no registry publishing
 - no product-specific runtime branch
 - no live LLM
@@ -30,12 +31,12 @@ set of runtime branches inside MissionForge.
 
 ## Current Status
 
-Goal 6B now implements a deterministic offline SkillFoundry MissionIR compiler
-adapter. It compiles FrontDesk-style refs into MissionForge `MissionIR`, writes
-refs-only compiler outputs, and keeps SkillFoundry product semantics outside
-MissionForge core.
+The migration bridge is now an external product integration under
+`integrations/skillfoundry/`. It compiles FrontDesk-style refs into
+MissionForge `MissionIR`, writes refs-only compiler outputs, and keeps
+SkillFoundry product semantics outside the `missionforge` Python package.
 
-The adapter does not import SkillFoundry runtime packages, publish to a
+The integration does not import SkillFoundry runtime packages, publish to a
 registry, call live LLMs, execute PiWorker, use LangGraph, or expose HTTP.
 
 Phase 11 operator productization adds a smoke path proving compiled
@@ -91,17 +92,18 @@ Implemented in Goal 6B:
 
 ## Invariants
 
-- SkillFoundry names may appear in adapter modules and adapter docs, not in
-  MissionForge runtime branches.
-- The adapter compiles product facts into MissionIR and profile refs.
+- SkillFoundry names may appear in this external integration, not in
+  MissionForge runtime branches or core adapters.
+- The integration compiles product facts into MissionIR and profile refs.
 - Capability bundle behavior is expressed through profiles and validators.
 - Raw chat or transcript material is not task truth.
 - Compile results are refs-only.
 - Free-form SkillFoundry worker or LLM claims are evidence only, never
   acceptance.
-- MissionForge core must not import `missionforge.adapters.skillfoundry`.
+- `missionforge` must not import `missionforge_skillfoundry`.
+- `src/missionforge/adapters/skillfoundry.py` must not exist.
 
-## Implemented Adapter Behavior
+## Implemented Integration Behavior
 
 - `SkillFoundrySourceBundle` describes FrontDesk contract refs, source manifest
   refs, target package refs, allowed write scopes, capability profile refs, and
@@ -112,7 +114,7 @@ Implemented in Goal 6B:
   source manifest, rejects raw transcript/prompt/payload/body fields, and
   compiles a valid `MissionIR`.
 - Generated MissionIR carries admitted source refs in `inputs`, target package
-  refs and allowed write scopes in `outputs`, adapter constraints, and the
+  refs and allowed write scopes in `outputs`, integration constraints, and the
   selected capability/verification profile refs.
 - Source bundles must declare capability profile refs; the compiler rejects
   capability-bundle input that would otherwise bypass profile expansion.
@@ -122,7 +124,7 @@ Implemented in Goal 6B:
 - `SkillFoundryCompileResult` returns only refs, profile ids, target package
   ref, contract hash, diagnostics refs, and warnings. It does not embed
   FrontDesk artifact bodies.
-- The Phase 11 operator smoke compiles a FrontDesk fixture, runs the generated
+- The integration operator smoke compiles a FrontDesk fixture, runs the generated
   MissionIR through the operator `run` command, and inspects the resulting
   `MissionRun` state through the operator `inspect` command.
 
@@ -140,7 +142,8 @@ Implemented in Goal 6B:
 - generated MissionIR freezes deterministically
 - raw transcript input is rejected unless declared as sanitized evidence
 - capability bundle behavior uses profiles, not runtime branches
-- import-boundary test proves core modules do not import SkillFoundry adapter
+- import-boundary test proves MissionForge does not import the SkillFoundry
+  integration and does not contain a SkillFoundry adapter module
 - compile result is refs-only
 
 ## Verification Evidence
@@ -148,20 +151,10 @@ Implemented in Goal 6B:
 Goal 6B focused tests:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_skillfoundry_adapter_contracts.py tests/test_skillfoundry_compiler.py tests/test_skillfoundry_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
+PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s integrations/skillfoundry/tests
 # Ran 24 tests: OK
 
-PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 124 tests: OK
-
-git diff --check
-# passed
-```
-
-Phase 11 operator smoke:
-
-```bash
-PYTHONPATH=src python3 -m unittest tests/test_operator_skillfoundry_smoke.py
+./scripts/validate_integrations.sh skillfoundry
 # passed
 ```
 
@@ -173,7 +166,7 @@ verification reached `completed_verified`.
 
 Independent review is required if:
 
-- adapter behavior appears to require a MissionForge runtime branch
+- integration behavior appears to require a MissionForge runtime branch
 - source bundle shape exposes raw conversation or private material
 - profile requirements are too product-specific for reusable profile data
 - registry publishing or packaging side effects enter the compile step
@@ -181,7 +174,7 @@ Independent review is required if:
 ## Open Questions
 
 - Which exact FrontDesk artifacts should be the first stable input fixture?
-- Should the adapter write MissionIR files itself or return an in-memory object
+- Should the integration write MissionIR files itself or return an in-memory object
   plus refs?
 - Which profile set is sufficient for the first capability-bundle mission?
 - Should SkillFoundry package validation be a separate verification profile?

@@ -153,7 +153,7 @@ user or host control -> ControlRequest
 Goal 6C focused tests:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py tests/test_skillfoundry_import_boundaries.py
+PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
 # Ran 17 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests
@@ -184,10 +184,10 @@ MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 Phase 11 operator productization focused tests:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_skillfoundry_smoke.py tests/test_operator_jsonl_rpc.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_jsonl_rpc.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
 # Ran 31 tests: OK
 
-PYTHONPATH=src python3 -m unittest tests/test_operator_cli_contracts.py tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_skillfoundry_smoke.py tests/test_operator_jsonl_rpc.py tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_contracts.py tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_jsonl_rpc.py tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
 # Ran 44 tests: OK
 ```
 
@@ -196,6 +196,15 @@ Controlled steering operator surface:
 ```bash
 PYTHONPATH=src python3 -m unittest tests/test_operator_controlled_steering_surface.py tests/test_controlled_steering_import_boundaries.py
 # passed
+```
+
+After product integration extraction, default host/operator validation no
+longer imports product integrations. Product-specific operator smokes run
+through explicit integration validation:
+
+```bash
+./scripts/validate_integrations.sh skillfoundry
+# Ran 20 tests: OK
 ```
 
 ## Follow-On Goal

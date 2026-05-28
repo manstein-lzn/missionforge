@@ -41,7 +41,7 @@ class FreezeTests(unittest.TestCase):
             "repair_hints": ["Update the safety section."],
             "validator": "static_text_boundary",
             "evidence_obligations": ["package/SKILL.md"],
-            "source_refs": ["frontdesk/task_contract.json"],
+            "source_refs": ["sources/task_contract.json"],
             "statement": "Use only user-provided evidence.",
             "priority": "must",
             "kind": "data_boundary",

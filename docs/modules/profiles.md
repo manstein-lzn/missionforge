@@ -114,7 +114,7 @@ PYTHONPATH=src python3 -m unittest tests/test_profiles.py
 ## Open Questions
 
 - Should profiles be JSON, Python packages, or both?
-- Can FrontDesk generate new profile instances safely?
+- Can external product integrations generate new profile instances safely?
 - How are profile hashes represented in FrozenMissionContract?
 - Should capability and verification profiles share one registry or separate
   registries?

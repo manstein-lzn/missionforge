@@ -11,6 +11,14 @@ ALLOWED_CORE_ADAPTER_IMPORTS = {
     (CORE_ROOT / "runner.py", "missionforge.adapters.pi_agent_runtime"),
     (CORE_ROOT / "runner.py", "adapters.pi_agent_runtime"),
 }
+FORBIDDEN_PRODUCT_ADAPTER_MODULES = {
+    "codexarium.py",
+    "frontdesk.py",
+    "skillfoundry.py",
+}
+FORBIDDEN_PRODUCT_IMPORT_ROOTS = {
+    "missionforge_skillfoundry",
+}
 
 
 class AdapterImportBoundaryTests(unittest.TestCase):
@@ -51,6 +59,27 @@ class AdapterImportBoundaryTests(unittest.TestCase):
         }
 
         self.assertEqual([str(path) for path in forbidden if path.exists()], [])
+
+    def test_no_product_specific_adapter_modules_in_core_package(self) -> None:
+        forbidden = {ADAPTER_ROOT / module for module in FORBIDDEN_PRODUCT_ADAPTER_MODULES}
+
+        self.assertEqual([str(path) for path in forbidden if path.exists()], [])
+
+    def test_core_package_does_not_import_product_integrations(self) -> None:
+        violations: list[str] = []
+        for path in CORE_ROOT.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name in FORBIDDEN_PRODUCT_IMPORT_ROOTS:
+                            violations.append(f"{path}: import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module in FORBIDDEN_PRODUCT_IMPORT_ROOTS:
+                        violations.append(f"{path}: from {module} import ...")
+
+        self.assertEqual(violations, [])
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge.adapters.skillfoundry import (
+from missionforge_skillfoundry import (
     FrontDeskArtifactRef,
     SkillFoundryCompileResult,
     SkillFoundrySourceBundle,
@@ -41,7 +41,7 @@ def sample_source_bundle() -> SkillFoundrySourceBundle:
     )
 
 
-class SkillFoundryAdapterContractTests(unittest.TestCase):
+class SkillFoundryIntegrationContractTests(unittest.TestCase):
     def test_frontdesk_artifact_ref_round_trip(self) -> None:
         artifact = FrontDeskArtifactRef(
             artifact_id="source-001",

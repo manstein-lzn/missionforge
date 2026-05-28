@@ -33,7 +33,7 @@ Non-goals for the initial development goal:
 - no real PiWorker execution
 - no LangGraph adapter
 - no HTTP service
-- no SkillFoundry adapter
+- no product-specific adapter in the `missionforge` package
 - no SQLite ledger unless a phase explicitly revises the plan
 - no product-specific mission branches
 
@@ -185,13 +185,13 @@ The development goal is complete when:
 - all default tests pass
 - module docs match implementation
 - the runtime remains deterministic/offline by default
-- no MissionForge core module imports host, SkillFoundry, LangGraph, or live LLM
-  provider code
+- no MissionForge core module imports host, product integration, LangGraph, or
+  live LLM provider code
 
-PiWorker and SkillFoundry adapters may be a follow-on goal if the deterministic
-runtime kernel is complete.
+PiWorker adapters and external product integrations may be follow-on goals if
+the deterministic runtime kernel is complete.
 
 Follow-on adapter work should use `docs/FOLLOW_ON_GOALS.md` and should be split
-by trust boundary. Do not combine PiWorker, SkillFoundry, host adapters, live
-LLM steering, LangGraph, or HTTP service work in a single goal unless a later
+by trust boundary. Do not combine PiWorker, product integrations, host
+adapters, live LLM steering, LangGraph, or HTTP service work in a single goal unless a later
 design revision explicitly justifies that merge.

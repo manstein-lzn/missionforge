@@ -5,8 +5,8 @@
 Define shared refs-only contracts for optional MissionForge adapters without
 making adapter code part of the core runtime import graph.
 
-These contracts are the boundary layer for follow-on PiWorker, SkillFoundry,
-and host adapter goals. They do not implement any adapter behavior.
+These contracts are the boundary layer for follow-on worker, provider, and
+host adapter goals. They do not implement any adapter behavior.
 
 ## Scope
 
@@ -21,7 +21,7 @@ and host adapter goals. They do not implement any adapter behavior.
 
 - this module does not implement the faux PiWorker adapter
 - no real PiWorker execution
-- no SkillFoundry compiler behavior
+- no product-specific compiler behavior
 - no LangGraph adapter
 - no HTTP service
 - no live LLM
@@ -47,6 +47,10 @@ Implemented:
 The root `missionforge` package does not import or re-export adapter contracts.
 Core runtime modules must remain adapter-free.
 
+Product-specific integrations must remain outside the `missionforge` Python
+package. They may depend on these adapter contracts, but `missionforge` must
+not import or package them.
+
 ## Public Contracts
 
 - `AdapterBoundary`
@@ -62,6 +66,9 @@ Core runtime modules must remain adapter-free.
   are rejected.
 - Adapter modules may import MissionForge contracts.
 - MissionForge core modules must not import `missionforge.adapters`.
+- MissionForge adapters must not contain product-specific task semantics.
+- Product integrations must depend on MissionForge; MissionForge must not
+  depend on product integrations.
 - Adapter results are evidence or diagnostics, not acceptance.
 - Completion remains owned by `VerificationResult.status`.
 
@@ -100,10 +107,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 # Ran 106 tests: OK
 ```
 
-Goal 6B:
+Historical Goal 6B before product integration extraction:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_skillfoundry_adapter_contracts.py tests/test_skillfoundry_compiler.py tests/test_skillfoundry_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
+PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s integrations/skillfoundry/tests
 # Ran 24 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests
@@ -113,11 +120,26 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 Goal 6C:
 
 ```bash
-PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py tests/test_skillfoundry_import_boundaries.py
+PYTHONPATH=src python3 -m unittest tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
 # Ran 17 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests
 # Ran 131 tests: OK
+```
+
+Product integration extraction:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py tests/test_pi_agent_runtime_import_boundaries.py tests/test_host_import_boundaries.py
+# Ran 14 tests: OK
+
+MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
+# Node tests passed
+# Python tests: Ran 205 tests: OK (skipped=2)
+# MissionForge validation passed
+
+./scripts/validate_integrations.sh skillfoundry
+# Ran 20 tests: OK
 ```
 
 ## Open Questions

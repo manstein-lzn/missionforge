@@ -14,13 +14,14 @@ Recommended order:
 ```text
 Goal 6.0: Adapter Boundary Preflight
 Goal 6A: Faux PiWorker Adapter
-Goal 6B: SkillFoundry MissionIR Compiler
+Goal 6B: External Product Integration Compiler
 Goal 6C: Optional Host Adapter Shell
 ```
 
-Only Goal 6.0 and Goal 6A are prerequisites for a real PiWorker smoke. Goal 6B
-can run after 6.0, but it must not import SkillFoundry into MissionForge core.
-Goal 6C is optional and should remain read-only/control-intent oriented.
+Only Goal 6.0 and Goal 6A are prerequisites for a real PiWorker smoke. Product
+integration compilers can run after 6.0, but they must live outside the
+`missionforge` package and depend on MissionForge, not the reverse. Goal 6C is
+optional and should remain read-only/control-intent oriented.
 
 ## Global Adapter Rules
 
@@ -30,6 +31,8 @@ Goal 6C is optional and should remain read-only/control-intent oriented.
 - Adapter output is evidence, not acceptance.
 - Completion still comes from `VerificationResult.status`.
 - Product, host, provider, and worker names must not become runtime branches.
+- Product-specific integrations must live outside the `missionforge` Python
+  package.
 - Live resources require explicit follow-on scope and focused smoke tests.
 
 ## Goal 6.0: Adapter Boundary Preflight
@@ -50,7 +53,7 @@ Primary documentation:
 - `docs/modules/adapter_contracts.md`
 - `docs/modules/piworker.md`
 - `docs/modules/host_adapters.md`
-- `docs/modules/skillfoundry_adapter.md`
+- product integration docs outside `docs/modules/`
 
 Primary modules, if implemented in this goal:
 
@@ -61,7 +64,7 @@ Primary modules, if implemented in this goal:
 Non-goals:
 
 - no real PiWorker execution
-- no SkillFoundry adapter behavior
+- no product-specific adapter behavior
 - no LangGraph adapter
 - no HTTP service
 - no live LLM
@@ -83,7 +86,7 @@ Suggested `/goal` prompt:
 /goal 使用 $metaloop 按 docs/FOLLOW_ON_GOALS.md 的 Goal 6.0 推进
 MissionForge Adapter Boundary Preflight。只定义 adapter package 边界、
 import-boundary tests 和共享 adapter contracts；不要接真实 PiWorker、
-SkillFoundry、LangGraph、HTTP 或 live LLM。
+产品集成、LangGraph、HTTP 或 live LLM。
 ```
 
 ## Goal 6A: Faux PiWorker Adapter
@@ -156,38 +159,36 @@ Suggested `/goal` prompt:
 MissionForge Faux PiWorker Adapter。实现 deterministic faux adapter、
 event-to-evidence mapping、refs-only ExecutionReport、import-boundary tests。
 不要接 live PiWorker、provider credentials、live LLM、LangGraph、HTTP 或
-SkillFoundry adapter。
+产品特定 adapter。
 ```
 
-## Goal 6B: SkillFoundry MissionIR Compiler
+## Goal 6B: External Product Integration Compiler
 
 Status: `completed_verified`
 
 Intent:
 
 ```text
-Implement a SkillFoundry-facing adapter that compiles FrontDesk-style artifacts
-into MissionIR and profile refs, while keeping SkillFoundry product semantics
-outside MissionForge core.
+Implement external product integration compilers that compile product-specific
+source artifacts into MissionIR and profile refs, while keeping product
+semantics outside the `missionforge` Python package.
 ```
 
 Primary modules:
 
-- `src/missionforge/adapters/skillfoundry.py`
-- `tests/test_skillfoundry_adapter_contracts.py`
-- `tests/test_skillfoundry_compiler.py`
-- `tests/test_skillfoundry_import_boundaries.py`
+- `integrations/<product>/src/...`
+- `integrations/<product>/tests/...`
 
 Public contracts:
 
-- `SkillFoundrySourceBundle`
-- `SkillFoundryCompileResult`
-- `FrontDeskArtifactRef`
-- `SkillPackageTarget`
+- product source bundle refs
+- product compile result refs
+- product source artifact refs
+- product target declarations
 
 Non-goals:
 
-- no SkillFoundry runtime dependency in MissionForge core
+- no product integration dependency in the `missionforge` package
 - no registry publishing
 - no product-specific runtime branches
 - no capability bundle special cases in `RuntimeEngine`
@@ -196,34 +197,33 @@ Non-goals:
 
 Acceptance:
 
-- FrontDesk artifacts compile into valid `MissionIR`
+- product artifacts compile into valid `MissionIR`
 - capability-bundle behavior is expressed through capability and verification
   profiles
 - compile output is refs-only
-- adapter rejects raw transcript input unless represented as an allowed
+- integration rejects raw transcript input unless represented as an allowed
   sanitized source ref
 - generated MissionIR freezes deterministically
-- MissionForge core has no SkillFoundry imports
+- MissionForge has no product integration imports
 
 Implemented in this goal:
 
-- deterministic SkillFoundry adapter contracts and compiler in
-  `src/missionforge/adapters/skillfoundry.py`
-- FrontDesk-style fixture compiler producing valid MissionIR and frozen
+- deterministic SkillFoundry integration under `integrations/skillfoundry/`
+  that compiles FrontDesk-style fixture refs into valid MissionIR and frozen
   contract refs
-- refs-only `SkillFoundryCompileResult`
+- refs-only product compile result
 - raw transcript and raw payload/body/prompt field rejection
 - fail-closed rejection for source bundles that omit capability profile refs
 - tests proving profile-based capability behavior, deterministic freezing, and
-  SkillFoundry import boundaries
+  product integration import boundaries
 
 Suggested `/goal` prompt:
 
 ```text
 /goal 使用 $metaloop 按 docs/FOLLOW_ON_GOALS.md 的 Goal 6B 实现
-SkillFoundry MissionIR Compiler。只做 adapter 层把 FrontDesk artifacts 编译成
-MissionIR/profile refs，并证明 core 不 import SkillFoundry。不要做 registry
-publishing、runtime product branch、live LLM、PiWorker 或 HTTP。
+外部产品 integration compiler。只做 integration 层把产品 source refs 编译成
+MissionIR/profile refs，并证明 missionforge package 不 import 产品 integration。
+不要做 registry publishing、runtime product branch、live LLM、PiWorker 或 HTTP。
 ```
 
 ## Goal 6C: Optional Host Adapter Shell

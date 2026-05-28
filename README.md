@@ -62,8 +62,11 @@ Implementation should be driven through the hardened development documents:
 - [Component Acceptance Matrix](docs/COMPONENT_ACCEPTANCE_MATRIX.md): phase gate
   checklists and cross-cutting invariants.
 - [Follow-On Goals](docs/FOLLOW_ON_GOALS.md): post-runtime-kernel goal
-  contracts for adapter boundary preflight, faux PiWorker, SkillFoundry
-  compiler, and optional host shells.
+  contracts for adapter boundary preflight, faux PiWorker, product integration
+  extraction, and optional host shells.
+- [Product Integration Boundary](docs/PRODUCT_INTEGRATION_BOUNDARY.md):
+  adapter cleanliness rule that keeps product-specific task semantics outside
+  the `missionforge` Python package.
 - [Phase 11 Operator Productization Plan](docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md):
   CLI, inspection, diagnosis, resume, review, and validation workflows on top
   of the Phase 10 durable runtime state.
@@ -80,7 +83,6 @@ src/missionforge/
     observation.py Optional read-only run view and ControlRequest writer
     steering_llm.py Optional controlled steering LLM adapter
     piworker.py  Deterministic faux PiWorker adapter contracts and fixture run
-    skillfoundry.py Deterministic FrontDesk refs to MissionIR compiler adapter
   contracts.py   Shared enums, errors, safe refs, hashing, validation helpers
   evidence.py    Evidence and artifact ref contracts
   freeze.py      Mission expansion and frozen contract hashing
@@ -102,6 +104,7 @@ docs/
   DESIGN_PROGRAM.md
   DEVELOPMENT_PROTOCOL.md
   DEVELOPMENT_GOAL_PROTOCOL.md
+  PRODUCT_INTEGRATION_BOUNDARY.md
   COMPONENT_DEVELOPMENT_PLAN.md
   COMPONENT_ACCEPTANCE_MATRIX.md
   FOLLOW_ON_GOALS.md
@@ -110,7 +113,10 @@ docs/
   modules/
     adapter_contracts.md
     controlled_steering.md
-    skillfoundry_adapter.md
+integrations/
+  skillfoundry/
+    External product integration that compiles SkillFoundry/FrontDesk refs
+    into MissionIR without being part of the missionforge Python package.
 ```
 
 ## Development
@@ -158,3 +164,16 @@ or dashboard output.
 
 The default runtime path remains deterministic and offline. Proposal mode is
 enabled only by injecting providers into `RuntimeEngine` or `MissionRuntime`.
+
+## Product Integrations
+
+MissionForge core adapters are protocol, process, host, worker, or provider
+boundaries. They must not contain product-specific task semantics.
+
+Product integrations live outside the `missionforge` Python package. The
+SkillFoundry migration bridge is now under `integrations/skillfoundry/` and
+depends on MissionForge rather than being imported by it.
+
+```bash
+./scripts/validate_integrations.sh skillfoundry
+```
