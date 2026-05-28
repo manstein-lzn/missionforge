@@ -32,6 +32,8 @@ Mission IR is grounded in a small set of reusable systems ideas:
 - provenance and audit: every operational fact should be backed by refs
 - capability security: actions, tools, writes, resources, and authority must be
   bounded before execution
+- controlled steering: LLMs and workers may propose or interpret, but only
+  validated runtime code commits state and only verifier evidence proves facts
 
 These theories constrain the shape of Mission IR, but the wire format remains
 pragmatic JSON-compatible data.
@@ -45,10 +47,15 @@ MissionIR
   The authoring-level structured intent supplied by a host, FrontDesk-like
   compiler, CLI, service, or another orchestrator.
 
-ProfileSpec
+CapabilityProfile
   A reusable capability declaration. It expands generic or domain capabilities
-  into constraints, artifacts, validators, risk checks, repair hints, and worker
-  guidance.
+  into constraints, artifacts, evidence requirements, risk checks, repair hints,
+  and worker guidance.
+
+VerificationProfile
+  A reusable verification-language declaration. It declares validator types,
+  validator modes and severities, manual or unsupported checks, review
+  questions, risk checks, and known gaps.
 
 ExpandedMission
   MissionIR after all profile references are resolved and normalized. This is
@@ -62,6 +69,11 @@ MissionRun
   Durable execution state: attempts, work units, observations, execution
   reports, evidence ledger refs, verification results, adaptive decisions,
   metrics, controls, and final result.
+
+SteeringProposal
+  A proposed route, work unit, repair strategy, observation interpretation, or
+  contract adjustment. It is evidence until validated and committed. It is not
+  durable truth by itself.
 ```
 
 The worker should not consume free-form chat or an unfrozen MissionIR. PiWorker
@@ -72,15 +84,19 @@ receives a bounded WorkUnitContract compiled from the FrozenMissionContract.
 ```text
 draft MissionIR
   -> validate authoring shape
-  -> resolve ProfileSpec references
+  -> resolve CapabilityProfile and VerificationProfile references
   -> expand to ExpandedMission
   -> review assumptions, risks, and unverifiable gates
   -> freeze to FrozenMissionContract
-  -> compile WorkUnitContract
+  -> estimate mission state
+  -> propose or deterministically select WorkUnitContract
+  -> validate proposal, authority, refs, and scope
+  -> commit WorkUnitContract
   -> execute PiWorker attempt
   -> collect Observation and ExecutionReport
   -> verify EvidenceLedger through VerificationSpec
-  -> decide complete | continue | repair | redesign | review | stop | escalate
+  -> record StateCorrection and DecisionLedgerEntry
+  -> decide complete | continue | repair | redesign | pivot | review | stop | escalate
   -> emit MissionResult
 ```
 
@@ -130,6 +146,8 @@ Required concepts:
 - forbidden_actions: actions the runtime or worker must not take
 - required_artifacts: artifacts that must exist before closure
 - risk_policy: known risk checks and escalation boundaries
+- revision_policy: which contract changes require redesign, reviewer approval,
+  or user authority
 
 Every constraint should be stable, identifiable, and traceable to source refs,
 profiles, or explicit host policy.
@@ -140,7 +158,9 @@ The allowed operational surface.
 
 Required concepts:
 
-- profile_refs: reusable capability declarations to expand
+- capability_profile_refs: reusable capability declarations to expand
+- verification_profile_refs: reusable verification-language declarations to
+  expand
 - tool_policy: allowed, forbidden, and approval-required tool classes
 - action_policy: permitted action families and preconditions
 - resource_policy: cost, time, model, network, credential, and external system
@@ -162,9 +182,27 @@ Required concepts:
   lineage
 - evidence_ledger: append-only refs written during MissionRun
 - forbidden_evidence: material that must not be ingested or emitted
+- reliability_policy: trust levels for worker claims, LLM interpretations,
+  artifacts, command results, verifier results, reviewer decisions, and human
+  acceptance
 
 Evidence refs should be durable and inspectable. Long free-form logs may be
 referenced, but worker self-report is not acceptance evidence by itself.
+
+Candidate evidence trust levels:
+
+- `untrusted_worker_claim`
+- `llm_interpretation`
+- `artifact_ref`
+- `command_result`
+- `test_result`
+- `schema_validation`
+- `verifier_result`
+- `reviewer_decision`
+- `human_acceptance`
+
+Low-trust evidence may motivate a proposal, diagnosis, or review. It does not
+prove completion.
 
 ### Verification
 
@@ -195,6 +233,10 @@ Validator severities:
 - `blocking`: unresolved or failed means not complete
 - `advisory`: reported as warning, never hard proof
 
+VerificationProfile should declare which validator types are valid for the
+mission. Unknown validators fail closed unless they are declared by a locked
+profile and classified as manual or unsupported.
+
 Candidate verification statuses:
 
 - `completed_verified`
@@ -205,6 +247,35 @@ Candidate verification statuses:
 - `missing_verification_plan`
 - `execution_incomplete`
 - `invalid_contract`
+
+`review_required` is recoverable when a delegatable manual gate can be decided
+by an independent reviewer. `human_acceptance_required` appears only when the
+frozen mission contract explicitly reserves authority for the user.
+
+### Controlled Steering
+
+The proposal and authority vocabulary for intelligence inside the loop.
+
+Required concepts:
+
+- steering_proposals: proposed route or work-unit contracts
+- observation_signals: safe summaries and hypotheses derived from observations
+- contract_adjustment_requests: requests to shrink, expand, split, pivot, or
+  revise a contract
+- proposal_validation_results: accepted or rejected proposal decisions with
+  reasons
+- state_corrections: updates to mission state backed by evidence refs and trust
+  levels
+- decision_ledger: append-only decisions, routes, proposal refs, and rejection
+  reasons
+- reviewer_decisions: independent review artifacts bound to contract revision
+  and verification spec hash
+- control_requests: explicit halt, resource approval, injected fact, or contract
+  revision intent consumed at safe points
+
+LLM-backed components may propose, interpret, or review. They may not commit
+state, mutate a frozen mission contract, expand mission authority, verify
+truth, or close a mission.
 
 ### Adaptation
 
@@ -217,6 +288,8 @@ Decision vocabulary:
 - `repair`: implementation or artifact is defective, but contract remains valid
 - `redesign`: mission contract, assumptions, acceptance, or profiles are wrong
   or incomplete
+- `pivot`: the mission remains valid, but the current strategy direction should
+  change
 - `review`: independent judgment is required
 - `stop`: continuing is not justified under current constraints
 - `escalate`: blocked by authority, resource, safety, or external dependency
@@ -230,6 +303,18 @@ Each failed or partial attempt should record:
 - decision
 - next_plan
 - evidence_refs
+- proposal_refs
+- state_corrections
+
+State correction follows the MetaLoop-style learning discipline:
+
+```text
+Observe -> Evaluate -> Diagnose -> Decide -> Next Plan
+```
+
+Verification proves whether the locked contract is satisfied. Diagnosis records
+what was learned and why the next step is justified. The two must not collapse
+into each other.
 
 ## Authoring Shape
 
@@ -272,31 +357,66 @@ to this:
     "invariants": [],
     "required_artifacts": ["outputs/deliverable.md"],
     "forbidden_actions": [],
-    "risk_policy": []
+    "risk_policy": [],
+    "revision_policy": {
+      "contract_changes_after_freeze": "explicit_revision"
+    }
   },
   "capabilities": {
-    "profile_refs": [
+    "capability_profile_refs": [
       {
         "profile_id": "user_provided_evidence_only",
         "version": "1.0",
         "requirements": {}
       }
     ],
+    "verification_profile_refs": [
+      {
+        "profile_id": "generic_local_verification",
+        "version": "1.0",
+        "requirements": {}
+      }
+    ],
     "tool_policy": {},
     "resource_policy": {},
-    "authority_policy": {}
+    "authority_policy": {
+      "delegated_review": true,
+      "user_reserved_authority": []
+    }
   },
   "evidence": {
     "requirements": ["verifier/verification_result.json"],
     "provenance_policy": {"raw_conversation": "provenance_only"},
-    "forbidden_evidence": ["secrets", "raw_logs"]
+    "forbidden_evidence": ["secrets", "raw_logs"],
+    "reliability_policy": {
+      "worker_claim": "untrusted_worker_claim",
+      "llm_output": "llm_interpretation",
+      "verifier_output": "verifier_result"
+    }
   },
   "verification": {
     "validators": [],
-    "manual_gates": []
+    "manual_gates": [],
+    "known_gaps": [],
+    "review_questions": []
+  },
+  "steering": {
+    "proposal_mode": "deterministic",
+    "allowed_proposal_sources": ["runtime_policy"],
+    "proposal_rules": {
+      "proposal_cannot_close": true,
+      "proposal_cannot_expand_contract": true,
+      "proposal_confidence_grants_no_authority": true
+    },
+    "control_request_types": [
+      "halt",
+      "resource_approval",
+      "inject_fact",
+      "revise_contract_request"
+    ]
   },
   "adaptation": {
-    "allowed_decisions": ["complete", "continue", "repair", "redesign", "review", "stop", "escalate"],
+    "allowed_decisions": ["complete", "continue", "repair", "redesign", "pivot", "review", "stop", "escalate"],
     "repair_policy": {},
     "redesign_policy": {}
   },
@@ -310,11 +430,11 @@ to this:
 
 ## Profile Expansion
 
-Profiles are not task names and not prompt templates. A profile is a reusable
-capability compiler:
+Profiles are not task names and not prompt templates. Capability profiles are
+reusable capability compilers:
 
 ```text
-ProfileSpec + requirements -> mission fragments
+CapabilityProfile + requirements -> mission fragments
 ```
 
 Profile expansion may contribute:
@@ -338,7 +458,34 @@ validator V-003 came from profile markdown_output_contract@1.0
 artifact A-002 came from host MissionIR
 ```
 
+The profile reference itself is also part of the locked contract. In the Phase 2
+kernel, capability profile ref requirements are preserved as
+`source_ref_requirements` with a stable `source_ref_hash`; changing those
+requirements changes the frozen contract hash even before later phases add
+requirement-specific fragment generation.
+
 Runtime routing must use expanded constraints and validators, not profile names.
+
+Verification profiles are reusable verification-language compilers:
+
+```text
+VerificationProfile + requirements -> validator language and review fragments
+```
+
+Verification profile expansion may contribute:
+
+- validator type declarations
+- validator executability metadata
+- mode and severity defaults
+- manual gates
+- unsupported checks
+- review questions
+- known gaps
+- authority rules
+
+Unknown validator types cannot be smuggled into a generic mission. They must be
+declared by a locked verification profile and then classified as executable,
+manual, or unsupported.
 
 ## Anti-Specialization Rules
 
@@ -359,6 +506,7 @@ Allowed patterns:
 if failed_constraint.kind == "missing_required_artifact": repair
 if verification.status == "review_required": route to reviewer gate
 if validator.mode == "unsupported" and severity == "blocking": redesign
+if proposal_validation.status == "rejected": record decision and continue
 ```
 
 The goal is not to avoid domain complexity. The goal is to locate domain
@@ -368,13 +516,24 @@ artifacts instead of hidden runtime branches.
 ## Implementation Status
 
 The current Python dataclasses are intentionally behind this document. They
-validate only the initial MissionIR skeleton. The next implementation step is
-to introduce the layered objects in this order:
+validate the initial MissionIR skeleton plus the first contract/profile/freeze
+kernels. Remaining runtime objects should still be introduced in order:
 
-1. `ProfileSpec`
+Completed:
+
+1. `CapabilityProfile` and `VerificationProfile`
 2. `ExpandedMission`
 3. `FrozenMissionContract`
 4. `VerificationSpec` and validator result records
+5. `EvidenceRef` and `EvidenceReliability`
+6. `SteeringProposal` and `StateCorrection`
+
+Remaining:
+
+1. `EvidenceLedger`
+2. verifier execution and repair records
+3. proposal boundary validation
+4. harness execution reports from real attempts
 5. `MissionRun` and adaptive decision records
 
 Code should not be expanded until the corresponding module documents are

@@ -1,9 +1,15 @@
 # MissionForge Architecture
 
 MissionForge is a generic mission execution substrate. It accepts a structured
-Mission IR, expands it through reusable capability profiles, freezes a verified
-mission contract, and drives a fixed adaptive loop until the mission reaches
-verified closure, review, redesign, stop, escalation, or failure.
+Mission IR, expands it through reusable capability and verification profiles,
+freezes a verified mission contract, and drives a fixed adaptive loop until the
+mission reaches verified closure, review, redesign, stop, escalation, or
+failure.
+
+The architecture is informed by SkillFoundry's adaptive steering lessons and
+MetaLoop's lightweight control protocol. MissionForge should absorb their
+stable control primitives without becoming a SkillFoundry rewrite or a
+MetaLoop runtime clone.
 
 ## Product Boundary
 
@@ -25,7 +31,7 @@ MissionForge is:
 
 ## Planes
 
-MissionForge has five planes.
+MissionForge has six planes.
 
 ### 1. Mission Plane
 
@@ -42,9 +48,10 @@ Mission Plane objects are layered:
 MissionIR -> ExpandedMission -> FrozenMissionContract -> MissionRun
 ```
 
-Profiles expand domain or capability concepts into mission primitives before
-freeze. Runtime decisions use expanded constraints and validators, not task
-names or profile-name branches.
+Profiles expand domain, capability, and verification-language concepts into
+mission primitives before freeze. Runtime decisions use expanded constraints,
+validators, evidence requirements, and authority rules, not task names or
+profile-name branches.
 
 ### 2. Context Plane
 
@@ -74,7 +81,36 @@ The harness plane carries the ForgeUnit lessons:
 
 The harness plane does not understand product-specific mission semantics.
 
-### 4. Worker Plane
+### 4. Controlled Steering Plane
+
+The controlled steering plane carries the SkillFoundry controlled LLM steering
+direction and the MetaLoop control-point discipline:
+
+```text
+LLM proposes.
+Harness validates boundaries.
+Runtime commits state.
+Verifier proves facts.
+Reviewer arbitrates quality and authority.
+```
+
+This plane owns proposal and control vocabulary:
+
+- steering proposals
+- observation signals
+- contract adjustment requests
+- state corrections
+- decision ledger entries
+- reviewer decisions
+- explicit control requests
+- safe-point checks
+
+LLM-backed components may propose, interpret, or review. They may not mutate a
+frozen contract, commit runtime state, expand authority, verify truth, or close
+a mission. Default runtime behavior must remain deterministic/offline until the
+proposal protocol is testable without live model calls.
+
+### 5. Worker Plane
 
 MissionForge is PiWorker-first and PiWorker-only for the first formal design
 cycle. This is a deliberate constraint, not an accident.
@@ -89,7 +125,7 @@ stable. Until then, "worker adapter" means PiWorker adapter.
 PiWorker consumes a bounded work-unit contract derived from Mission IR and
 returns refs-only execution evidence.
 
-### 5. Adaptive Plane
+### 6. Adaptive Plane
 
 The adaptive loop is fixed:
 
@@ -98,16 +134,27 @@ validate mission
 resolve profiles
 expand mission
 freeze contract
-propose work unit
+estimate state
+propose or select work unit
+validate proposal and authority
+commit work unit
 execute worker
 collect observation
 verify evidence
+record state correction
 route: complete | continue | repair | redesign | review | stop | escalate | fail
 emit result
 ```
 
 Routing is based on structured verification and failed constraint IDs, not
-string matching over logs.
+string matching over logs. LLM interpretation can become an observation signal,
+but it is never accepted as fact without evidence and verifier support.
+
+The Phase 5 vertical slice implements the first deterministic version of this
+loop with a frozen contract ref, deterministic proposal, validated work unit,
+fake worker artifact, evidence ledger, and verifier-routed `MissionResult`.
+The fake worker records artifacts and execution reports only; completion still
+comes from `VerificationResult.status`.
 
 ## Optional Hosts
 
@@ -123,11 +170,14 @@ host state -> MissionIR -> MissionRuntime -> MissionResult -> host state
 ## Core Rule
 
 MissionForge core code must not special-case named missions. Domain complexity
-belongs in Mission IR, ProfileSpec data, validator data, evidence data, and
-generated artifacts.
+belongs in Mission IR, capability profile data, verification profile data,
+validator data, evidence data, and generated artifacts.
 
 Worker self-report is never acceptance. Completion must come from a locked
 FrozenMissionContract, EvidenceLedger records, and VerificationResult.
+
+LLM self-report is also never acceptance. LLM output is proposal, hypothesis, or
+review evidence according to its recorded trust level and authority boundary.
 
 ## Documentation Rule
 

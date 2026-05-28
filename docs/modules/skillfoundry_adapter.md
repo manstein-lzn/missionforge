@@ -1,0 +1,173 @@
+# Module: SkillFoundry Adapter
+
+## Goal
+
+Compile SkillFoundry-facing source artifacts into MissionForge `MissionIR`
+without making MissionForge core depend on SkillFoundry product semantics.
+
+SkillFoundry should become an application shell on top of MissionForge, not a
+set of runtime branches inside MissionForge.
+
+## Scope
+
+- FrontDesk-style source bundle refs
+- sanitized user/task source refs
+- capability-bundle MissionIR compilation
+- profile ref selection
+- Skill package output target declaration
+- adapter import-boundary checks
+- refs-only compile result
+
+## Non-Goals
+
+- no SkillFoundry dependency in `missionforge` core
+- no registry publishing
+- no product-specific runtime branch
+- no live LLM
+- no PiWorker execution
+- no raw transcript ingestion unless represented as an explicitly allowed
+  sanitized source ref
+
+## Current Status
+
+Goal 6B now implements a deterministic offline SkillFoundry MissionIR compiler
+adapter. It compiles FrontDesk-style refs into MissionForge `MissionIR`, writes
+refs-only compiler outputs, and keeps SkillFoundry product semantics outside
+MissionForge core.
+
+The adapter does not import SkillFoundry runtime packages, publish to a
+registry, call live LLMs, execute PiWorker, use LangGraph, or expose HTTP.
+
+## Public Contracts
+
+Implemented in Goal 6B:
+
+- `SkillFoundrySourceBundle`
+- `SkillFoundryCompileResult`
+- `FrontDeskArtifactRef`
+- `SkillPackageTarget`
+- `SkillFoundryMissionCompiler`
+
+## Contract Sketch
+
+`SkillFoundrySourceBundle` should describe input refs only:
+
+```json
+{
+  "bundle_id": "sf-source-001",
+  "frontdesk_contract_ref": "frontdesk/task_contract.json",
+  "source_manifest_ref": "frontdesk/source_manifest.json",
+  "target_package_ref": "package/SKILL.md",
+  "allowed_write_scopes": ["package", "attempts"],
+  "capability_profile_refs": [
+    {
+      "profile_id": "user_provided_evidence_only",
+      "requirements": {}
+    },
+    {
+      "profile_id": "explicit_output_root",
+      "requirements": {
+        "output_root": "package"
+      }
+    }
+  ]
+}
+```
+
+`SkillFoundryCompileResult` should return a MissionIR ref and diagnostics:
+
+```json
+{
+  "bundle_id": "sf-source-001",
+  "mission_ir_ref": "missions/sf-source-001.mission.json",
+  "diagnostic_refs": ["evidence/skillfoundry_compile_diagnostics.json"],
+  "warnings": []
+}
+```
+
+## Invariants
+
+- SkillFoundry names may appear in adapter modules and adapter docs, not in
+  MissionForge runtime branches.
+- The adapter compiles product facts into MissionIR and profile refs.
+- Capability bundle behavior is expressed through profiles and validators.
+- Raw chat or transcript material is not task truth.
+- Compile results are refs-only.
+- Free-form SkillFoundry worker or LLM claims are evidence only, never
+  acceptance.
+- MissionForge core must not import `missionforge.adapters.skillfoundry`.
+
+## Implemented Adapter Behavior
+
+- `SkillFoundrySourceBundle` describes FrontDesk contract refs, source manifest
+  refs, target package refs, allowed write scopes, capability profile refs, and
+  verification profile refs.
+- `FrontDeskArtifactRef` admits sanitized refs such as `sanitized_source` and
+  `sanitized_transcript`; raw transcript/chat/conversation refs are rejected.
+- `SkillFoundryMissionCompiler` reads the referenced FrontDesk contract and
+  source manifest, rejects raw transcript/prompt/payload/body fields, and
+  compiles a valid `MissionIR`.
+- Generated MissionIR carries admitted source refs in `inputs`, target package
+  refs and allowed write scopes in `outputs`, adapter constraints, and the
+  selected capability/verification profile refs.
+- Source bundles must declare capability profile refs; the compiler rejects
+  capability-bundle input that would otherwise bypass profile expansion.
+- Generated MissionIR is frozen through `freeze_mission`, so capability and
+  verification profile behavior uses the same deterministic expansion path as
+  core MissionForge.
+- `SkillFoundryCompileResult` returns only refs, profile ids, target package
+  ref, contract hash, diagnostics refs, and warnings. It does not embed
+  FrontDesk artifact bodies.
+
+## Dependencies
+
+- Mission IR
+- profiles
+- freeze kernel
+- context/evidence
+- adapter contracts
+
+## Verification Strategy
+
+- valid FrontDesk fixture compiles to valid MissionIR
+- generated MissionIR freezes deterministically
+- raw transcript input is rejected unless declared as sanitized evidence
+- capability bundle behavior uses profiles, not runtime branches
+- import-boundary test proves core modules do not import SkillFoundry adapter
+- compile result is refs-only
+
+## Verification Evidence
+
+Goal 6B focused tests:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_skillfoundry_adapter_contracts.py tests/test_skillfoundry_compiler.py tests/test_skillfoundry_import_boundaries.py tests/test_adapter_import_boundaries.py tests/test_piworker_import_boundaries.py
+# Ran 24 tests: OK
+
+PYTHONPATH=src python3 -m unittest discover -s tests
+# Ran 124 tests: OK
+
+git diff --check
+# passed
+```
+
+Independent reviewer `Helmholtz` approved Goal 6B after one repair to require
+capability profile refs for capability-bundle compilation. MetaLoop
+verification reached `completed_verified`.
+
+## Review Gates
+
+Independent review is required if:
+
+- adapter behavior appears to require a MissionForge runtime branch
+- source bundle shape exposes raw conversation or private material
+- profile requirements are too product-specific for reusable profile data
+- registry publishing or packaging side effects enter the compile step
+
+## Open Questions
+
+- Which exact FrontDesk artifacts should be the first stable input fixture?
+- Should the adapter write MissionIR files itself or return an in-memory object
+  plus refs?
+- Which profile set is sufficient for the first capability-bundle mission?
+- Should SkillFoundry package validation be a separate verification profile?

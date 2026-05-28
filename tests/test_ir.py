@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from tempfile import TemporaryDirectory
 
 from missionforge import MissionIR, MissionRuntime, MissionValidationError
+from missionforge import MissionResult, Ref
 
 
 def sample_mission_payload() -> dict:
@@ -64,11 +66,24 @@ class MissionIRTests(unittest.TestCase):
 
     def test_runtime_accepts_valid_mission(self) -> None:
         mission = MissionIR.from_dict(sample_mission_payload())
-        result = MissionRuntime().run(mission)
+        with TemporaryDirectory() as tmpdir:
+            result = MissionRuntime(workspace=tmpdir).run(mission)
 
-        self.assertEqual(result.status, "accepted")
-        self.assertEqual(result.metrics["constraint_count"], 1)
-        self.assertEqual(result.metrics["profile_count"], 1)
+        self.assertEqual(result.status, "completed_verified")
+        self.assertEqual(result.metrics["verification_status"], "completed_verified")
+
+    def test_mission_result_round_trip_and_ref_export(self) -> None:
+        result = MissionResult(
+            mission_id="sample-mission",
+            status="accepted",
+            evidence_refs=["evidence/result.json"],
+            artifact_refs=["package/SKILL.md"],
+            failed_constraint_ids=["C-001"],
+            metrics={"constraint_count": 1},
+        )
+
+        self.assertEqual(MissionResult.from_dict(result.to_dict()), result)
+        self.assertEqual(Ref("evidence/result.json").to_dict(), {"value": "evidence/result.json"})
 
 
 if __name__ == "__main__":

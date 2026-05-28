@@ -5,13 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from .contracts import MissionValidationError
+
 
 MISSION_IR_SCHEMA_VERSION = "missionforge.mission_ir.v1"
 PRIORITIES = {"must", "should", "may"}
-
-
-class MissionValidationError(ValueError):
-    """Raised when Mission IR is malformed."""
 
 
 def _require_non_empty_str(value: Any, field_name: str) -> str:

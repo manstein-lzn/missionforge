@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+import unittest
+
+
+CORE_ROOT = Path("src/missionforge")
+ADAPTER_ROOT = CORE_ROOT / "adapters"
+
+
+class AdapterImportBoundaryTests(unittest.TestCase):
+    def test_core_modules_do_not_import_adapter_package(self) -> None:
+        violations: list[str] = []
+        for path in CORE_ROOT.rglob("*.py"):
+            if ADAPTER_ROOT in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "missionforge.adapters" or alias.name.startswith("missionforge.adapters."):
+                            violations.append(f"{path}: import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if module == "missionforge.adapters" or module.startswith("missionforge.adapters."):
+                        violations.append(f"{path}: from {module} import ...")
+                    if node.level == 1 and (module == "adapters" or module.startswith("adapters.")):
+                        violations.append(f"{path}: from .{module} import ...")
+
+        self.assertEqual(violations, [])
+
+    def test_package_root_does_not_reexport_adapters(self) -> None:
+        init_text = (CORE_ROOT / "__init__.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("adapters", init_text)
+        self.assertNotIn("AdapterBoundary", init_text)
+        self.assertNotIn("AdapterResult", init_text)
+
+    def test_no_unplanned_host_adapter_implementation_modules_exist_yet(self) -> None:
+        forbidden = {
+            ADAPTER_ROOT / "langgraph.py",
+            ADAPTER_ROOT / "http.py",
+        }
+
+        self.assertEqual([str(path) for path in forbidden if path.exists()], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

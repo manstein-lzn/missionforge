@@ -1,7 +1,8 @@
 # MissionForge
 
 MissionForge is a runtime for executing structured Mission IR with observable
-LLM workers, evidence gates, adaptive repair, and verified closure.
+LLM workers, controlled steering proposals, evidence gates, adaptive repair,
+and verified closure.
 
 It is intentionally not a SkillFoundry rewrite. SkillFoundry should become one
 application on top of MissionForge. MissionForge owns the generic substrate:
@@ -22,7 +23,11 @@ MissionIR + Workspace + WorkerProvider + ToolRegistry
   code must retain required attribution.
 - Context and evidence are first-class runtime objects, not chat memory.
 - Worker self-report is never acceptance evidence.
+- LLM output is proposal, hypothesis, or review evidence; it is never
+  acceptance by itself.
 - Verifier failures must become structured repair inputs.
+- Steering proposals must be schema-validated, boundary-validated, and
+  authority-validated before runtime commits state.
 - Core code must not contain benchmark or product names such as Codexarium.
 - Documentation starts and ends every module: each module has a module design
   document before implementation, and that document is updated when behavior
@@ -36,30 +41,71 @@ a narrow MVP. The first repository state should clarify:
 - the stable Mission IR contract
 - the runtime state model
 - the context/evidence ledger boundary
+- the controlled steering proposal boundary
 - the work-unit harness protocol
 - the verifier and repair protocol
 - the worker adapter boundary
-- the optional host adapter boundary
+- the optional host, observation, and control adapter boundary
 
 Implementation starts only after these boundaries are explicit enough to keep
 task-specific semantics out of runtime code.
+
+## Development Plan
+
+Implementation should be driven through the hardened development documents:
+
+- [Development Goal Protocol](docs/DEVELOPMENT_GOAL_PROTOCOL.md): `/goal`
+  operating contract, verification discipline, safe-point control, and
+  completion rules.
+- [Component Development Plan](docs/COMPONENT_DEVELOPMENT_PLAN.md): six-phase
+  component backlog from contract kernel through adapter preparation.
+- [Component Acceptance Matrix](docs/COMPONENT_ACCEPTANCE_MATRIX.md): phase gate
+  checklists and cross-cutting invariants.
+- [Follow-On Goals](docs/FOLLOW_ON_GOALS.md): post-runtime-kernel goal
+  contracts for adapter boundary preflight, faux PiWorker, SkillFoundry
+  compiler, and optional host shells.
 
 ## Package Layout
 
 ```text
 src/missionforge/
+  adapters/
+    cli.py       Optional CLI/Python host shell around MissionRuntime
+    contracts.py Adapter boundary, invocation, diagnostic, and result contracts
+    observation.py Optional read-only run view and ControlRequest writer
+    piworker.py  Deterministic faux PiWorker adapter contracts and fixture run
+    skillfoundry.py Deterministic FrontDesk refs to MissionIR compiler adapter
+  contracts.py   Shared enums, errors, safe refs, hashing, validation helpers
+  evidence.py    Evidence and artifact ref contracts
+  freeze.py      Mission expansion and frozen contract hashing
+  harness.py     Proposal validation and work-unit harness
   ir.py          Mission IR dataclasses and validation
-  runner.py      Minimal runtime/result boundary
+  mission.py     Mission contract compatibility surface
+  profiles.py    Capability and verification profile expansion
+  runner.py      Public MissionRuntime/MissionResult boundary
+  runtime.py     Deterministic runtime vertical slice
+  steering.py    Controlled steering contract objects
+  verifier.py    Verification routing
+  verification.py Validator and verification result contracts
+  work_unit.py   Work-unit and execution report contracts
+  workers.py     Generic worker adapter protocol boundary
 docs/
   ARCHITECTURE.md
   MISSION_IR.md
   DESIGN_PROGRAM.md
   DEVELOPMENT_PROTOCOL.md
+  DEVELOPMENT_GOAL_PROTOCOL.md
+  COMPONENT_DEVELOPMENT_PLAN.md
+  COMPONENT_ACCEPTANCE_MATRIX.md
+  FOLLOW_ON_GOALS.md
   modules/
+    adapter_contracts.md
+    controlled_steering.md
+    skillfoundry_adapter.md
 ```
 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests
+PYTHONPATH=src python3 -m unittest discover -s tests
 ```
