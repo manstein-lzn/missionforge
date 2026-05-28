@@ -10,12 +10,14 @@ ADAPTER_ROOT = CORE_ROOT / "adapters"
 HOST_MODULES = {
     "missionforge.adapters.cli",
     "missionforge.adapters.observation",
+    "missionforge.adapters.rpc",
 }
 HOST_SYMBOLS = {
     "ControlRequestWriter",
     "ControlRequestWriteResult",
     "MissionCLI",
     "MissionCLIResult",
+    "MissionJSONLRPC",
     "MissionRunView",
     "read_control_request",
 }
@@ -32,6 +34,7 @@ FORBIDDEN_HOST_IMPORT_ROOTS = {
     "urllib",
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
+    ADAPTER_ROOT / "cli.py",
     ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 

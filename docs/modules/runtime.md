@@ -66,6 +66,12 @@ The deterministic kernel pieces now composed by the runtime are:
   that preserve resume history, read-only status, completed-turn resume,
   explicit retry/repair/redesign metrics, failure injection, artifact hygiene,
   and opt-in live soak.
+- Controlled steering implementation: runtime now supports explicit
+  `steering_mode="proposal"` with injected proposal providers, run-local
+  steering artifacts, accepted/rejected decision ledger refs, optional
+  observation interpreter state-correction refs, and optional reviewer provider
+  resolution for delegatable manual gates. Deterministic runtime behavior
+  remains the default.
 
 The runtime remains deliberately small. It does not expose a product-level
 worker registry or competing worker choices.
@@ -90,6 +96,8 @@ worker registry or competing worker choices.
   history.
 - Runtime commits state only after proposal, scope, authority, and evidence
   validation.
+- Proposal mode is opt-in. Provider output must pass the same schema, refs,
+  scope, authority, and verifier-boundary checks as deterministic proposals.
 - Runtime completion comes from verifier status, not worker output or
   proposal confidence.
 - `MissionResult` is refs-only and must not include raw prompts, transcripts,
@@ -117,6 +125,8 @@ worker registry or competing worker choices.
 - PI Agent savepoint, cancellation, compaction, and repair envelope tests
 - runtime hardening tests for run ledgers, status, resume, failure injection,
   artifact hygiene, and live soak
+- controlled steering tests for proposal mode, observation signals, reviewer
+  provider gates, optional LLM adapter isolation, and operator steering refs
 
 ## Verification Evidence
 
@@ -147,10 +157,22 @@ npm test --prefix workers/pi-agent-runtime
 # 17 tests passed
 ```
 
+Controlled steering slice:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_controlled_steering_runtime.py tests/test_controlled_steering_benchmark.py
+# passed
+
+PYTHONPATH=src python3 -m unittest discover -s tests
+# Ran 222 tests: OK (skipped=2)
+```
+
 ## Open Questions
 
 - Phase 11 operator/product UX is now scoped in
-  `docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md`.
+  `docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md`, with executable `/goal`
+  slices in `docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md`; those slices are
+  completed for the refs-only operator surface.
 - Broader process resume remains unsupported beyond completed-turn resume.
 - A future implementation may add real bounded retry execution for transient
   provider/tool failures; Phase 10 records retry metrics and separates routes.

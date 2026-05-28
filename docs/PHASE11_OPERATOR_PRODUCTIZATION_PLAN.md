@@ -6,6 +6,12 @@ Turn MissionForge's Phase 10 durable runtime state into a small, reliable
 operator surface for running, inspecting, diagnosing, resuming, reviewing, and
 validating missions.
 
+Implementation status: completed verified for Goals 11.0 through 11F. The
+operator surface now has command envelopes, CLI command routing, read-only
+inspection/diagnosis, completed-turn resume, halt intent writing, review
+recording, validation delegation, SkillFoundry operator smoke, and optional
+refs-only JSONL RPC.
+
 Phase 11 is not a new runtime brain. It is the productization layer above the
 existing path:
 
@@ -31,6 +37,12 @@ Phase 10 answered: can MissionForge leave trustworthy refs-only state?
 
 Phase 11 answers: can a host, operator, or SkillFoundry-like product use that
 state to make the next operational decision?
+
+The implementation-ready `/goal` breakdown lives in
+`docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md`. This plan defines the product
+boundary and roadmap position; the goals document defines the concrete
+development slices, command contracts, exit-code taxonomy, and verification
+gates.
 
 ## PI Main Reuse Audit
 
@@ -233,8 +245,9 @@ native CLI command that checks:
 
 ## Optional Headless Protocol
 
-Phase 11 can add a MissionForge-owned JSONL protocol inspired by PI RPC. It
-should be refs-only and MissionRun-centered.
+Phase 11 adds a MissionForge-owned JSONL protocol inspired by PI RPC. It is
+refs-only, MissionRun-centered, and maps requests to the same command
+implementations as CLI.
 
 Input examples:
 
@@ -364,6 +377,9 @@ Acceptance:
 
 ## Implementation Order
 
+Use `docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md` as the executable
+development order. The high-level order remains:
+
 1. Add Phase 11 design document and align module docs.
 2. Add CLI parser and command dispatch tests.
 3. Implement `inspect`.
@@ -407,7 +423,7 @@ Future Phase 11-specific tests should cover:
 
 ## Completion Criteria
 
-Phase 11 is complete when an operator can:
+Phase 11 is complete. An operator can:
 
 1. run a mission from a MissionIR ref,
 2. inspect the resulting MissionRun without reading raw JSON manually,

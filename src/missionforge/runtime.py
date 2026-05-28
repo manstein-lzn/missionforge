@@ -13,6 +13,7 @@ from .evidence_store import EvidenceLedger, InMemoryEvidenceStore
 from .freeze import FrozenMissionContract, freeze_mission
 from .harness import ProposalValidator, WorkUnitCompiler, WorkUnitHarness
 from .ir import MissionIR
+from .review import ReviewPacket, ReviewerDecision
 from .state import (
     MISSION_RUN_SCHEMA_VERSION,
     SUPPORTED_RESUME_BOUNDARY,
@@ -27,7 +28,8 @@ from .state import (
     mission_run_refs,
     scan_artifact_hygiene,
 )
-from .steering import SteeringProposal
+from .steering import ObservationSignal, StateCorrection, SteeringContext, SteeringProposal
+from .steering_store import SteeringArtifactStore, steering_refs_for_iteration
 from .verification import VerificationSpec, ValidatorSpec
 from .verifier import Verifier
 
@@ -43,6 +45,10 @@ class RuntimeEngine:
     max_attempts: int = 1
     worker: Any | None = None
     evidence_store: EvidenceLedger = field(default_factory=InMemoryEvidenceStore)
+    steering_provider: Any | None = None
+    observation_interpreter: Any | None = None
+    reviewer_provider: Any | None = None
+    steering_mode: str = "deterministic"
 
     def inspect(self, mission_run_id: str | None = None) -> dict[str, Any]:
         return inspect_runtime(self.workspace, mission_run_id)
@@ -67,6 +73,10 @@ class RuntimeEngine:
             max_attempts=self.max_attempts,
             worker=resume_worker,
             evidence_store=self.evidence_store,
+            steering_provider=self.steering_provider,
+            observation_interpreter=self.observation_interpreter,
+            reviewer_provider=self.reviewer_provider,
+            steering_mode=self.steering_mode,
         )._run(mission, initial_attempt_kind="resume", initial_decision="resume")
 
     def run(self, mission: MissionIR):
@@ -75,11 +85,26 @@ class RuntimeEngine:
     def _run(self, mission: MissionIR, *, initial_attempt_kind: str, initial_decision: str):
         mission.validate()
         require_int_at_least(self.max_attempts, "runtime.max_attempts", 1)
+        if self.steering_mode not in {"deterministic", "proposal"}:
+            raise ContractValidationError("runtime.steering_mode must be deterministic or proposal")
         root = Path(self.workspace)
         root.mkdir(parents=True, exist_ok=True)
         mission_run_id = mission_run_id_for(mission.mission_id)
         refs = mission_run_refs(mission.mission_id)
         _resolve_workspace_ref(root, refs["run_dir"]).mkdir(parents=True, exist_ok=True)
+        steering_store = SteeringArtifactStore(root)
+        steering_artifact_refs: list[str] = []
+        steering_metrics: dict[str, Any] = {
+            "steering_mode": self.steering_mode,
+            "proposal_count": 0,
+            "accepted_proposal_count": 0,
+            "rejected_proposal_count": 0,
+            "observation_signal_count": 0,
+            "review_packet_count": 0,
+            "reviewer_decision_count": 0,
+            "provider_failure_count": 0,
+            "unsafe_proposal_rejection_count": 0,
+        }
         previous_attempts = _previous_attempts(root, mission_run_id, initial_attempt_kind=initial_attempt_kind)
 
         frozen = freeze_mission(mission)
@@ -93,6 +118,30 @@ class RuntimeEngine:
             required_artifacts=required_artifacts,
             allowed_scopes=allowed_scopes,
         )
+        context = _steering_context(
+            mission=mission,
+            mission_run_id=mission_run_id,
+            refs=refs,
+            iteration=proposal.iteration,
+            frozen=frozen,
+            frozen_ref=frozen_ref,
+            previous_attempts=previous_attempts,
+            allowed_scopes=allowed_scopes,
+            failed_constraint_ids=[],
+            safe_summary="Initial mission dispatch.",
+        )
+        if self.steering_mode == "proposal":
+            if self.steering_provider is None:
+                raise ContractValidationError("runtime proposal mode requires a steering_provider")
+            steering_artifact_refs.append(steering_store.write_context(context))
+            try:
+                proposal = _provider_next_proposal(self.steering_provider, context)
+                proposal.validate()
+                steering_metrics["proposal_count"] = 1
+                steering_artifact_refs.append(steering_store.write_proposal(proposal))
+            except Exception as exc:
+                steering_metrics["provider_failure_count"] = 1
+                raise ContractValidationError(f"steering provider failed: {exc}") from exc
         validator = ProposalValidator(available_refs={frozen_ref}, allowed_output_roots=allowed_scopes)
         harness = WorkUnitHarness(
             compiler=WorkUnitCompiler(mission_id=mission.mission_id, validator=validator),
@@ -100,6 +149,19 @@ class RuntimeEngine:
             evidence_store=self.evidence_store,
         )
         dispatch = harness.dispatch(proposal, workspace=str(root))
+        for entry in harness.decision_ledger:
+            steering_artifact_refs.append(
+                steering_store.append_decision(
+                    mission_run_id=mission_run_id,
+                    iteration=proposal.iteration,
+                    decision=entry,
+                )
+            )
+        if dispatch.validation.status.value == "accepted":
+            steering_metrics["accepted_proposal_count"] = 1 if self.steering_mode == "proposal" else 0
+        elif self.steering_mode == "proposal":
+            steering_metrics["rejected_proposal_count"] = 1
+            steering_metrics["unsafe_proposal_rejection_count"] = len(dispatch.validation.reasons)
         attempt_count = 1
         repair_attempted = False
         repair_exhausted = False
@@ -129,8 +191,10 @@ class RuntimeEngine:
                 artifact_refs=[],
                 failed_constraint_ids=[constraint.constraint_id for constraint in mission.constraints],
                 metrics={
+                    **steering_metrics,
                     "proposal_status": dispatch.validation.status.value,
                     "proposal_rejection_count": len(dispatch.validation.reasons),
+                    "steering_refs": _dedupe_refs(steering_artifact_refs),
                 },
             )
             _write_runtime_state(
@@ -147,8 +211,8 @@ class RuntimeEngine:
                 result=result,
                 expected_artifacts=required_artifacts,
                 report_refs=[],
-                required_refs=[],
-                metrics={"redesign_required": redesign_required},
+                required_refs=steering_artifact_refs,
+                metrics={**steering_metrics, "redesign_required": redesign_required, "steering_refs": _dedupe_refs(steering_artifact_refs)},
             )
             return result
 
@@ -159,6 +223,37 @@ class RuntimeEngine:
             contract_hash=frozen.contract_hash,
         )
         verification = verifier.verify(verification_spec)
+        reviewer_decision: ReviewerDecision | None = None
+        review_packet_ref = ""
+        if verification.status == VerificationStatus.REVIEW_REQUIRED and self.reviewer_provider is not None:
+            review_packet = _review_packet(
+                mission_run_id=mission_run_id,
+                iteration=proposal.iteration,
+                refs=refs,
+                frozen_ref=frozen_ref,
+                contract_hash=frozen.contract_hash,
+                attempt_refs=[
+                    dispatch.worker_result.execution_report_ref
+                    if dispatch.worker_result is not None
+                    else f"attempts/{dispatch.work_unit.work_unit_id}/pi_agent_execution_report.json"
+                ],
+                proposal_refs=[ref for ref in steering_artifact_refs if ref.endswith("/steering_proposal.json")],
+                failed_constraint_ids=list(verification.failed_constraint_ids),
+            )
+            review_packet_ref = steering_store.write_review_packet(review_packet)
+            steering_artifact_refs.append(review_packet_ref)
+            steering_metrics["review_packet_count"] = 1
+            reviewer_decision = _provider_review_decision(self.reviewer_provider, review_packet)
+            reviewer_decision.validate_current(contract_hash=frozen.contract_hash)
+            steering_artifact_refs.append(
+                steering_store.write_reviewer_decision(
+                    mission_run_id=mission_run_id,
+                    iteration=proposal.iteration,
+                    decision=reviewer_decision,
+                )
+            )
+            steering_metrics["reviewer_decision_count"] = 1
+            verification = verifier.verify(verification_spec, reviewer_decision=reviewer_decision)
         next_attempt_index = len(previous_attempts) + 1
         attempt_records = [
             _attempt_record(
@@ -192,6 +287,14 @@ class RuntimeEngine:
                     evidence_store=self.evidence_store,
                 )
                 repair_dispatch = repair_harness.dispatch(_repair_proposal(proposal, verification), workspace=str(root))
+                for entry in repair_harness.decision_ledger:
+                    steering_artifact_refs.append(
+                        steering_store.append_decision(
+                            mission_run_id=mission_run_id,
+                            iteration=entry.proposal_id.count("repair") + proposal.iteration,
+                            decision=entry,
+                        )
+                    )
                 if (
                     repair_dispatch.validation.status.value == "accepted"
                     and repair_dispatch.work_unit is not None
@@ -242,6 +345,7 @@ class RuntimeEngine:
             artifact_refs=artifact_refs,
             failed_constraint_ids=list(verification.failed_constraint_ids),
             metrics={
+                **steering_metrics,
                 "attempt_count": len(previous_attempts) + attempt_count,
                 "repair_attempted": repair_attempted,
                 "repair_exhausted": repair_exhausted,
@@ -255,8 +359,49 @@ class RuntimeEngine:
                 "ledger_hash": self.evidence_store.snapshot().ledger_hash,
                 "verification_status": verification.status.value,
                 "validator_result_count": len(verification.validator_results),
+                "steering_refs": _dedupe_refs(steering_artifact_refs),
+                "review_packet_ref": review_packet_ref,
             },
         )
+        observation_signal_ref = ""
+        if self.observation_interpreter is not None:
+            signal = _provider_observation_signal(
+                self.observation_interpreter,
+                _steering_context(
+                    mission=mission,
+                    mission_run_id=mission_run_id,
+                    refs=refs,
+                    iteration=proposal.iteration,
+                    frozen=frozen,
+                    frozen_ref=frozen_ref,
+                    previous_attempts=[*previous_attempts, *attempt_records],
+                    allowed_scopes=allowed_scopes,
+                    failed_constraint_ids=list(verification.failed_constraint_ids),
+                    safe_summary=f"Latest verification status: {verification.status.value}.",
+                ),
+            )
+            signal.validate()
+            observation_signal_ref = steering_store.write_observation_signal(signal)
+            steering_artifact_refs.append(observation_signal_ref)
+            state_correction = StateCorrection(
+                corrected_field="latest_observation_signal",
+                source_ref=observation_signal_ref,
+                trust_level=signal.trust_level,
+                correction=signal.safe_summary,
+            )
+            state_correction_ref = steering_store.write_state_correction(
+                mission_run_id=mission_run_id,
+                iteration=proposal.iteration,
+                correction=state_correction,
+            )
+            steering_artifact_refs.append(state_correction_ref)
+            steering_metrics["observation_signal_count"] = 1
+            result.metrics["observation_signal_count"] = 1
+            result.metrics["observation_signal_ref"] = observation_signal_ref
+            result.metrics["state_correction_ref"] = state_correction_ref
+            result.metrics["steering_refs"] = _dedupe_refs(
+                [*result.metrics.get("steering_refs", []), observation_signal_ref, state_correction_ref]
+            )
         _write_runtime_state(
             root=root,
             mission_run_id=mission_run_id,
@@ -277,8 +422,9 @@ class RuntimeEngine:
                 *[attempt.output_ref for attempt in attempt_records],
                 *[attempt.report_ref for attempt in attempt_records],
                 *[attempt.savepoints_ref for attempt in attempt_records],
+                *steering_artifact_refs,
             ]),
-            metrics=result.metrics,
+            metrics={**result.metrics, **steering_metrics, "observation_signal_ref": observation_signal_ref},
         )
         return result
 
@@ -363,6 +509,110 @@ def _repair_proposal(previous: SteeringProposal, verification) -> SteeringPropos
         proposed_contract=contract,
         rationale="Verifier-driven bounded repair follow-up.",
         confidence=1.0,
+    )
+
+
+def _steering_context(
+    *,
+    mission: MissionIR,
+    mission_run_id: str,
+    refs: dict[str, str],
+    iteration: int,
+    frozen: FrozenMissionContract,
+    frozen_ref: str,
+    previous_attempts: list[RuntimeAttempt],
+    allowed_scopes: list[str],
+    failed_constraint_ids: list[str],
+    safe_summary: str,
+) -> SteeringContext:
+    attempt_refs = [attempt.report_ref for attempt in previous_attempts]
+    return SteeringContext(
+        mission_run_id=mission_run_id,
+        mission_id=mission.mission_id,
+        iteration=iteration,
+        contract_ref=frozen_ref,
+        contract_hash=frozen.contract_hash,
+        mission_run_ref=refs["mission_run"],
+        attempt_refs=attempt_refs,
+        latest_attempt_ref=attempt_refs[-1] if attempt_refs else "",
+        verification_refs=[],
+        artifact_hygiene_ref=refs["artifact_hygiene"],
+        failed_constraint_ids=list(failed_constraint_ids),
+        allowed_output_roots=list(allowed_scopes),
+        visible_refs=[frozen_ref],
+        forbidden_actions=[
+            "close_without_verifier",
+            "expand_frozen_contract_authority",
+            "write_outside_allowed_scope",
+            "override_failed_executable_validator",
+        ],
+        authority_policy_ref="",
+        safe_summary=safe_summary,
+    )
+
+
+def _provider_next_proposal(provider: Any, context: SteeringContext) -> SteeringProposal:
+    try:
+        proposal = provider.next_proposal(context)
+    except TypeError:
+        proposal = provider.next_proposal()
+    if isinstance(proposal, SteeringProposal):
+        return proposal
+    if isinstance(proposal, dict):
+        return SteeringProposal.from_dict(proposal)
+    raise ContractValidationError("steering provider must return SteeringProposal or dict")
+
+
+def _provider_observation_signal(provider: Any, context: SteeringContext) -> ObservationSignal:
+    signal = provider.interpret_observation(context)
+    if isinstance(signal, ObservationSignal):
+        return signal
+    if isinstance(signal, dict):
+        return ObservationSignal.from_dict(signal)
+    raise ContractValidationError("observation interpreter must return ObservationSignal or dict")
+
+
+def _provider_review_decision(provider: Any, packet: ReviewPacket) -> ReviewerDecision:
+    decision = provider.review(packet)
+    if isinstance(decision, ReviewerDecision):
+        return decision
+    if isinstance(decision, dict):
+        return ReviewerDecision.from_dict(decision)
+    raise ContractValidationError("reviewer provider must return ReviewerDecision or dict")
+
+
+def _review_packet(
+    *,
+    mission_run_id: str,
+    iteration: int,
+    refs: dict[str, str],
+    frozen_ref: str,
+    contract_hash: str,
+    attempt_refs: list[str],
+    proposal_refs: list[str],
+    failed_constraint_ids: list[str],
+) -> ReviewPacket:
+    return ReviewPacket(
+        review_packet_id=f"review-packet-{iteration:06d}",
+        mission_run_id=mission_run_id,
+        iteration=iteration,
+        reason="Verifier routed to review_required.",
+        contract_ref=frozen_ref,
+        contract_hash=contract_hash,
+        mission_run_ref=refs["mission_run"],
+        attempt_refs=list(attempt_refs),
+        verification_refs=[],
+        proposal_refs=list(proposal_refs),
+        failed_constraint_ids=list(failed_constraint_ids),
+        questions=[
+            "Can delegatable manual gates be approved for this run?",
+            "Should the runtime continue, repair, redesign, stop, or escalate?",
+        ],
+        forbidden_decisions=[
+            "override_failed_executable_validator",
+            "close_without_verifier",
+            "expand_frozen_contract_authority",
+        ],
     )
 
 

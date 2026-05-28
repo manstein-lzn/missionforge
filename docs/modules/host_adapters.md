@@ -32,6 +32,11 @@ read-only observation summaries, and adds a writer for explicit
 No required LangGraph dependency, HTTP service, dashboard, network client, or
 host-owned verifier/runtime semantics were added.
 
+Phase 11 productizes this host-adapter foundation into operator commands. The
+scope is tracked in `docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md`, and the
+implementation-ready `/goal` slices are in
+`docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md`.
+
 ## Public Contracts
 
 Implemented in Goal 6C:
@@ -41,6 +46,22 @@ Implemented in Goal 6C:
 - `MissionRunView`
 - `ControlRequestWriter`
 - `ControlRequestWriteResult`
+
+Implemented in Phase 11 Goal 11.0:
+
+- `MissionCommandResult`
+- `MissionCommandError`
+- command exit code mapping helpers
+- refs-only command output validator
+
+Implemented in Phase 11 operator productization:
+
+- `MissionCLI.run_command()`
+- `MissionJSONLRPC`
+- operator commands for `run`, `inspect`, `diagnose`, `resume`,
+  `control halt`, `review record`, and `validate`
+- controlled steering refs in read-only `inspect` and deterministic
+  steering-related diagnosis reason codes
 
 ## Adapter Shapes
 
@@ -78,6 +99,27 @@ user or host control -> ControlRequest
 - `ControlRequestWriter` writes explicit halt intent as `ControlRequest` JSON
   under `control/`; it does not dispatch, route, approve, or mutate runtime
   state.
+- `MissionCommandResult` and `MissionCommandError` define the Phase 11
+  operator command envelope before adding command implementations.
+- The command output validator rejects raw body, prompt, transcript, provider
+  message, stdout/stderr, secret-shaped fields, and unsafe refs recursively.
+- `MissionCLI.run_command()` routes product-facing subcommands while preserving
+  the older `MissionCLI.run()` compatibility path.
+- `inspect` and `diagnose` read durable runtime state without mutating run
+  files.
+- `resume` exposes only the completed-turn runtime resume path and reuses the
+  verifier-owned `MissionResult` flow.
+- `control halt` writes explicit `ControlRequest` intent only.
+- `review record` writes refs-only review metadata and does not override
+  verifier state.
+- `validate` delegates to `scripts/validate.sh` and returns a validation log
+  ref, not raw command output.
+- `MissionJSONLRPC` is an optional JSONL request/response adapter that maps
+  requests to the same command implementations as CLI.
+- `inspect` surfaces run-local controlled steering refs and latest steering ref
+  maps without embedding proposal, review, prompt, provider, or artifact bodies.
+- `diagnose` can report steering provider failure, rejected steering proposal,
+  and unsafe steering proposal rejection as operator-actionable reason codes.
 - Host adapter modules remain optional under `missionforge.adapters`; core
   modules and package root do not import or re-export them.
 
@@ -124,18 +166,52 @@ git diff --check
 Independent reviewer `Confucius` approved Goal 6C, and MetaLoop verification
 reached `completed_verified`.
 
+Phase 11 Goal 11.0 focused tests:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_contracts.py
+# Ran 9 tests: OK
+
+PYTHONPATH=src python3 -m unittest discover -s tests
+# Ran 202 tests: OK (skipped=2)
+
+MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
+# Node tests: 17 passed
+# Python tests: Ran 202 tests: OK (skipped=2)
+# MissionForge validation passed
+```
+
+Phase 11 operator productization focused tests:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_skillfoundry_smoke.py tests/test_operator_jsonl_rpc.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
+# Ran 31 tests: OK
+
+PYTHONPATH=src python3 -m unittest tests/test_operator_cli_contracts.py tests/test_operator_cli_run.py tests/test_operator_cli_inspect.py tests/test_operator_cli_diagnose.py tests/test_operator_cli_resume.py tests/test_operator_cli_control.py tests/test_operator_cli_review.py tests/test_operator_cli_validate.py tests/test_operator_skillfoundry_smoke.py tests/test_operator_jsonl_rpc.py tests/test_host_cli_adapter.py tests/test_host_observation_adapter.py tests/test_host_import_boundaries.py tests/test_adapter_import_boundaries.py
+# Ran 44 tests: OK
+```
+
+Controlled steering operator surface:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_operator_controlled_steering_surface.py tests/test_controlled_steering_import_boundaries.py
+# passed
+```
+
 ## Follow-On Goal
 
 Recommended launch prompt:
 
 ```text
-/goal 使用 $metaloop 按 docs/FOLLOW_ON_GOALS.md 的 Goal 6C 设计并实现
-MissionForge optional host adapter shell。保持 host adapter 可选，core 不依赖
-LangGraph/HTTP；observation read-only，control 只写 ControlRequest intent。
+/goal 使用 $metaloop 按 docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md 的
+Goal 11.0 推进 MissionForge Phase 11 Command Contract Preflight。只定义
+command result/error envelope、exit code mapping 和 refs-only output policy；
+不要实现 dashboard、JSONL RPC、PI TUI、PI full CLI 或 runtime 新语义。
 ```
 
 ## Open Questions
 
 - What is the smallest host state mapping?
 - Should adapters support streaming observation events?
-- Which control requests should be exposed by CLI before HTTP service exists?
+- Phase 11 starts with halt as the only CLI control request. Additional
+  controls should wait until a concrete runtime safe-point consumer exists.

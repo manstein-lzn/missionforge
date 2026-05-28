@@ -52,10 +52,24 @@ class MissionResult:
 class MissionRuntime:
     """Top-level runtime facade."""
 
-    def __init__(self, *, workspace: str | Path = ".", max_attempts: int = 1, pi_agent_config: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        workspace: str | Path = ".",
+        max_attempts: int = 1,
+        pi_agent_config: Any | None = None,
+        steering_provider: Any | None = None,
+        observation_interpreter: Any | None = None,
+        reviewer_provider: Any | None = None,
+        steering_mode: str = "deterministic",
+    ) -> None:
         self.workspace = workspace
         self.max_attempts = max_attempts
         self.pi_agent_config = pi_agent_config
+        self.steering_provider = steering_provider
+        self.observation_interpreter = observation_interpreter
+        self.reviewer_provider = reviewer_provider
+        self.steering_mode = steering_mode
 
     def run(self, mission: MissionIR) -> MissionResult:
         from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
@@ -63,7 +77,15 @@ class MissionRuntime:
         worker = PiAgentRuntimeAdapter(self.pi_agent_config)
         from .runtime import RuntimeEngine
 
-        return RuntimeEngine(workspace=self.workspace, max_attempts=self.max_attempts, worker=worker).run(mission)
+        return RuntimeEngine(
+            workspace=self.workspace,
+            max_attempts=self.max_attempts,
+            worker=worker,
+            steering_provider=self.steering_provider,
+            observation_interpreter=self.observation_interpreter,
+            reviewer_provider=self.reviewer_provider,
+            steering_mode=self.steering_mode,
+        ).run(mission)
 
     def inspect(self, mission_run_id: str | None = None) -> dict[str, Any]:
         from .state import inspect_runtime
@@ -75,7 +97,15 @@ class MissionRuntime:
         from .runtime import RuntimeEngine
 
         worker = PiAgentRuntimeAdapter(self.pi_agent_config)
-        return RuntimeEngine(workspace=self.workspace, max_attempts=self.max_attempts, worker=worker).resume(
+        return RuntimeEngine(
+            workspace=self.workspace,
+            max_attempts=self.max_attempts,
+            worker=worker,
+            steering_provider=self.steering_provider,
+            observation_interpreter=self.observation_interpreter,
+            reviewer_provider=self.reviewer_provider,
+            steering_mode=self.steering_mode,
+        ).resume(
             mission,
             follow_up_prompt=follow_up_prompt,
         )

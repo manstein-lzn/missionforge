@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from .contracts import AdaptiveDecision, ContractValidationError, ProposalValidationStatus, require_mapping, require_non_empty_str, validate_ref
 from .control import ControlPoint
 from .evidence_store import EvidenceLedger, InMemoryEvidenceStore
-from .steering import DecisionLedgerEntry, ProposalValidationResult, SteeringProposal
+from .steering import DecisionLedgerEntry, ProposalProvider, ProposalValidationResult, SteeringContext, SteeringProposal
 from .work_unit import ExecutionReport, WorkUnitContract, WorkerResult
 
 
@@ -24,13 +24,6 @@ AUTHORITY_EXPANSION_KEYS = {
 }
 
 
-class ProposalProvider(Protocol):
-    """Provider of deterministic steering proposals."""
-
-    def next_proposal(self) -> SteeringProposal:
-        """Return the next proposal."""
-
-
 @dataclass
 class DeterministicProposalProvider:
     """List-backed proposal provider for offline tests."""
@@ -38,7 +31,7 @@ class DeterministicProposalProvider:
     proposals: list[SteeringProposal]
     index: int = 0
 
-    def next_proposal(self) -> SteeringProposal:
+    def next_proposal(self, context: SteeringContext | None = None) -> SteeringProposal:
         if self.index >= len(self.proposals):
             raise ContractValidationError("no deterministic proposals remain")
         proposal = self.proposals[self.index]

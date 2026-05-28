@@ -28,6 +28,7 @@ FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "urllib",
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
+    ADAPTER_ROOT / "cli.py",
     ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 

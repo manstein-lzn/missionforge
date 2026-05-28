@@ -25,6 +25,7 @@ ALLOWED_CORE_IMPORTS = {
     (CORE_ROOT / "runner.py", "adapters.pi_agent_runtime"),
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
+    ADAPTER_ROOT / "cli.py",
     ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 FORBIDDEN_LIVE_IMPORT_ROOTS = {

@@ -38,6 +38,10 @@ MissionForge core.
 The adapter does not import SkillFoundry runtime packages, publish to a
 registry, call live LLMs, execute PiWorker, use LangGraph, or expose HTTP.
 
+Phase 11 operator productization adds a smoke path proving compiled
+SkillFoundry MissionIR can pass through `MissionCLI.run_command(["run", ...])`
+and `inspect` without adding SkillFoundry runtime branches.
+
 ## Public Contracts
 
 Implemented in Goal 6B:
@@ -118,6 +122,9 @@ Implemented in Goal 6B:
 - `SkillFoundryCompileResult` returns only refs, profile ids, target package
   ref, contract hash, diagnostics refs, and warnings. It does not embed
   FrontDesk artifact bodies.
+- The Phase 11 operator smoke compiles a FrontDesk fixture, runs the generated
+  MissionIR through the operator `run` command, and inspects the resulting
+  `MissionRun` state through the operator `inspect` command.
 
 ## Dependencies
 
@@ -148,6 +155,13 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 # Ran 124 tests: OK
 
 git diff --check
+# passed
+```
+
+Phase 11 operator smoke:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_operator_skillfoundry_smoke.py
 # passed
 ```
 

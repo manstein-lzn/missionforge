@@ -48,6 +48,13 @@ Phase 1 contract primitives exist. Phase 4 added deterministic proposal
 boundary validation, decision ledger recording, controlled dispatch safe-point
 handling, and a deterministic fake worker harness.
 
+The controlled steering implementation plan is now completed for the first
+product-neutral slice. MissionForge has strict refs-only steering context,
+proposal, observation-signal, contract-adjustment, repair-strategy, review
+packet, state-correction, provider, store, runtime, operator, optional LLM
+adapter, and benchmark coverage. The default runtime remains deterministic and
+offline unless proposal mode and providers are injected explicitly.
+
 Implemented in Phase 1:
 
 - `SteeringProposal`
@@ -57,27 +64,46 @@ Implemented in Phase 1:
 - `ControlRequest`
 - JSON-compatible round-trip helpers for implemented contracts
 
-MissionForge should keep the protocol deterministic before enabling any live LLM
-steering. The first executable steering implementation should use deterministic
-or fake proposal providers so proposal validation, rejection, ledgering, and
-routing can be tested without a model provider.
+Implemented in the controlled steering slice:
+
+- `SteeringContext`
+- `ObservationSignal`
+- `ContractAdjustmentRequest`
+- `RepairStrategyProposal`
+- `ReviewPacket`
+- `ProposalProvider`
+- `ObservationInterpreter`
+- `ReviewerProvider`
+- `SteeringArtifactStore`
+- optional `ControlledSteeringLLMAdapter`
+- runtime `steering_mode="proposal"` provider injection
+- operator inspect/diagnose steering refs
+- pressure benchmark for accepted and rejected live-like proposals
+
+MissionForge keeps deterministic behavior by default. Live LLM steering is
+still opt-in through adapter injection, and adapter output must pass the same
+schema, refs-only, boundary, and authority validation as deterministic fake
+providers.
 
 ## Public Contracts
 
 - `SteeringProposal`
 - `ProposalValidationResult`
 - `StateCorrection`
+- `SteeringContext`
+- `ObservationSignal`
+- `ContractAdjustmentRequest`
+- `RepairStrategyProposal`
+- `ReviewPacket`
+- `ProposalProvider`
+- `ObservationInterpreter`
+- `ReviewerProvider`
+- `SteeringArtifactStore`
 
 To be designed:
 
-- `ObservationSignal`
-- `ContractAdjustmentRequest`
 - `MissionRevisionRequest`
-- `RepairStrategyProposal`
-- `ReviewerDecision`
-- `MissionRunView`
-- `ProposalProvider`
-- `ReviewerProvider`
+- richer `MissionRunView` steering read model beyond the current operator refs
 
 ## Permission Model
 
@@ -319,12 +345,20 @@ PYTHONPATH=src python3 -m unittest tests/test_proposal_validation.py tests/test_
 # Ran 16 tests: OK
 ```
 
+Controlled steering implementation slice:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_controlled_steering_contracts.py tests/test_controlled_steering_store.py tests/test_controlled_steering_runtime.py tests/test_controlled_steering_llm_adapter.py tests/test_controlled_steering_import_boundaries.py tests/test_controlled_steering_benchmark.py tests/test_operator_controlled_steering_surface.py
+# Ran 20 tests: OK
+
+PYTHONPATH=src python3 -m unittest discover -s tests
+# Ran 222 tests: OK (skipped=2)
+```
+
 ## Open Questions
 
-- Should `ProposalProvider` live under runtime, steering, or host adapters?
-- Which proposal schemas belong in the first public API?
-- Should proposal artifacts be ledger events, artifacts, or both?
-- How should live LLM provider usage be normalized without becoming control
-  logic?
-- What is the smallest independent reviewer protocol for the first runtime
-  slice?
+- Should the next state backend expose a first-class indexed steering read
+  model instead of run-local JSON discovery?
+- Should `MissionRevisionRequest` become a separate contract before adding
+  broader redesign workflows?
+- Which live LLM provider should be the first scheduled opt-in soak target?

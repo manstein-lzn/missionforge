@@ -85,6 +85,89 @@ class ProposalValidationStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class AuthorityRequirement(StrEnum):
+    """Authority required to accept a steering output."""
+
+    HARNESS = "harness"
+    REVIEWER = "reviewer"
+    HUMAN = "human"
+    REDESIGN = "redesign"
+
+
+class SteeringProposalKind(StrEnum):
+    """Kinds of controlled steering proposal."""
+
+    NEXT_WORK_UNIT = "next_work_unit"
+    REPAIR = "repair"
+    REDESIGN = "redesign"
+    REVIEW = "review"
+    STOP = "stop"
+    ESCALATE = "escalate"
+
+
+class ObservationSignalType(StrEnum):
+    """Safe observation interpretation categories."""
+
+    ROOT_CAUSE_HYPOTHESIS = "root_cause_hypothesis"
+    RISK_HYPOTHESIS = "risk_hypothesis"
+    SCOPE_MISMATCH = "scope_mismatch"
+    MISSING_EVIDENCE = "missing_evidence"
+    REPAIR_HINT = "repair_hint"
+    REVIEW_HINT = "review_hint"
+
+
+class ContractAdjustmentChange(StrEnum):
+    """Allowed contract-adjustment request types."""
+
+    SHRINK = "shrink"
+    SPLIT = "split"
+    REORDER = "reorder"
+    PIVOT = "pivot"
+    EXPAND = "expand"
+    SPEC_REVISION = "spec_revision"
+    REVIEW_REQUIRED = "review_required"
+
+
+FORBIDDEN_RAW_FIELDS = {
+    "access_token",
+    "api_key",
+    "artifact_body",
+    "body",
+    "credential",
+    "credentials",
+    "id_token",
+    "message_body",
+    "notes_body",
+    "passphrase",
+    "password",
+    "payload",
+    "private_key",
+    "prompt",
+    "provider_message",
+    "provider_messages",
+    "raw",
+    "raw_body",
+    "raw_payload",
+    "raw_prompt",
+    "raw_transcript",
+    "refresh_token",
+    "secret",
+    "secret_key",
+    "stderr",
+    "stdout",
+    "transcript",
+}
+FORBIDDEN_KEY_FRAGMENTS = {"credential", "password", "prompt", "secret", "transcript"}
+FORBIDDEN_KEY_SUFFIXES = (
+    "_access_token",
+    "_api_key",
+    "_body",
+    "_payload",
+    "_private_key",
+    "_refresh_token",
+)
+
+
 E = TypeVar("E", bound=StrEnum)
 
 
@@ -185,11 +268,54 @@ def ensure_json_value(value: Any, field_name: str = "value") -> Any:
     raise ContractValidationError(f"{field_name} must be JSON-compatible")
 
 
+def assert_refs_only_payload(value: Any, field_name: str = "payload") -> Any:
+    """Reject raw bodies, prompts, transcripts, secrets, and unsafe refs."""
+
+    normalized = ensure_json_value(value, field_name)
+    _reject_forbidden_payload_fields(normalized, field_name)
+    _validate_payload_refs(normalized, field_name)
+    return normalized
+
+
 def stable_json_dumps(value: Any) -> str:
     """Serialize JSON-compatible data in a stable form."""
 
     normalized = ensure_json_value(value)
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _reject_forbidden_payload_fields(value: Any, field_name: str) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            lowered = key.lower()
+            if (
+                lowered in FORBIDDEN_RAW_FIELDS
+                or any(fragment in lowered for fragment in FORBIDDEN_KEY_FRAGMENTS)
+                or any(lowered.endswith(suffix) for suffix in FORBIDDEN_KEY_SUFFIXES)
+            ):
+                raise ContractValidationError(f"{field_name}.{key} is not allowed in refs-only payload")
+            _reject_forbidden_payload_fields(item, f"{field_name}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_forbidden_payload_fields(item, f"{field_name}[{index}]")
+
+
+def _validate_payload_refs(value: Any, field_name: str) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            lowered = key.lower()
+            item_field = f"{field_name}.{key}"
+            if lowered == "refs" or lowered.endswith("_refs"):
+                for ref in require_str_list(item, item_field):
+                    validate_ref(ref, f"{item_field}[]")
+            elif lowered == "ref" or lowered.endswith("_ref"):
+                if item is not None and item != "":
+                    validate_ref(item, item_field)
+            else:
+                _validate_payload_refs(item, item_field)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_payload_refs(item, f"{field_name}[{index}]")
 
 
 def stable_json_hash(value: Any) -> str:

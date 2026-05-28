@@ -2,14 +2,19 @@
 
 from .contracts import (
     AdaptiveDecision,
+    AuthorityRequirement,
+    ContractAdjustmentChange,
     ContractValidationError,
     EvidenceTrustLevel,
     MissionForgeError,
+    ObservationSignalType,
     ProposalValidationStatus,
     Ref,
+    SteeringProposalKind,
     ValidatorMode,
     ValidatorSeverity,
     VerificationStatus,
+    assert_refs_only_payload,
     stable_json_hash,
     validate_ref,
 )
@@ -20,7 +25,6 @@ from .freeze import ContractManifest, ExpandedMission, FrozenMissionContract, ex
 from .harness import (
     DeterministicProposalProvider,
     HarnessDispatchResult,
-    ProposalProvider,
     ProposalValidator,
     WorkUnitCompiler,
     WorkUnitHarness,
@@ -33,10 +37,23 @@ from .ir import (
     MissionValidationError,
 )
 from .profiles import CapabilityProfile, ProfileExpansion, ProfileRegistry, VerificationProfile
-from .review import ReviewerDecision
+from .review import ReviewPacket, ReviewerDecision
 from .runner import MissionResult, MissionRuntime
 from .runtime import RuntimeEngine
-from .steering import DecisionLedgerEntry, ProposalValidationResult, StateCorrection, SteeringProposal
+from .steering import (
+    ContractAdjustmentRequest,
+    DecisionLedgerEntry,
+    ObservationInterpreter,
+    ObservationSignal,
+    ProposalProvider,
+    ProposalValidationResult,
+    RepairStrategyProposal,
+    ReviewerProvider,
+    StateCorrection,
+    SteeringContext,
+    SteeringProposal,
+)
+from .steering_store import SteeringArtifactStore, steering_refs_for_iteration, steering_root_ref
 from .state import MissionRunState
 from .state import ArtifactHygieneReport, MissionRun, RuntimeAttempt, RuntimeSafePoint
 from .validators import run_validator
@@ -48,8 +65,11 @@ __all__ = [
     "AdaptiveDecision",
     "ArtifactRef",
     "AttemptInputManifest",
+    "AuthorityRequirement",
     "CapabilityProfileRef",
     "CapabilityProfile",
+    "ContractAdjustmentChange",
+    "ContractAdjustmentRequest",
     "ControlHalt",
     "ControlPoint",
     "ControlRequest",
@@ -80,6 +100,9 @@ __all__ = [
     "ArtifactHygieneReport",
     "MissionRun",
     "MissionValidationError",
+    "ObservationInterpreter",
+    "ObservationSignal",
+    "ObservationSignalType",
     "ProposalValidationResult",
     "ProposalValidationStatus",
     "ProposalProvider",
@@ -87,12 +110,18 @@ __all__ = [
     "ProfileExpansion",
     "ProfileRegistry",
     "Ref",
+    "RepairStrategyProposal",
+    "ReviewPacket",
     "ReviewerDecision",
+    "ReviewerProvider",
     "RuntimeEngine",
     "RuntimeAttempt",
     "RuntimeSafePoint",
     "StateCorrection",
+    "SteeringArtifactStore",
+    "SteeringContext",
     "SteeringProposal",
+    "SteeringProposalKind",
     "ValidatorMode",
     "ValidatorResult",
     "ValidatorSeverity",
@@ -107,10 +136,13 @@ __all__ = [
     "WorkUnitHarness",
     "WorkerInvocation",
     "WorkerResult",
+    "assert_refs_only_payload",
     "expand_mission",
     "freeze_mission",
     "run_validator",
     "stable_json_hash",
     "validate_ref",
     "verify_spec",
+    "steering_refs_for_iteration",
+    "steering_root_ref",
 ]

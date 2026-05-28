@@ -67,6 +67,8 @@ Implementation should be driven through the hardened development documents:
 - [Phase 11 Operator Productization Plan](docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md):
   CLI, inspection, diagnosis, resume, review, and validation workflows on top
   of the Phase 10 durable runtime state.
+- [Phase 11 Operator Productization Goals](docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md):
+  `/goal`-ready implementation slices for the Phase 11 operator surface.
 
 ## Package Layout
 
@@ -76,6 +78,7 @@ src/missionforge/
     cli.py       Optional CLI/Python host shell around MissionRuntime
     contracts.py Adapter boundary, invocation, diagnostic, and result contracts
     observation.py Optional read-only run view and ControlRequest writer
+    steering_llm.py Optional controlled steering LLM adapter
     piworker.py  Deterministic faux PiWorker adapter contracts and fixture run
     skillfoundry.py Deterministic FrontDesk refs to MissionIR compiler adapter
   contracts.py   Shared enums, errors, safe refs, hashing, validation helpers
@@ -88,6 +91,7 @@ src/missionforge/
   runner.py      Public MissionRuntime/MissionResult boundary
   runtime.py     Deterministic runtime vertical slice
   steering.py    Controlled steering contract objects
+  steering_store.py Run-local controlled steering artifact refs
   verifier.py    Verification routing
   verification.py Validator and verification result contracts
   work_unit.py   Work-unit and execution report contracts
@@ -101,6 +105,8 @@ docs/
   COMPONENT_DEVELOPMENT_PLAN.md
   COMPONENT_ACCEPTANCE_MATRIX.md
   FOLLOW_ON_GOALS.md
+  PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md
+  PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md
   modules/
     adapter_contracts.md
     controlled_steering.md
@@ -121,3 +127,34 @@ already installed:
 ```bash
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 ```
+
+## Operator Commands
+
+Phase 11 exposes deterministic refs-only operator commands through the optional
+CLI adapter:
+
+```bash
+python -m missionforge.adapters.cli run --workspace . --mission-ref missions/input.mission.json
+python -m missionforge.adapters.cli inspect --workspace . --run run-sample-mission
+python -m missionforge.adapters.cli diagnose --workspace . --run run-sample-mission
+python -m missionforge.adapters.cli resume --workspace . --run run-sample-mission --mission-ref missions/input.mission.json
+python -m missionforge.adapters.cli control halt --workspace . --run run-sample-mission --reason "Pause before the next attempt."
+python -m missionforge.adapters.cli review record --workspace . --run run-sample-mission --decision approved --review-ref reviews/reviewer-decision.json
+python -m missionforge.adapters.cli validate
+```
+
+Each command emits a `missionforge.command_result.v1` envelope. Command output
+must cite refs instead of embedding raw transcripts, provider payloads, prompts,
+stdout/stderr bodies, artifact bodies, or secrets.
+
+## Controlled Steering
+
+Controlled steering is implemented as an opt-in protocol over the deterministic
+runtime. Core contracts live in `missionforge.steering`, run-local steering
+artifacts live under `runs/{mission_run_id}/steering/`, and optional live LLM
+integration is adapter-only. Runtime completion still comes from verifier
+status, not proposal confidence, worker self-report, reviewer prose, CLI, RPC,
+or dashboard output.
+
+The default runtime path remains deterministic and offline. Proposal mode is
+enabled only by injecting providers into `RuntimeEngine` or `MissionRuntime`.
