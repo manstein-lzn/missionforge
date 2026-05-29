@@ -495,6 +495,7 @@ class PiAgentRuntimeAdapter:
                 "token_count": _non_negative_metric(run_result.metrics, "total_tokens", "token_count"),
                 "input_ref": refs["input"],
                 "output_ref": run_result.output_ref,
+                "metrics_ref": run_result.metrics_ref,
                 "savepoints_ref": run_result.savepoints_ref,
             },
         )

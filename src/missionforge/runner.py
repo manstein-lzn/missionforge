@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from .contracts import require_mapping, require_non_empty_str, require_str_list
 from .ir import MissionIR
+from .piworker_runtime import PiWorkerRuntimeFactory
 
 
 @dataclass(frozen=True)
@@ -62,19 +63,19 @@ class MissionRuntime:
         observation_interpreter: Any | None = None,
         reviewer_provider: Any | None = None,
         steering_mode: str = "deterministic",
+        piworker_factory: PiWorkerRuntimeFactory | None = None,
     ) -> None:
         self.workspace = workspace
         self.max_attempts = max_attempts
         self.pi_agent_config = pi_agent_config
+        self.piworker_factory = piworker_factory or PiWorkerRuntimeFactory(config=pi_agent_config)
         self.steering_provider = steering_provider
         self.observation_interpreter = observation_interpreter
         self.reviewer_provider = reviewer_provider
         self.steering_mode = steering_mode
 
     def run(self, mission: MissionIR) -> MissionResult:
-        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
-
-        worker = PiAgentRuntimeAdapter(self.pi_agent_config)
+        worker = self.piworker_factory.create_default_worker()
         from .runtime import RuntimeEngine
 
         return RuntimeEngine(
@@ -93,10 +94,9 @@ class MissionRuntime:
         return inspect_runtime(self.workspace, mission_run_id)
 
     def resume(self, mission: MissionIR, *, follow_up_prompt: str = "Resume from the latest completed turn.") -> MissionResult:
-        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
         from .runtime import RuntimeEngine
 
-        worker = PiAgentRuntimeAdapter(self.pi_agent_config)
+        worker = self.piworker_factory.create_default_worker()
         return RuntimeEngine(
             workspace=self.workspace,
             max_attempts=self.max_attempts,

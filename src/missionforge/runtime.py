@@ -3,38 +3,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
 
 from .contracts import AdaptiveDecision, ContractValidationError, VerificationStatus, require_int_at_least, stable_json_hash
 from .evidence_store import EvidenceLedger, InMemoryEvidenceStore
-from .freeze import FrozenMissionContract, freeze_mission
+from .freeze import FrozenMissionContract
 from .harness import ProposalValidator, WorkUnitCompiler, WorkUnitHarness
 from .ir import MissionIR
 from .review import ReviewPacket, ReviewerDecision
+from .runtime_attempts import RuntimeAttemptRunner
+from .runtime_contract import (
+    ActiveMissionContract,
+    RuntimeContractView,
+    initialize_active_contract,
+    load_active_contract,
+    runtime_contract_view,
+)
+from .runtime_state_writer import RuntimeStateWriter
 from .state import (
-    MISSION_RUN_SCHEMA_VERSION,
     SUPPORTED_RESUME_BOUNDARY,
-    MissionRun,
     MissionRunState,
     RuntimeAttempt,
-    RuntimeSafePoint,
     inspect_runtime,
     load_mission_run,
     load_runtime_attempts,
     mission_run_id_for,
     mission_run_refs,
-    scan_artifact_hygiene,
 )
 from .steering import ObservationSignal, StateCorrection, SteeringContext, SteeringProposal
 from .steering_store import SteeringArtifactStore, steering_refs_for_iteration
 from .verification import VerificationSpec, ValidatorSpec
 from .verifier import Verifier
-
-
-FROZEN_CONTRACT_REF = "mission/frozen_contract.json"
 
 
 @dataclass
@@ -89,6 +90,8 @@ class RuntimeEngine:
             raise ContractValidationError("runtime.steering_mode must be deterministic or proposal")
         root = Path(self.workspace)
         root.mkdir(parents=True, exist_ok=True)
+        attempt_runner = RuntimeAttemptRunner()
+        state_writer = RuntimeStateWriter()
         mission_run_id = mission_run_id_for(mission.mission_id)
         refs = mission_run_refs(mission.mission_id)
         _resolve_workspace_ref(root, refs["run_dir"]).mkdir(parents=True, exist_ok=True)
@@ -107,19 +110,26 @@ class RuntimeEngine:
         }
         previous_attempts = _previous_attempts(root, mission_run_id, initial_attempt_kind=initial_attempt_kind)
 
-        frozen = freeze_mission(mission)
-        frozen_ref = _write_json(root, FROZEN_CONTRACT_REF, frozen.to_dict())
-        required_artifacts = _required_artifacts(mission)
-        allowed_scopes = _allowed_scopes(mission, required_artifacts)
+        active_contract = _active_contract_for_run(
+            root=root,
+            mission=mission,
+            mission_run_id=mission_run_id,
+            initial_attempt_kind=initial_attempt_kind,
+        )
+        frozen = active_contract.frozen_contract
+        frozen_ref = active_contract.contract_ref
+        contract_view = runtime_contract_view(frozen)
+        required_artifacts = list(contract_view.required_artifacts)
+        allowed_scopes = contract_view.allowed_write_scopes
         proposal = _initial_proposal(
-            mission,
+            contract_view,
             iteration=len(previous_attempts) + 1,
             frozen_ref=frozen_ref,
             required_artifacts=required_artifacts,
             allowed_scopes=allowed_scopes,
         )
         context = _steering_context(
-            mission=mission,
+            mission_id=active_contract.mission_id,
             mission_run_id=mission_run_id,
             refs=refs,
             iteration=proposal.iteration,
@@ -144,7 +154,7 @@ class RuntimeEngine:
                 raise ContractValidationError(f"steering provider failed: {exc}") from exc
         validator = ProposalValidator(available_refs={frozen_ref}, allowed_output_roots=allowed_scopes)
         harness = WorkUnitHarness(
-            compiler=WorkUnitCompiler(mission_id=mission.mission_id, validator=validator),
+            compiler=WorkUnitCompiler(mission_id=active_contract.mission_id, validator=validator),
             worker=self.worker,
             evidence_store=self.evidence_store,
         )
@@ -172,35 +182,49 @@ class RuntimeEngine:
         if dispatch.validation.status.value != "accepted" or dispatch.work_unit is None or dispatch.execution_report is None:
             redesign_required = True
             state = MissionRunState(
-                mission_id=mission.mission_id,
+                mission_id=active_contract.mission_id,
                 status="failed",
                 contract_hash=frozen.contract_hash,
                 latest_decision="proposal_rejected",
             )
             result = _result(
-                mission_id=mission.mission_id,
+                mission_id=active_contract.mission_id,
                 status="failed",
                 frozen=frozen,
                 state=MissionRunState(
-                    mission_id=mission.mission_id,
+                    mission_id=active_contract.mission_id,
                     status="failed",
                     contract_hash=frozen.contract_hash,
                     latest_decision="proposal_rejected",
                 ),
                 evidence_refs=[],
                 artifact_refs=[],
-                failed_constraint_ids=[constraint.constraint_id for constraint in mission.constraints],
+                failed_constraint_ids=[constraint.constraint_id for constraint in contract_view.constraints],
                 metrics={
                     **steering_metrics,
+                    "attempt_count": len(previous_attempts),
+                    "repair_attempted": repair_attempted,
+                    "repair_exhausted": repair_exhausted,
+                    "retry_attempted": retry_attempted,
+                    "retry_exhausted": retry_exhausted,
+                    "redesign_required": redesign_required,
+                    "resume_count": resume_count,
+                    "latest_decision": "redesign",
+                    "next_action": "redesign",
+                    "verification_status": "proposal_rejected",
+                    "validator_result_count": 0,
+                    "failed_constraint_ids": [constraint.constraint_id for constraint in contract_view.constraints],
                     "proposal_status": dispatch.validation.status.value,
                     "proposal_rejection_count": len(dispatch.validation.reasons),
                     "steering_refs": _dedupe_refs(steering_artifact_refs),
                 },
             )
             _write_runtime_state(
+                state_writer=state_writer,
                 root=root,
                 mission_run_id=mission_run_id,
-                mission_id=mission.mission_id,
+                mission_id=active_contract.mission_id,
+                active_contract=active_contract,
                 refs=refs,
                 work_unit_id="WU-000001",
                 attempt_records=[],
@@ -211,12 +235,27 @@ class RuntimeEngine:
                 result=result,
                 expected_artifacts=required_artifacts,
                 report_refs=[],
-                required_refs=steering_artifact_refs,
-                metrics={**steering_metrics, "redesign_required": redesign_required, "steering_refs": _dedupe_refs(steering_artifact_refs)},
+                required_refs=_dedupe_refs([active_contract.contract_ref, *active_contract.revision_refs, *steering_artifact_refs]),
+                metrics={
+                    **steering_metrics,
+                    "attempt_count": len(previous_attempts),
+                    "repair_attempted": repair_attempted,
+                    "repair_exhausted": repair_exhausted,
+                    "retry_attempted": retry_attempted,
+                    "retry_exhausted": retry_exhausted,
+                    "redesign_required": redesign_required,
+                    "resume_count": resume_count,
+                    "latest_decision": "redesign",
+                    "next_action": "redesign",
+                    "verification_status": "proposal_rejected",
+                    "validator_result_count": 0,
+                    "failed_constraint_ids": [constraint.constraint_id for constraint in contract_view.constraints],
+                    "steering_refs": _dedupe_refs(steering_artifact_refs),
+                },
             )
             return result
 
-        verification_spec = _verification_spec(mission, required_artifacts)
+        verification_spec = _verification_spec(contract_view, required_artifacts)
         verifier = Verifier(
             workspace=root,
             evidence_store=self.evidence_store,
@@ -264,6 +303,7 @@ class RuntimeEngine:
                 decision=initial_decision,
                 dispatch=dispatch,
                 verification_status=verification.status.value,
+                attempt_runner=attempt_runner,
             )
         ]
         if (
@@ -282,7 +322,7 @@ class RuntimeEngine:
                 attempt_count += 1
                 next_attempt_index += 1
                 repair_harness = WorkUnitHarness(
-                    compiler=WorkUnitCompiler(mission_id=mission.mission_id, validator=validator),
+                    compiler=WorkUnitCompiler(mission_id=active_contract.mission_id, validator=validator),
                     worker=repair_worker,
                     evidence_store=self.evidence_store,
                 )
@@ -311,6 +351,7 @@ class RuntimeEngine:
                             decision="repair",
                             dispatch=repair_dispatch,
                             verification_status=verification.status.value,
+                            attempt_runner=attempt_runner,
                         )
                     )
                 else:
@@ -327,7 +368,7 @@ class RuntimeEngine:
         latest_decision = _latest_decision(verification.status.value, repair_attempted=repair_attempted, repair_exhausted=repair_exhausted, redesign_required=redesign_required)
         next_action = _next_action(verification.status.value, latest_decision=latest_decision, repair_exhausted=repair_exhausted)
         state = MissionRunState(
-            mission_id=mission.mission_id,
+            mission_id=active_contract.mission_id,
             status=verification.status.value,
             contract_hash=frozen.contract_hash,
             work_unit_refs=[dispatch.validation.accepted_contract_ref] if dispatch.validation.accepted_contract_ref else [],
@@ -337,7 +378,7 @@ class RuntimeEngine:
             latest_decision=latest_decision,
         )
         result = _result(
-            mission_id=mission.mission_id,
+            mission_id=active_contract.mission_id,
             status=verification.status.value,
             frozen=frozen,
             state=state,
@@ -359,6 +400,7 @@ class RuntimeEngine:
                 "ledger_hash": self.evidence_store.snapshot().ledger_hash,
                 "verification_status": verification.status.value,
                 "validator_result_count": len(verification.validator_results),
+                "failed_constraint_ids": list(verification.failed_constraint_ids),
                 "steering_refs": _dedupe_refs(steering_artifact_refs),
                 "review_packet_ref": review_packet_ref,
             },
@@ -368,7 +410,7 @@ class RuntimeEngine:
             signal = _provider_observation_signal(
                 self.observation_interpreter,
                 _steering_context(
-                    mission=mission,
+                    mission_id=active_contract.mission_id,
                     mission_run_id=mission_run_id,
                     refs=refs,
                     iteration=proposal.iteration,
@@ -403,9 +445,11 @@ class RuntimeEngine:
                 [*result.metrics.get("steering_refs", []), observation_signal_ref, state_correction_ref]
             )
         _write_runtime_state(
+            state_writer=state_writer,
             root=root,
             mission_run_id=mission_run_id,
-            mission_id=mission.mission_id,
+            mission_id=active_contract.mission_id,
+            active_contract=active_contract,
             refs=refs,
             work_unit_id=dispatch.work_unit.work_unit_id,
             previous_attempts=previous_attempts,
@@ -418,6 +462,8 @@ class RuntimeEngine:
             expected_artifacts=required_artifacts,
             report_refs=[attempt.report_ref for attempt in attempt_records],
             required_refs=_dedupe_refs([
+                active_contract.contract_ref,
+                *active_contract.revision_refs,
                 *[attempt.input_ref for attempt in attempt_records],
                 *[attempt.output_ref for attempt in attempt_records],
                 *[attempt.report_ref for attempt in attempt_records],
@@ -433,6 +479,27 @@ def _previous_attempts(root: Path, mission_run_id: str, *, initial_attempt_kind:
     if initial_attempt_kind != "resume":
         return []
     return load_runtime_attempts(root, mission_run_id)
+
+
+def _active_contract_for_run(
+    *,
+    root: Path,
+    mission: MissionIR,
+    mission_run_id: str,
+    initial_attempt_kind: str,
+) -> ActiveMissionContract:
+    if initial_attempt_kind == "resume":
+        run = load_mission_run(root, mission_run_id)
+        if run.mission_id != mission.mission_id:
+            raise ContractValidationError("runtime resume mission_id does not match MissionRun")
+        return load_active_contract(workspace=root, run=run)
+    run_path = root / f"runs/{mission_run_id}/mission_run.json"
+    if run_path.is_file():
+        run = load_mission_run(root, mission_run_id)
+        if run.mission_id != mission.mission_id:
+            raise ContractValidationError("runtime run mission_id does not match MissionRun")
+        return load_active_contract(workspace=root, run=run)
+    return initialize_active_contract(workspace=root, mission=mission, mission_run_id=mission_run_id)
 
 
 def _result(
@@ -463,7 +530,7 @@ def _result(
 
 
 def _initial_proposal(
-    mission: MissionIR,
+    contract_view: RuntimeContractView,
     *,
     iteration: int = 1,
     frozen_ref: str,
@@ -472,12 +539,12 @@ def _initial_proposal(
 ) -> SteeringProposal:
     return SteeringProposal(
         proposal_id="P-000001",
-        mission_run_id=f"run-{mission.mission_id}",
+        mission_run_id=f"run-{contract_view.mission_id}",
         iteration=iteration,
         input_refs=[frozen_ref],
         recommended_route=AdaptiveDecision.CONTINUE,
         proposed_contract={
-            "next_objective": mission.objective.summary,
+            "next_objective": contract_view.objective_summary,
             "allowed_scope": list(allowed_scopes),
             "visible_refs": [frozen_ref],
             "expected_outputs": list(required_artifacts),
@@ -514,7 +581,7 @@ def _repair_proposal(previous: SteeringProposal, verification) -> SteeringPropos
 
 def _steering_context(
     *,
-    mission: MissionIR,
+    mission_id: str,
     mission_run_id: str,
     refs: dict[str, str],
     iteration: int,
@@ -528,7 +595,7 @@ def _steering_context(
     attempt_refs = [attempt.report_ref for attempt in previous_attempts]
     return SteeringContext(
         mission_run_id=mission_run_id,
-        mission_id=mission.mission_id,
+        mission_id=mission_id,
         iteration=iteration,
         contract_ref=frozen_ref,
         contract_hash=frozen.contract_hash,
@@ -676,14 +743,11 @@ def _repair_prompt(*, failures: list[str], failed_constraints: list[str]) -> str
     )
 
 
-def _verification_spec(mission: MissionIR, required_artifacts: list[str]) -> VerificationSpec:
-    manual_gates = list(mission.verification.get("manual_gates", []))
-    validators = [
-        ValidatorSpec.from_dict(item)
-        for item in mission.verification.get("validators", [])
-    ]
+def _verification_spec(contract_view: RuntimeContractView, required_artifacts: list[str]) -> VerificationSpec:
+    manual_gates = list(contract_view.manual_gates)
+    validators = list(contract_view.validators)
     if not validators:
-        constraint_refs = [mission.constraints[0].constraint_id] if mission.constraints else []
+        constraint_refs = [contract_view.constraints[0].constraint_id] if contract_view.constraints else []
         validators = [
             ValidatorSpec(
                 validator_id=f"V-artifact-{index:03d}",
@@ -694,20 +758,6 @@ def _verification_spec(mission: MissionIR, required_artifacts: list[str]) -> Ver
             for index, artifact_ref in enumerate(required_artifacts, start=1)
         ]
     return VerificationSpec(validators=validators, manual_gates=manual_gates)
-
-
-def _required_artifacts(mission: MissionIR) -> list[str]:
-    artifacts = mission.outputs.get("required_artifacts", [])
-    if isinstance(artifacts, list) and all(isinstance(item, str) and item for item in artifacts):
-        return list(artifacts)
-    raise ContractValidationError("runtime requires outputs.required_artifacts as a list of refs")
-
-
-def _allowed_scopes(mission: MissionIR, required_artifacts: list[str]) -> list[str]:
-    scopes = mission.outputs.get("allowed_write_scopes")
-    if isinstance(scopes, list) and all(isinstance(item, str) and item for item in scopes):
-        return list(scopes)
-    return sorted({artifact.rsplit("/", 1)[0] for artifact in required_artifacts if "/" in artifact})
 
 
 def _write_json(root: Path, ref: str, payload: dict[str, Any]) -> str:
@@ -750,56 +800,17 @@ def _attempt_record(
     decision: str,
     dispatch,
     verification_status: str,
+    attempt_runner: RuntimeAttemptRunner,
 ) -> RuntimeAttempt:
-    work_unit = dispatch.work_unit
-    report = dispatch.execution_report
-    worker_result = dispatch.worker_result
-    work_unit_id = work_unit.work_unit_id if work_unit is not None else f"WU-{index:06d}"
-    report_ref = worker_result.execution_report_ref if worker_result is not None else f"attempts/{work_unit_id}/pi_agent_execution_report.json"
-    output_ref = _report_metric_or_default(report, "output_ref", f"attempts/{work_unit_id}/pi_agent_output.json")
-    input_ref = _report_metric_or_default(report, "input_ref", f"attempts/{work_unit_id}/pi_agent_input.json")
-    savepoints_ref = _report_metric_or_default(report, "savepoints_ref", f"attempts/{work_unit_id}/pi_agent_savepoints.jsonl")
-    return RuntimeAttempt(
-        attempt_id=f"attempt-{index:06d}",
-        work_unit_id=work_unit_id,
+    return attempt_runner.record_attempt(
+        root=root,
+        mission_run_id=mission_run_id,
+        index=index,
         attempt_kind=attempt_kind,
-        worker="missionforge.pi_agent_runtime",
-        input_ref=input_ref,
-        output_ref=output_ref,
-        report_ref=report_ref,
-        savepoints_ref=savepoints_ref,
-        status=report.status if report is not None else "failed",
-        verification_status=verification_status,
         decision=decision,
-        created_at=_now(),
-        evidence_refs=list(report.evidence_refs) if report is not None else [],
-        artifact_refs=list(report.produced_artifacts) if report is not None else [],
-        failure_category=_failure_category(report, verification_status),
-        metrics=dict(report.metrics) if report is not None else {},
+        dispatch=dispatch,
+        verification_status=verification_status,
     )
-
-
-def _report_metric_or_default(report, key: str, default: str) -> str:
-    if report is not None and isinstance(report.metrics, dict):
-        value = report.metrics.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return default
-
-
-def _failure_category(report, verification_status: str) -> str:
-    if verification_status == VerificationStatus.COMPLETED_VERIFIED.value:
-        return ""
-    if report is not None:
-        if report.status != "completed":
-            return "worker_failure"
-        if not report.produced_artifacts:
-            return "missing_artifact"
-    if verification_status == VerificationStatus.UNSUPPORTED_VERIFICATION_SPEC.value:
-        return "redesign_required"
-    if verification_status == VerificationStatus.FAILED.value:
-        return "verifier_failure"
-    return verification_status
 
 
 def _latest_decision(
@@ -842,9 +853,11 @@ def _next_action(status: str, *, latest_decision: str, repair_exhausted: bool) -
 
 def _write_runtime_state(
     *,
+    state_writer: RuntimeStateWriter,
     root: Path,
     mission_run_id: str,
     mission_id: str,
+    active_contract: ActiveMissionContract,
     refs: dict[str, str],
     work_unit_id: str,
     attempt_records: list[RuntimeAttempt],
@@ -859,77 +872,26 @@ def _write_runtime_state(
     metrics: dict[str, Any],
     previous_attempts: list[RuntimeAttempt] | None = None,
 ) -> None:
-    all_attempts = [*(previous_attempts or []), *attempt_records]
-    all_report_refs = _dedupe_refs([*[attempt.report_ref for attempt in all_attempts], *report_refs])
-    all_required_refs = _dedupe_refs([
-        *[attempt.input_ref for attempt in all_attempts],
-        *[attempt.output_ref for attempt in all_attempts],
-        *[attempt.report_ref for attempt in all_attempts],
-        *[attempt.savepoints_ref for attempt in all_attempts],
-        *required_refs,
-    ])
-    hygiene = scan_artifact_hygiene(
-        root,
+    state_writer.write(
+        root=root,
         mission_run_id=mission_run_id,
-        expected_artifacts=expected_artifacts,
-        report_refs=all_report_refs,
-        required_refs=all_required_refs,
-    )
-    _write_json(root, refs["artifact_hygiene"], hygiene.to_dict())
-    if attempt_records:
-        _append_jsonl(root, refs["attempts"], [attempt.to_dict() for attempt in all_attempts])
-    else:
-        _append_jsonl(root, refs["attempts"], [])
-    latest_attempt = all_attempts[-1] if all_attempts else None
-    safe_point = _latest_safe_point(root, latest_attempt)
-    mission_run = MissionRun(
-        mission_run_id=mission_run_id,
+        refs=refs,
         mission_id=mission_id,
+        current_contract_ref=active_contract.contract_ref,
+        current_contract_hash=active_contract.contract_hash,
+        revision_refs=list(active_contract.revision_refs),
+        work_unit_id=work_unit_id,
+        attempt_records=attempt_records,
         status=status,
-        current_attempt=latest_attempt.attempt_id if latest_attempt else "attempt-000000",
-        latest_work_unit_id=work_unit_id,
-        latest_safe_point=safe_point,
         latest_decision=latest_decision,
         next_action=next_action,
-        artifact_refs=list(result.artifact_refs),
-        evidence_refs=list(result.evidence_refs),
-        failed_constraint_ids=list(result.failed_constraint_ids),
-        attempts_ref=refs["attempts"],
-        artifact_hygiene_ref=refs["artifact_hygiene"],
-        metrics={
-            **metrics,
-            "artifact_hygiene_passed": hygiene.passed,
-            "state_hash": stable_json_hash(state.to_dict()),
-        },
-        updated_at=_now(),
-    )
-    _write_json(root, refs["mission_run"], mission_run.to_dict())
-
-
-def _latest_safe_point(root: Path, attempt: RuntimeAttempt | None) -> RuntimeSafePoint | None:
-    if attempt is None:
-        return None
-    savepoints_path = _resolve_workspace_ref(root, attempt.savepoints_ref)
-    if not savepoints_path.is_file():
-        return None
-    turn_ref = attempt.savepoints_ref
-    for line in savepoints_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        resume_hint = payload.get("resume_hint") if isinstance(payload, dict) else None
-        if isinstance(resume_hint, dict) and resume_hint.get("boundary") == SUPPORTED_RESUME_BOUNDARY:
-            turn_index = payload.get("turn_index")
-            if isinstance(turn_index, int):
-                turn_ref = f"{attempt.savepoints_ref}#turn={turn_index}"
-    return RuntimeSafePoint(
-        kind=SUPPORTED_RESUME_BOUNDARY,
-        savepoint_ref=turn_ref,
-        session_ref=f"attempts/{attempt.work_unit_id}/pi_agent_session.jsonl",
-        events_ref=f"attempts/{attempt.work_unit_id}/pi_agent_events.jsonl",
+        state=state,
+        result=result,
+        expected_artifacts=expected_artifacts,
+        report_refs=report_refs,
+        required_refs=required_refs,
+        metrics=metrics,
+        previous_attempts=previous_attempts,
     )
 
 
@@ -942,7 +904,3 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     if workspace not in path.parents and path != workspace:
         raise ContractValidationError("runtime ref escapes workspace")
     return path
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

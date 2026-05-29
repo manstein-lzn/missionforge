@@ -36,10 +36,16 @@ from .ir import (
     MissionObjective,
     MissionValidationError,
 )
+from .json_store import JsonArtifactStore, JsonEventLogStore, JsonRunStore, JsonWorkspaceStore
+from .metric_store import MetricStore
+from .metrics import MetricEvent, MetricProjection, MetricTrustLevel, project_metric_events
 from .profiles import CapabilityProfile, ProfileExpansion, ProfileRegistry, VerificationProfile
+from .revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
+from .revision_store import MissionRevisionStore, apply_mission_revision
 from .review import ReviewPacket, ReviewerDecision
 from .runner import MissionResult, MissionRuntime
 from .runtime import RuntimeEngine
+from .runtime_contract import ActiveMissionContract, RuntimeContractView
 from .steering import (
     ContractAdjustmentRequest,
     DecisionLedgerEntry,
@@ -56,6 +62,7 @@ from .steering import (
 from .steering_store import SteeringArtifactStore, steering_refs_for_iteration, steering_root_ref
 from .state import MissionRunState
 from .state import ArtifactHygieneReport, MissionRun, RuntimeAttempt, RuntimeSafePoint
+from .stores import ArtifactStore, EventLogStore, RunStore
 from .validators import run_validator
 from .verification import FailedConstraint, MissingEvidence, VerificationResult, VerificationSpec, ValidatorResult, ValidatorSpec
 from .verifier import Verifier, verify_spec
@@ -63,7 +70,9 @@ from .work_unit import AttemptInputManifest, ExecutionReport, WorkUnitContract, 
 
 __all__ = [
     "AdaptiveDecision",
+    "ActiveMissionContract",
     "ArtifactRef",
+    "ArtifactStore",
     "AttemptInputManifest",
     "AuthorityRequirement",
     "CapabilityProfileRef",
@@ -82,6 +91,7 @@ __all__ = [
     "EvidenceRecord",
     "EvidenceSnapshot",
     "EvidenceTrustLevel",
+    "EventLogStore",
     "ExecutionReport",
     "FailedConstraint",
     "FileEvidenceStore",
@@ -89,6 +99,10 @@ __all__ = [
     "ExpandedMission",
     "FrozenMissionContract",
     "InMemoryEvidenceStore",
+    "JsonArtifactStore",
+    "JsonEventLogStore",
+    "JsonRunStore",
+    "JsonWorkspaceStore",
     "MissingEvidence",
     "MissionForgeError",
     "MissionConstraint",
@@ -96,6 +110,15 @@ __all__ = [
     "MissionObjective",
     "MissionResult",
     "MissionRuntime",
+    "MissionRevision",
+    "MissionRevisionDecision",
+    "MissionRevisionRequest",
+    "MissionRevisionStore",
+    "MissionRevisionWorkflow",
+    "MetricEvent",
+    "MetricProjection",
+    "MetricStore",
+    "MetricTrustLevel",
     "MissionRunState",
     "ArtifactHygieneReport",
     "MissionRun",
@@ -116,7 +139,9 @@ __all__ = [
     "ReviewerProvider",
     "RuntimeEngine",
     "RuntimeAttempt",
+    "RuntimeContractView",
     "RuntimeSafePoint",
+    "RunStore",
     "StateCorrection",
     "SteeringArtifactStore",
     "SteeringContext",
@@ -137,8 +162,10 @@ __all__ = [
     "WorkerInvocation",
     "WorkerResult",
     "assert_refs_only_payload",
+    "apply_mission_revision",
     "expand_mission",
     "freeze_mission",
+    "project_metric_events",
     "run_validator",
     "stable_json_hash",
     "validate_ref",

@@ -43,6 +43,19 @@ Implemented in Phase 3:
 - `FileEvidenceStore`
 - deterministic payload hashes and snapshot ledger hashes
 
+Implemented in Phase 16:
+
+- `RunStore`
+- `ArtifactStore`
+- `EventLogStore`
+- `JsonWorkspaceStore`
+- `JsonRunStore`
+- `JsonArtifactStore`
+- `JsonEventLogStore`
+
+The JSON backend preserves the current workspace layout and safe-ref semantics.
+It is a boundary over existing JSON/JSONL files, not a database migration.
+
 ## Public Contracts
 
 - `EvidenceRef`
@@ -50,6 +63,10 @@ Implemented in Phase 3:
 - `ArtifactRef`
 - `ContractManifest`
 - `EvidenceLedger`
+- `RunStore`
+- `ArtifactStore`
+- `EventLogStore`
+- `JsonWorkspaceStore`
 
 To be designed:
 
@@ -71,6 +88,9 @@ To be designed:
 - Every state correction cites evidence refs and evidence reliability.
 - Context checkpoints are compact recovery summaries, not transcripts or memory
   stores.
+- Store APIs return refs and contract objects, not raw artifact bodies, except
+  where explicit backend tests read a stored JSON/text artifact.
+- Store refs remain workspace-relative safe refs.
 
 ## Dependencies
 
@@ -84,6 +104,7 @@ To be designed:
 - evidence reliability routing tests
 - state correction provenance tests
 - context checkpoint size/content tests
+- JSON store safe-ref and layout compatibility tests
 
 ## Verification Evidence
 
@@ -101,8 +122,15 @@ PYTHONPATH=src python3 -m unittest tests/test_evidence_ledger.py
 # Ran 4 tests: OK
 ```
 
+Phase 16 store boundary:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_store_contracts.py tests/test_json_store_backend.py tests/test_runtime_store_integration.py
+# passed
+```
+
 ## Open Questions
 
-- Should a later phase add SQLite behind the same ledger protocol?
+- SQLite should be considered only after the JSON store boundary remains stable.
 - How much ContextForge code should be adapted versus redesigned?
 - Should proposal artifacts be stored as ledger events, artifacts, or both?

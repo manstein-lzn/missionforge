@@ -80,6 +80,29 @@ Implemented in the controlled steering slice:
 - operator inspect/diagnose steering refs
 - pressure benchmark for accepted and rejected live-like proposals
 
+Implemented in Phase 15:
+
+- `MissionRevisionRequest`
+- `MissionRevisionDecision`
+- `MissionRevision`
+- `MissionRevisionWorkflow`
+- `MissionRevisionStore`
+- conservative revision application for shrink/split/reorder/review-required
+  routes
+- stale contract hash rejection
+- reviewer decision freshness checks
+- MissionRun revision refs and current contract refs
+
+Implemented Phase 15 repair:
+
+- runtime consumption of the active revised contract
+- preservation of `MissionRun.revision_refs` across runtime writes
+- operator inspect surface for current contract refs and revision refs
+- fail-closed handling for stale or missing active contract refs
+
+The repair plan is tracked in
+`docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`.
+
 MissionForge keeps deterministic behavior by default. Live LLM steering is
 still opt-in through adapter injection, and adapter output must pass the same
 schema, refs-only, boundary, and authority validation as deterministic fake
@@ -99,10 +122,14 @@ providers.
 - `ObservationInterpreter`
 - `ReviewerProvider`
 - `SteeringArtifactStore`
+- `MissionRevisionRequest`
+- `MissionRevisionDecision`
+- `MissionRevision`
+- `MissionRevisionWorkflow`
+- `MissionRevisionStore`
 
 To be designed:
 
-- `MissionRevisionRequest`
 - richer `MissionRunView` steering read model beyond the current operator refs
 
 ## Permission Model
@@ -167,6 +194,32 @@ MissionRun state + evidence refs
 Rejected proposals are still evidence. They should be recorded with rejection
 reasons so later diagnosis can distinguish a poor model suggestion from a
 failed work attempt.
+
+## Mission Revision Lifecycle
+
+Mission revision is a controlled state transition, not a workflow engine:
+
+```text
+ContractAdjustmentRequest
+  -> MissionRevisionRequest
+  -> authority check
+  -> MissionRevisionDecision
+  -> conservative MissionIR update
+  -> new FrozenMissionContract
+  -> MissionRevision record
+```
+
+Rules:
+
+- stale base contract hashes are rejected
+- harness authority can approve only shrink, split, and reorder
+- review-required changes need reviewer approval for the current contract hash
+- human-authority changes remain human-authority decisions
+- unsupported or expanding changes fail closed unless routed to review, human
+  authority, or redesign
+- revision metadata changes the frozen contract hash through MissionIR fields
+  that are part of the frozen contract
+- reviewer prose cannot override failed executable validators
 
 ## Candidate Schemas
 

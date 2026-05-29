@@ -30,6 +30,9 @@ class MissionRunView:
     evidence_refs: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     failed_constraint_ids: list[str] = field(default_factory=list)
+    current_contract_ref: str = ""
+    current_contract_hash: str = ""
+    revision_refs: list[str] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     evidence_record_count: int = 0
 
@@ -47,6 +50,11 @@ class MissionRunView:
             evidence_refs=list(result.evidence_refs),
             artifact_refs=list(result.artifact_refs),
             failed_constraint_ids=list(result.failed_constraint_ids),
+            current_contract_ref=str(result.metrics.get("current_contract_ref", "")),
+            current_contract_hash=str(result.metrics.get("contract_hash", "")),
+            revision_refs=require_str_list(result.metrics.get("revision_refs", []), "mission_result.metrics.revision_refs")
+            if "revision_refs" in result.metrics
+            else [],
             metrics=dict(result.metrics),
             evidence_record_count=len(evidence_snapshot.records) if evidence_snapshot is not None else 0,
         )
@@ -65,6 +73,9 @@ class MissionRunView:
                 data.get("failed_constraint_ids", []),
                 "mission_run_view.failed_constraint_ids",
             ),
+            current_contract_ref=data.get("current_contract_ref", ""),
+            current_contract_hash=data.get("current_contract_hash", ""),
+            revision_refs=require_str_list(data.get("revision_refs", []), "mission_run_view.revision_refs"),
             metrics=ensure_json_value(
                 require_mapping(data.get("metrics", {}), "mission_run_view.metrics"),
                 "mission_run_view.metrics",
@@ -86,6 +97,12 @@ class MissionRunView:
         for ref in self.artifact_refs:
             validate_ref(ref, "mission_run_view.artifact_refs[]")
         require_str_list(self.failed_constraint_ids, "mission_run_view.failed_constraint_ids")
+        if self.current_contract_ref:
+            validate_ref(self.current_contract_ref, "mission_run_view.current_contract_ref")
+        if self.current_contract_hash:
+            require_non_empty_str(self.current_contract_hash, "mission_run_view.current_contract_hash")
+        for ref in self.revision_refs:
+            validate_ref(ref, "mission_run_view.revision_refs[]")
         ensure_json_value(require_mapping(self.metrics, "mission_run_view.metrics"), "mission_run_view.metrics")
         require_int_at_least(self.evidence_record_count, "mission_run_view.evidence_record_count", 0)
 
@@ -97,6 +114,9 @@ class MissionRunView:
             "evidence_refs": list(self.evidence_refs),
             "artifact_refs": list(self.artifact_refs),
             "failed_constraint_ids": list(self.failed_constraint_ids),
+            "current_contract_ref": self.current_contract_ref,
+            "current_contract_hash": self.current_contract_hash,
+            "revision_refs": list(self.revision_refs),
             "metrics": ensure_json_value(self.metrics, "mission_run_view.metrics"),
             "evidence_record_count": self.evidence_record_count,
         }

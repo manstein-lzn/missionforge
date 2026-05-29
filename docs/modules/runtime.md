@@ -76,12 +76,37 @@ The deterministic kernel pieces now composed by the runtime are:
 The runtime remains deliberately small. It does not expose a product-level
 worker registry or competing worker choices.
 
+Phase 12-14 added the next decoupling layer:
+
+- metrics are written as `MetricEvent` JSONL and `MetricProjection` refs under
+  `runs/{mission_run_id}/metrics/`
+- operator diagnosis reads metric projection flags instead of runtime-private
+  metric dict keys
+- attempt record assembly moved to `RuntimeAttemptRunner`
+- durable state/attempt/hygiene/metric writes moved to `RuntimeStateWriter`
+- `MissionRuntime` delegates default PI Agent construction to
+  `PiWorkerRuntimeFactory`, so `runner.py` no longer imports the PI Agent
+  adapter directly
+
+The runtime loop still remains in `RuntimeEngine`; the extraction is limited
+to attempt assembly and durable writes.
+
+Phase 15 revision contracts are implemented, and runtime consumption of a
+recorded revised contract is completed for the conservative repair slice. The
+repair is documented in `docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`: once a
+revision is recorded, `MissionRun.current_contract_ref`,
+`MissionRun.current_contract_hash`, and `MissionRun.revision_refs` remain
+authoritative for later runtime work.
+
 ## Public Contracts
 
 - `MissionRuntime`
 - `MissionResult`
 - `RuntimeEngine`
 - `MissionRunState`
+- `RuntimeAttemptRunner`
+- `RuntimeStateWriter`
+- `PiWorkerRuntimeFactory`
 
 ## Invariants
 
@@ -103,6 +128,10 @@ worker registry or competing worker choices.
 - `MissionResult` is refs-only and must not include raw prompts, transcripts,
   worker claims, or artifact bodies.
 - Control requests are consumed only at safe points.
+- Metrics are diagnostics only. Runtime routing must not depend on
+  `MetricEvent.values`.
+- PI Agent remains the only LLM worker direction; the PiWorker boundary is not
+  a public worker registry.
 
 ## Dependencies
 
@@ -127,6 +156,9 @@ worker registry or competing worker choices.
   artifact hygiene, and live soak
 - controlled steering tests for proposal mode, observation signals, reviewer
   provider gates, optional LLM adapter isolation, and operator steering refs
+- metric ledger tests for typed events, projections, runtime metric refs, and
+  operator diagnosis boundaries
+- PiWorker runtime boundary import tests
 
 ## Verification Evidence
 
@@ -165,6 +197,23 @@ PYTHONPATH=src python3 -m unittest tests/test_controlled_steering_runtime.py tes
 
 PYTHONPATH=src python3 -m unittest discover -s tests
 # Ran 222 tests: OK (skipped=2)
+```
+
+Phase 12-14 decoupling focused tests:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_metrics_contracts.py tests/test_metric_store.py tests/test_runtime_metric_boundaries.py tests/test_operator_metric_projection.py
+# passed
+
+PYTHONPATH=src python3 -m unittest tests/test_piworker_runtime_boundary.py tests/test_pi_agent_runtime_import_boundaries.py tests/test_adapter_import_boundaries.py
+# passed
+```
+
+Phase 15 revision runtime repair:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_runtime_revision_preservation.py tests/test_operator_revision_surface.py tests/test_runtime_revision_consumption.py
+# passed
 ```
 
 ## Open Questions

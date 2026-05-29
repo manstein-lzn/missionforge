@@ -8,8 +8,8 @@ import unittest
 CORE_ROOT = Path("src/missionforge")
 ADAPTER_ROOT = CORE_ROOT / "adapters"
 ALLOWED_CORE_ADAPTER_IMPORTS = {
-    (CORE_ROOT / "runner.py", "missionforge.adapters.pi_agent_runtime"),
-    (CORE_ROOT / "runner.py", "adapters.pi_agent_runtime"),
+    (CORE_ROOT / "piworker_runtime.py", "missionforge.adapters.pi_agent_runtime"),
+    (CORE_ROOT / "piworker_runtime.py", "adapters.pi_agent_runtime"),
 }
 FORBIDDEN_PRODUCT_ADAPTER_MODULES = {
     "codexarium.py",

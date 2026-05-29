@@ -47,6 +47,12 @@ logs.
 This module is now legacy reference material. MissionForge's default runtime
 uses `PiAgentRuntimeAdapter`, which invokes `workers/pi-agent-runtime`.
 
+Phase 14 isolates default construction behind `PiWorkerRuntimeFactory` in
+`src/missionforge/piworker_runtime.py`. `MissionRuntime` uses that narrow
+PiWorker-specific boundary instead of importing the PI Agent adapter directly.
+This is not a public worker registry and does not introduce non-PI LLM worker
+support.
+
 ## Attribution
 
 The PI GitHub project is MIT-licensed. MissionForge is inspired by PI. The
@@ -66,6 +72,7 @@ Implemented in Goal 6A:
 - `ContractAdjustmentEvidence`
 - `PiWorkerRunResult`
 - `PiWorkerProviderEnvironment`
+- `PiWorkerRuntimeFactory`
 
 ## Contract Sketch
 
@@ -138,6 +145,9 @@ runtime reached offline parity.
 - Any worker-requested contract adjustment is evidence for controlled steering,
   not a mutation of the frozen mission contract.
 - MissionForge core must not import the PiWorker adapter.
+- `runner.py` must not import `missionforge.adapters.pi_agent_runtime`
+  directly; the only allowed core import is the narrow PiWorker runtime
+  boundary.
 - Faux PiWorker tests must pass before any live PiWorker smoke.
 
 ## Dependencies

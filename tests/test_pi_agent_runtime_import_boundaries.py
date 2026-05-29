@@ -21,8 +21,8 @@ PI_AGENT_SYMBOLS = {
     "SubprocessPiAgentCommandRunner",
 }
 ALLOWED_CORE_IMPORTS = {
-    (CORE_ROOT / "runner.py", "missionforge.adapters.pi_agent_runtime"),
-    (CORE_ROOT / "runner.py", "adapters.pi_agent_runtime"),
+    (CORE_ROOT / "piworker_runtime.py", "missionforge.adapters.pi_agent_runtime"),
+    (CORE_ROOT / "piworker_runtime.py", "adapters.pi_agent_runtime"),
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
     ADAPTER_ROOT / "cli.py",

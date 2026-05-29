@@ -1,23 +1,23 @@
 # MissionForge
 
 MissionForge is a runtime for executing structured Mission IR with observable
-LLM workers, controlled steering proposals, evidence gates, adaptive repair,
-and verified closure.
+PiWorker execution, controlled steering proposals, evidence gates, adaptive
+repair, and verified closure.
 
 It is intentionally not a SkillFoundry rewrite. SkillFoundry should become one
 application on top of MissionForge. MissionForge owns the generic substrate:
 
 ```text
-MissionIR + Workspace + WorkerProvider + ToolRegistry
-  -> MissionResult + EvidenceLedger + Artifacts + Metrics
+MissionIR + Workspace + PiWorker Boundary + ToolRegistry
+  -> MissionResult + EvidenceLedger + Artifacts + MetricLedger
 ```
 
 ## Design Stance
 
 - Mission semantics live in Mission IR and profile data, not task-name branches.
 - The runtime core does not depend on LangGraph. LangGraph is an optional host.
-- The only first-class worker target is PiWorker. Other workers are out of
-  scope until the PiWorker path is complete.
+- The only first-class LLM worker target is PiWorker. Other LLM workers are not
+  a planned extension point.
 - The PiWorker design is inspired by the MIT-licensed PI GitHub project. The
   initial skeleton does not vendor PI code; any future copied or adapted PI
   code must retain required attribution.
@@ -72,6 +72,15 @@ Implementation should be driven through the hardened development documents:
   of the Phase 10 durable runtime state.
 - [Phase 11 Operator Productization Goals](docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md):
   `/goal`-ready implementation slices for the Phase 11 operator surface.
+- [Phase 12-16 Decoupling Roadmap](docs/PHASE12_TO_16_DECOUPLING_ROADMAP.md):
+  metric ledger, runtime decomposition, PiWorker boundary, mission
+  revision, and store-interface phases.
+- [Phase 15 Revision Runtime Repair Plan](docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md):
+  follow-up plan for making recorded mission revisions become the active
+  runtime contract state on resume and subsequent work.
+- [Implementation Status And Next Phases](docs/IMPLEMENTATION_STATUS_AND_NEXT_PHASES.md):
+  current implementation audit, remaining coupling risks, and recommended
+  Phase 17-21 hardening path.
 
 ## Package Layout
 
@@ -88,16 +97,25 @@ src/missionforge/
   freeze.py      Mission expansion and frozen contract hashing
   harness.py     Proposal validation and work-unit harness
   ir.py          Mission IR dataclasses and validation
+  json_store.py  Default workspace-relative JSON/JSONL store backend
+  metric_store.py Run-local metric event/projection storage
+  metrics.py     MetricEvent and MetricProjection contracts
   mission.py     Mission contract compatibility surface
+  piworker_runtime.py Narrow PiWorker/PI Agent runtime construction boundary
   profiles.py    Capability and verification profile expansion
+  revision.py    Mission revision contracts and conservative workflow
+  revision_store.py Run-local mission revision artifact storage
   runner.py      Public MissionRuntime/MissionResult boundary
   runtime.py     Deterministic runtime vertical slice
+  runtime_attempts.py RuntimeAttempt assembly helper
+  runtime_state_writer.py Durable runtime state writer
   steering.py    Controlled steering contract objects
   steering_store.py Run-local controlled steering artifact refs
+  stores.py      RunStore/ArtifactStore/EventLogStore protocols
   verifier.py    Verification routing
   verification.py Validator and verification result contracts
   work_unit.py   Work-unit and execution report contracts
-  workers.py     Generic worker adapter protocol boundary
+  workers.py     Worker protocol boundary used by PiWorker-compatible adapters
 docs/
   ARCHITECTURE.md
   MISSION_IR.md
@@ -110,9 +128,12 @@ docs/
   FOLLOW_ON_GOALS.md
   PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md
   PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md
+  PHASE12_TO_16_DECOUPLING_ROADMAP.md
   modules/
     adapter_contracts.md
     controlled_steering.md
+    metrics.md
+    store.md
 integrations/
   skillfoundry/
     External product integration that compiles SkillFoundry/FrontDesk refs

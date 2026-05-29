@@ -224,6 +224,9 @@ class MissionRun:
     attempts_ref: str
     artifact_hygiene_ref: str
     latest_safe_point: RuntimeSafePoint | None = None
+    current_contract_ref: str = ""
+    current_contract_hash: str = ""
+    revision_refs: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     evidence_refs: list[str] = field(default_factory=list)
     failed_constraint_ids: list[str] = field(default_factory=list)
@@ -248,6 +251,9 @@ class MissionRun:
             attempts_ref=validate_ref(data.get("attempts_ref"), "mission_run.attempts_ref"),
             artifact_hygiene_ref=validate_ref(data.get("artifact_hygiene_ref"), "mission_run.artifact_hygiene_ref"),
             latest_safe_point=RuntimeSafePoint.from_dict(safe_point_payload) if isinstance(safe_point_payload, Mapping) else None,
+            current_contract_ref=data.get("current_contract_ref", ""),
+            current_contract_hash=data.get("current_contract_hash", ""),
+            revision_refs=require_str_list(data.get("revision_refs", []), "mission_run.revision_refs"),
             artifact_refs=require_str_list(data.get("artifact_refs", []), "mission_run.artifact_refs"),
             evidence_refs=require_str_list(data.get("evidence_refs", []), "mission_run.evidence_refs"),
             failed_constraint_ids=require_str_list(data.get("failed_constraint_ids", []), "mission_run.failed_constraint_ids"),
@@ -269,6 +275,12 @@ class MissionRun:
         validate_ref(self.artifact_hygiene_ref, "mission_run.artifact_hygiene_ref")
         if self.latest_safe_point is not None:
             self.latest_safe_point.validate()
+        if self.current_contract_ref:
+            validate_ref(self.current_contract_ref, "mission_run.current_contract_ref")
+        if self.current_contract_hash:
+            require_non_empty_str(self.current_contract_hash, "mission_run.current_contract_hash")
+        for ref in self.revision_refs:
+            validate_ref(ref, "mission_run.revision_refs[]")
         require_str_list(self.artifact_refs, "mission_run.artifact_refs")
         require_str_list(self.evidence_refs, "mission_run.evidence_refs")
         require_str_list(self.failed_constraint_ids, "mission_run.failed_constraint_ids")
@@ -284,6 +296,9 @@ class MissionRun:
             "current_attempt": self.current_attempt,
             "latest_work_unit_id": self.latest_work_unit_id,
             "latest_safe_point": self.latest_safe_point.to_dict() if self.latest_safe_point else None,
+            "current_contract_ref": self.current_contract_ref,
+            "current_contract_hash": self.current_contract_hash,
+            "revision_refs": list(self.revision_refs),
             "latest_decision": self.latest_decision,
             "next_action": self.next_action,
             "artifact_refs": list(self.artifact_refs),

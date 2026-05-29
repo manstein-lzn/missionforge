@@ -519,7 +519,10 @@ class MissionCLI:
             decision = ReviewerDecision.from_dict(json.loads(review_path.read_text(encoding="utf-8")))
             if decision.decision != args.decision:
                 raise ContractValidationError("review command decision does not match review_ref decision")
-            contract_hash = require_non_empty_str(run.metrics.get("contract_hash"), "mission_run.metrics.contract_hash")
+            contract_hash = require_non_empty_str(
+                run.current_contract_hash or run.metrics.get("contract_hash"),
+                "mission_run.current_contract_hash",
+            )
             _validate_reviewer_decision_fresh(decision, contract_hash=contract_hash)
             record_ref = args.record_ref or f"reviews/{run.mission_run_id}.review_record.json"
             record_payload = {
@@ -738,23 +741,39 @@ def _error_result(
 def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[str, Any], list[str]]:
     root = Path(workspace).resolve()
     run = load_mission_run(root, mission_run_id)
+    from ..metric_store import MetricStore
     from ..state import load_runtime_attempts
     from ..steering_store import SteeringArtifactStore
 
     attempts = load_runtime_attempts(root, run.mission_run_id)
     steering_store = SteeringArtifactStore(root)
+    metric_store = MetricStore(root)
     steering_refs = steering_store.collect_refs(run.mission_run_id)
     latest_steering_refs = steering_store.latest_refs(run.mission_run_id)
     artifact_hygiene = None
     hygiene_path = _resolve_workspace_ref(root, run.artifact_hygiene_ref)
     if hygiene_path.is_file():
         artifact_hygiene = ArtifactHygieneReport.from_dict(_read_json_ref(root, run.artifact_hygiene_ref)).to_dict()
+    metric_events_ref = run.metrics.get("metric_events_ref")
+    if not isinstance(metric_events_ref, str) or not metric_events_ref:
+        metric_events_ref = metric_store.events_ref(run.mission_run_id)
+    metric_projection_ref = run.metrics.get("metric_projection_ref")
+    if not isinstance(metric_projection_ref, str) or not metric_projection_ref:
+        metric_projection_ref = metric_store.projection_ref(run.mission_run_id)
+    metric_projection = None
+    projection_path = _resolve_workspace_ref(root, metric_projection_ref)
+    if projection_path.is_file():
+        metric_projection = metric_store.load_projection(run.mission_run_id).to_dict()
     data = {
         "mission_run_id": run.mission_run_id,
         "mission_id": run.mission_id,
         "status": run.status,
         "current_attempt": run.current_attempt,
         "latest_work_unit_id": run.latest_work_unit_id,
+        "current_contract_ref": run.current_contract_ref,
+        "current_contract_hash": run.current_contract_hash,
+        "revision_refs": list(run.revision_refs),
+        "latest_revision_ref": run.revision_refs[-1] if run.revision_refs else "",
         "latest_decision": run.latest_decision,
         "next_action": run.next_action,
         "latest_safe_point": run.latest_safe_point.to_dict() if run.latest_safe_point else None,
@@ -766,6 +785,9 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
         "attempts_ref": run.attempts_ref,
         "artifact_hygiene_ref": run.artifact_hygiene_ref,
         "artifact_hygiene": artifact_hygiene,
+        "metric_events_ref": metric_events_ref,
+        "metric_projection_ref": metric_projection_ref,
+        "metric_projection": metric_projection,
         "steering_refs": list(steering_refs),
         "latest_steering_ref_map": dict(latest_steering_refs),
         "metrics": ensure_json_value(run.metrics, "mission_run.metrics"),
@@ -773,6 +795,10 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
     refs = _dedupe_refs([
         run.attempts_ref,
         run.artifact_hygiene_ref,
+        *([run.current_contract_ref] if run.current_contract_ref else []),
+        *run.revision_refs,
+        metric_events_ref,
+        metric_projection_ref,
         *run.artifact_refs,
         *run.evidence_refs,
         *steering_refs,
@@ -794,14 +820,14 @@ def _diagnose_run(inspect_data: Mapping[str, Any]) -> dict[str, str]:
     if status in {"unsupported_verification_spec", "missing_verification_plan", "invalid_contract"}:
         return _diagnosis("redesign_required", "revise_contract_or_profile", f"runtime status is {status}")
 
-    metrics = require_mapping(inspect_data.get("metrics", {}), "diagnose.metrics")
-    if bool(metrics.get("provider_failure_count")):
+    diagnostic_flags = _metric_projection_flags(inspect_data)
+    if "steering_provider_failure" in diagnostic_flags:
         return _diagnosis("steering_provider_failure", "inspect_steering_refs", "steering provider failed")
-    if bool(metrics.get("rejected_proposal_count")):
+    if "steering_proposal_rejected" in diagnostic_flags:
         return _diagnosis("steering_proposal_rejected", "inspect_steering_refs", "latest steering proposal was rejected")
-    if bool(metrics.get("unsafe_proposal_rejection_count")):
+    if "unsafe_steering_proposal_rejected" in diagnostic_flags:
         return _diagnosis("unsafe_steering_proposal_rejected", "inspect_steering_refs", "unsafe steering proposal was rejected")
-    if bool(metrics.get("redesign_required")):
+    if "redesign_required" in diagnostic_flags:
         return _diagnosis("redesign_required", "revise_contract_or_profile", "runtime marked redesign_required")
 
     safe_point = inspect_data.get("latest_safe_point")
@@ -818,11 +844,18 @@ def _diagnose_run(inspect_data: Mapping[str, Any]) -> dict[str, str]:
             return _diagnosis("worker_failure", "inspect_latest_attempt_refs", "latest attempt did not complete cleanly")
 
     if status == "failed":
-        if bool(metrics.get("repair_exhausted")):
+        if "repair_exhausted" in diagnostic_flags:
             return _diagnosis("repair_exhausted", "stop_or_redesign", "repair budget is exhausted")
         return _diagnosis("repairable_verifier_failure", "resume_repair", "verifier failed and repair may be available")
 
     return _diagnosis("redesign_required", "revise_contract_or_profile", f"no deterministic route for status {status}")
+
+
+def _metric_projection_flags(inspect_data: Mapping[str, Any]) -> set[str]:
+    projection = inspect_data.get("metric_projection")
+    if not isinstance(projection, Mapping):
+        return set()
+    return set(require_str_list(projection.get("diagnostic_flags", []), "diagnose.metric_projection.diagnostic_flags"))
 
 
 def _diagnosis(code: str, action: str, reason: str) -> dict[str, str]:
