@@ -26,7 +26,15 @@ authoritative design documents remain:
 - `docs/PRODUCT_INTEGRATION_BOUNDARY.md`
 - `docs/PHASE12_TO_16_DECOUPLING_ROADMAP.md`
 - `docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`
+- `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md`
 - `docs/modules/*.md`
+
+Update note:
+
+Phase 17-21 first slices have now been implemented. This document remains the
+status and rationale record; `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md` is
+the concise development reference for the landed boundaries and follow-on
+rules.
 
 ## Executive Position
 
@@ -91,6 +99,11 @@ Core rules:
 | Phase 14 PiWorker boundary | Implemented | `PiWorkerRuntimeFactory` isolates PI Agent construction without a worker registry |
 | Phase 15 mission revision | Implemented conservative workflow | Active revised contracts are consumed on resume; broader revision workflows remain future work |
 | Phase 16 store interface | Implemented first slice | Protocols and JSON backend exist; not all runtime storage is wired through them |
+| Phase 17 store wiring | Implemented first slice | Runtime, steering, revision, metric, and CLI writes route through `JsonWorkspaceStore` in the main durable paths |
+| Phase 18 API hardening | Implemented first slice | Package root no longer re-exports active runtime contract internals |
+| Phase 19 metric dict sunset | Implemented first slice | Operator diagnosis reads typed metric projection rather than loose route keys |
+| Phase 20 profile extension kit | Implemented first slice | `ProfilePack` supports external data-first profile packs |
+| Phase 21 run audit | Implemented first slice | `MissionRunAudit` provides refs-only stale/missing ref diagnostics |
 | Product boundary | Implemented and tested | SkillFoundry is external under `integrations/skillfoundry/` |
 | Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review, not yet a complete operator product |
 
@@ -129,11 +142,11 @@ Approximate current maturity against the long-term vision:
 | Task-independent core | High | Import-boundary tests protect the product boundary |
 | PiWorker-only LLM worker direction | High | Construction is isolated behind a PiWorker-specific factory |
 | Verifier-owned closure | High | Worker and LLM output still cannot close missions |
-| Metric decoupling | Medium | Ledger/projection exists, but compatibility dicts still carry data |
+| Metric decoupling | Medium-high | Ledger/projection drives operator diagnosis; compatibility dicts remain only as envelopes |
 | Runtime maintainability | Medium | Helpers exist, but `RuntimeEngine` remains the main complexity hotspot |
 | Mission revision | Medium | Conservative durable revision works; richer contract evolution is future work |
-| Store abstraction | Low-medium | Protocols exist, but direct file I/O remains spread across modules |
-| Arbitrary long-running complex tasks | Medium-low | Core primitives exist; long-run operation, replay, profile packs, and stronger store consistency remain unfinished |
+| Store abstraction | Medium | Main durable writes route through `JsonWorkspaceStore`; legacy state read helpers still preserve layout compatibility |
+| Arbitrary long-running complex tasks | Medium | Core primitives, profile packs, run audit, and stale-ref diagnosis exist; replay and richer revision remain future work |
 
 ## Important Current Gaps
 
@@ -142,13 +155,20 @@ Approximate current maturity against the long-term vision:
 `RunStore`, `ArtifactStore`, `EventLogStore`, and `JsonWorkspaceStore` exist.
 The JSON backend preserves the current file layout and validates workspace refs.
 
-The remaining gap is that runtime, revision, steering, evidence, state, and CLI
-code still contain direct filesystem helpers such as `_write_json`,
-`_append_jsonl`, `_resolve_workspace_ref`, `read_text`, and `write_text`.
+Phase 17 routed the main durable write paths through this boundary:
 
-This is acceptable for the Phase 16 first slice, but it is the largest remaining
-coupling if MissionForge later needs SQLite, remote stores, replay, or stronger
-crash recovery.
+- runtime state;
+- attempts;
+- artifact hygiene;
+- metric events and projection;
+- revision artifacts and MissionRun activation;
+- steering artifacts and decision ledger;
+- CLI JSON/text result artifacts.
+
+The remaining low-level direct file helpers are mostly layout-compatible reads,
+workspace ref resolution, and artifact scanning. They should not become a second
+write path. A later store-only migration can tighten those reads once it can do
+so without circular imports or layout churn.
 
 ### 2. Runtime Is Still The Main Complexity Hotspot
 
@@ -169,7 +189,9 @@ keys.
 
 For compatibility, `MissionResult.metrics` and `MissionRun.metrics` still carry
 summary fields such as contract hash, attempt counts, revision refs, and metric
-refs. This should not become a permanent cross-module data bus.
+refs. Tests now mutate loose metric dict route keys to prove they do not change
+operator diagnosis. The remaining work is gradual compatibility-envelope
+reduction, not a runtime behavior change.
 
 ### 4. Mission Revision Is Conservative Only
 
@@ -184,13 +206,13 @@ authority gates, not as a general workflow engine.
 
 ### 5. Public API Surface Is Slightly Too Wide
 
-Some objects that are operationally internal are exported from the package root,
-including `RuntimeContractView` and `ActiveMissionContract`.
+The package root no longer re-exports `RuntimeContractView` or
+`ActiveMissionContract`. Stable, experimental, and internal surfaces are
+documented in `docs/API_BOUNDARY.md`.
 
-This is not a correctness bug, but it conflicts with the product direction of
-not exposing low-level runtime mechanics unnecessarily. The next API hardening
-phase should decide which exports are stable public contracts and which are
-internal or experimental.
+`RuntimeEngine` remains exported as an experimental low-level surface. Product
+integrations should default to `MissionRuntime`, Mission IR, profiles,
+validators, evidence refs, metric events, and mission revision.
 
 ### 6. Profiles Are Not Yet Strong Enough To Prevent Core Patching
 
@@ -198,12 +220,11 @@ The profile system is conceptually right: reusable task features should be
 declared as capability or verification profiles instead of product-specific
 runtime branches.
 
-The current built-in profile set is still small. If external users cannot
-express their task features through profiles, validators, and integrations,
-they will be tempted to modify MissionForge core. The profile/validator
-extension kit is therefore a product-boundary feature, not just convenience.
+Phase 20 added `ProfilePack` and the external extension kit documented in
+`docs/PROFILE_EXTENSION_KIT.md`. The built-in profile set remains small by
+design; richer task semantics should live in external packs and integrations.
 
-## Recommended Next Phases
+## Phase 17-21 First-Slice Targets
 
 ### Phase 17: Store Wiring / Transaction Boundary
 

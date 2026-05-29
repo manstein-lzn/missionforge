@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from missionforge import ContractAdjustmentRequest, ContractValidationError, MissionIR, MissionRuntime, apply_mission_revision
 from missionforge.freeze import freeze_mission
@@ -130,6 +131,42 @@ class MissionRevisionWorkflowTests(unittest.TestCase):
             self.assertTrue((root / "runs/run-sample-mission/revisions/revision-000002/request.json").is_file())
             self.assertTrue((root / "runs/run-sample-mission/revisions/revision-000002/decision.json").is_file())
             self.assertFalse((root / "runs/run-sample-mission/revisions/revision-000002/revision.json").exists())
+
+    def test_revision_activation_fails_closed_when_revision_write_fails(self) -> None:
+        mission = MissionIR.from_dict(sample_mission_payload())
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            MissionRuntime(workspace=root).run(mission)
+            run_path = root / "runs/run-sample-mission/mission_run.json"
+            before = MissionRun.from_dict(json.loads(run_path.read_text()))
+            adjustment = ContractAdjustmentRequest.from_dict(
+                {
+                    "request_id": "adjust-003",
+                    "mission_run_id": "run-sample-mission",
+                    "iteration": 3,
+                    "contract_ref": before.current_contract_ref,
+                    "requested_change": "split",
+                    "reason": "Split work.",
+                    "evidence_refs": ["runs/run-sample-mission/attempts.jsonl"],
+                    "authority_required": "harness",
+                }
+            )
+
+            with patch.object(
+                MissionRevisionStore,
+                "write_revision",
+                side_effect=ContractValidationError("simulated revision write failure"),
+            ):
+                with self.assertRaisesRegex(ContractValidationError, "simulated revision write failure"):
+                    apply_mission_revision(workspace=root, mission=mission, adjustment=adjustment)
+
+            after = MissionRun.from_dict(json.loads(run_path.read_text()))
+
+            self.assertEqual(after.current_contract_ref, before.current_contract_ref)
+            self.assertEqual(after.current_contract_hash, before.current_contract_hash)
+            self.assertEqual(after.revision_refs, before.revision_refs)
+            self.assertFalse((root / "runs/run-sample-mission/revisions/revision-000003/revision.json").exists())
 
 
 if __name__ == "__main__":

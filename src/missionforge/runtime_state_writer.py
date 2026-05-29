@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractValidationError, stable_json_hash, validate_ref
+from .json_store import JsonWorkspaceStore
 from .metric_store import MetricStore
 from .metrics import MetricEvent, MetricTrustLevel, safe_metric_values
 from .state import (
@@ -129,10 +130,7 @@ class RuntimeStateWriter:
 
 
 def _write_json(root: Path, ref: str, payload: dict[str, Any]) -> str:
-    path = _resolve_workspace_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    return ref
+    return JsonWorkspaceStore(root).write_json(ref, payload)
 
 
 def _load_previous_run(root: Path, mission_run_id: str) -> MissionRun | None:
@@ -143,10 +141,7 @@ def _load_previous_run(root: Path, mission_run_id: str) -> MissionRun | None:
 
 
 def _append_jsonl(root: Path, ref: str, payloads: list[dict[str, Any]]) -> None:
-    path = _resolve_workspace_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = "".join(json.dumps(payload, sort_keys=True) + "\n" for payload in payloads)
-    path.write_text(text, encoding="utf-8")
+    JsonWorkspaceStore(root).write_jsonl(ref, payloads)
 
 
 def _write_metric_ledger(

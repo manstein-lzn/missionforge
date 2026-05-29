@@ -22,6 +22,7 @@ from ..contracts import (
     validate_ref,
 )
 from ..ir import MissionIR
+from ..json_store import JsonWorkspaceStore
 from ..review import ReviewerDecision
 from ..runner import MissionResult, MissionRuntime
 from ..state import (
@@ -338,8 +339,7 @@ class MissionCLI:
         max_attempts: int = 1,
     ) -> MissionCLIResult:
         root = Path(workspace).resolve()
-        mission_path = _resolve_workspace_ref(root, mission_ref)
-        mission = MissionIR.from_dict(json.loads(mission_path.read_text(encoding="utf-8")))
+        mission = MissionIR.from_dict(JsonWorkspaceStore(root).read_json(mission_ref))
         mission_result = MissionRuntime(workspace=root, max_attempts=max_attempts).run(mission)
         mission_result.validate()
 
@@ -515,8 +515,7 @@ class MissionCLI:
         root = Path(args.workspace).resolve()
         try:
             run = load_mission_run(root, args.run)
-            review_path = _resolve_workspace_ref(root, args.review_ref)
-            decision = ReviewerDecision.from_dict(json.loads(review_path.read_text(encoding="utf-8")))
+            decision = ReviewerDecision.from_dict(JsonWorkspaceStore(root).read_json(args.review_ref))
             if decision.decision != args.decision:
                 raise ContractValidationError("review command decision does not match review_ref decision")
             contract_hash = require_non_empty_str(
@@ -676,20 +675,15 @@ def _command_parser() -> argparse.ArgumentParser:
 
 def _write_json_ref(root: Path, ref: str, payload: Mapping[str, Any]) -> None:
     data = ensure_json_value(require_mapping(payload, ref), ref)
-    path = _resolve_workspace_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    JsonWorkspaceStore(root).write_json(ref, data)
 
 
 def _write_text_ref(root: Path, ref: str, text: str) -> None:
-    path = _resolve_workspace_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    JsonWorkspaceStore(root).write_text(ref, text)
 
 
 def _read_json_ref(root: Path, ref: str) -> dict[str, Any]:
-    path = _resolve_workspace_ref(root, ref)
-    return require_mapping(json.loads(path.read_text(encoding="utf-8")), ref)
+    return JsonWorkspaceStore(root).read_json(ref)
 
 
 def _resolve_workspace_ref(root: Path, ref: str) -> Path:
@@ -701,8 +695,7 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
 
 
 def _load_mission_ref(root: Path, mission_ref: str) -> MissionIR:
-    mission_path = _resolve_workspace_ref(root, mission_ref)
-    return MissionIR.from_dict(json.loads(mission_path.read_text(encoding="utf-8")))
+    return MissionIR.from_dict(JsonWorkspaceStore(root).read_json(mission_ref))
 
 
 def _success_result(command: str, *, data: Mapping[str, Any], refs: list[str] | None = None) -> MissionCommandResult:
@@ -742,6 +735,7 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
     root = Path(workspace).resolve()
     run = load_mission_run(root, mission_run_id)
     from ..metric_store import MetricStore
+    from ..run_audit import build_run_audit
     from ..state import load_runtime_attempts
     from ..steering_store import SteeringArtifactStore
 
@@ -764,6 +758,7 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
     projection_path = _resolve_workspace_ref(root, metric_projection_ref)
     if projection_path.is_file():
         metric_projection = metric_store.load_projection(run.mission_run_id).to_dict()
+    run_audit = build_run_audit(root, run.mission_run_id).to_dict()
     data = {
         "mission_run_id": run.mission_run_id,
         "mission_id": run.mission_id,
@@ -788,6 +783,7 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
         "metric_events_ref": metric_events_ref,
         "metric_projection_ref": metric_projection_ref,
         "metric_projection": metric_projection,
+        "run_audit": run_audit,
         "steering_refs": list(steering_refs),
         "latest_steering_ref_map": dict(latest_steering_refs),
         "metrics": ensure_json_value(run.metrics, "mission_run.metrics"),
@@ -807,6 +803,9 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
 
 
 def _diagnose_run(inspect_data: Mapping[str, Any]) -> dict[str, str]:
+    run_audit = inspect_data.get("run_audit")
+    if isinstance(run_audit, Mapping) and run_audit.get("passed") is False:
+        return _diagnosis("stale_or_missing_refs", "inspect_run_audit", "run audit detected missing or stale refs")
     hygiene = inspect_data.get("artifact_hygiene")
     if isinstance(hygiene, Mapping) and hygiene.get("passed") is False:
         return _diagnosis("artifact_hygiene_failed", "inspect_hygiene_report", "artifact hygiene failed")

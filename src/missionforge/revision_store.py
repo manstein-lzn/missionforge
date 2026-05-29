@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from datetime import datetime, timezone
 
 from .contracts import ContractValidationError, validate_ref
 from .freeze import FrozenMissionContract
 from .ir import MissionIR
+from .json_store import JsonWorkspaceStore
 from .review import ReviewerDecision
 from .runtime_contract import load_active_contract
 from .revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
@@ -21,6 +21,7 @@ class MissionRevisionStore:
 
     def __init__(self, workspace: str | Path = ".") -> None:
         self.workspace = Path(workspace)
+        self.store = JsonWorkspaceStore(self.workspace)
 
     def refs(self, mission_run_id: str, revision_id: str) -> dict[str, str]:
         run_id = validate_ref(mission_run_id, "revision_store.mission_run_id")
@@ -66,18 +67,24 @@ class MissionRevisionStore:
 
     def load_revision(self, mission_run_id: str, revision_id: str) -> MissionRevision:
         ref = self.refs(mission_run_id, revision_id)["revision"]
-        return MissionRevision.from_dict(json.loads(self._resolve(ref).read_text(encoding="utf-8")))
+        return MissionRevision.from_dict(self.store.read_json(ref))
 
     def load_revision_ref(self, revision_ref: str) -> MissionRevision:
-        return MissionRevision.from_dict(json.loads(self._resolve(revision_ref).read_text(encoding="utf-8")))
+        return MissionRevision.from_dict(self.store.read_json(revision_ref))
 
     def load_mission_ref(self, mission_ref: str) -> MissionIR:
-        return MissionIR.from_dict(json.loads(self._resolve(mission_ref).read_text(encoding="utf-8")))
+        return MissionIR.from_dict(self.store.read_json(mission_ref))
 
     def record_on_mission_run(self, mission_run_id: str, revision: MissionRevision) -> None:
         revision.validate()
-        run = load_mission_run(self.workspace, mission_run_id)
+        run = self.store.load_mission_run(mission_run_id)
         refs = self.refs(mission_run_id, revision.revision_id)
+        if not self.store.exists(revision.new_contract_ref):
+            raise ContractValidationError("mission revision cannot activate missing contract ref")
+        if revision.new_mission_ref and not self.store.exists(revision.new_mission_ref):
+            raise ContractValidationError("mission revision cannot activate missing mission ref")
+        if not self.store.exists(refs["revision"]):
+            raise ContractValidationError("mission revision cannot activate missing revision ref")
         updated = MissionRun(
             mission_run_id=run.mission_run_id,
             mission_id=run.mission_id,
@@ -98,20 +105,10 @@ class MissionRevisionStore:
             current_contract_hash=revision.new_contract_hash,
             revision_refs=_dedupe_refs([*run.revision_refs, refs["revision"]]),
         )
-        self._write_json(f"runs/{mission_run_id}/mission_run.json", updated.to_dict())
+        self.store.write_mission_run(updated)
 
     def _write_json(self, ref: str, payload: dict) -> None:
-        path = self._resolve(ref)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-
-    def _resolve(self, ref: str) -> Path:
-        safe_ref = validate_ref(ref, "revision_store.ref")
-        path = (self.workspace / safe_ref).resolve()
-        workspace = self.workspace.resolve()
-        if workspace not in path.parents and path != workspace:
-            raise ContractValidationError("revision store ref escapes workspace")
-        return path
+        self.store.write_json(ref, payload)
 
 
 def _dedupe_refs(refs: list[str]) -> list[str]:

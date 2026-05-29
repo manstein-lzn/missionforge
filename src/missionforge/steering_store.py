@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from .contracts import ContractValidationError, assert_refs_only_payload, ensure_json_value, require_mapping, validate_ref
+from .json_store import JsonWorkspaceStore
 from .review import ReviewPacket, ReviewerDecision
 from .steering import (
     ContractAdjustmentRequest,
@@ -43,6 +43,7 @@ class SteeringArtifactStore:
 
     def __init__(self, workspace: str | Path = ".") -> None:
         self.workspace = Path(workspace)
+        self.store = JsonWorkspaceStore(self.workspace)
 
     def write_context(self, context: SteeringContext) -> str:
         ref = steering_refs_for_iteration(context.mission_run_id, context.iteration)["context"]
@@ -78,11 +79,8 @@ class SteeringArtifactStore:
 
     def append_decision(self, *, mission_run_id: str, iteration: int, decision: DecisionLedgerEntry) -> str:
         ref = steering_refs_for_iteration(mission_run_id, iteration)["decision_ledger"]
-        path = self._resolve(ref)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = assert_refs_only_payload(decision.to_dict(), "decision_ledger_entry")
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        self.store.write_jsonl(ref, [payload], append=True)
         return ref
 
     def collect_refs(self, mission_run_id: str) -> list[str]:
@@ -123,10 +121,7 @@ class SteeringArtifactStore:
             ensure_json_value(require_mapping(payload, ref), ref),
             ref,
         )
-        path = self._resolve(ref)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-        return ref
+        return self.store.write_json(ref, data)
 
     def _resolve(self, ref: str) -> Path:
         safe_ref = validate_ref(ref, "steering_store.ref")

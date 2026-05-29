@@ -1,6 +1,6 @@
 # Module: Metrics
 
-Status: planned/implemented in Phase 12.
+Status: implemented in Phase 12, tightened in Phase 19.
 
 MissionForge metrics are diagnostic events. They are not evidence, verifier
 inputs, authority grants, or runtime routing truth.
@@ -64,5 +64,8 @@ Product names must not appear under `missionforge.*`.
 - Operator inspect surfaces metric refs and the projection.
 - Operator diagnose reads projection diagnostic flags, not arbitrary runtime
   metric dict keys.
+- Adapter-private metric dict keys must not become CLI or runtime semantics.
+- If a metric needs cross-module meaning, add a typed event/projection rule
+  instead of reading a loose compatibility dict key.
 - Runtime routing must not read `MetricEvent.values`.
 - Verifier success must not depend on metrics.

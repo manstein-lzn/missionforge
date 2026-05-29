@@ -98,6 +98,16 @@ revision is recorded, `MissionRun.current_contract_ref`,
 `MissionRun.current_contract_hash`, and `MissionRun.revision_refs` remain
 authoritative for later runtime work.
 
+Phase 17-21 hardening is documented in
+`docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md`. The runtime-facing effects are:
+
+- main durable writes route through `JsonWorkspaceStore`;
+- revision activation fails closed if required refs are not present;
+- operator diagnosis reads metric projections instead of loose metric dict
+  route keys;
+- `MissionRunAudit` provides refs-only stale/missing ref diagnostics for
+  long-running missions.
+
 ## Public Contracts
 
 - `MissionRuntime`
@@ -158,6 +168,7 @@ authoritative for later runtime work.
   provider gates, optional LLM adapter isolation, and operator steering refs
 - metric ledger tests for typed events, projections, runtime metric refs, and
   operator diagnosis boundaries
+- run audit tests for refs-only long-run diagnostics and stale ref handling
 - PiWorker runtime boundary import tests
 
 ## Verification Evidence

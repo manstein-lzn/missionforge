@@ -39,13 +39,13 @@ from .ir import (
 from .json_store import JsonArtifactStore, JsonEventLogStore, JsonRunStore, JsonWorkspaceStore
 from .metric_store import MetricStore
 from .metrics import MetricEvent, MetricProjection, MetricTrustLevel, project_metric_events
-from .profiles import CapabilityProfile, ProfileExpansion, ProfileRegistry, VerificationProfile
+from .profiles import CapabilityProfile, ProfileExpansion, ProfilePack, ProfileRegistry, VerificationProfile
 from .revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
 from .revision_store import MissionRevisionStore, apply_mission_revision
 from .review import ReviewPacket, ReviewerDecision
 from .runner import MissionResult, MissionRuntime
+from .run_audit import MissionRunAudit, build_run_audit
 from .runtime import RuntimeEngine
-from .runtime_contract import ActiveMissionContract, RuntimeContractView
 from .steering import (
     ContractAdjustmentRequest,
     DecisionLedgerEntry,
@@ -70,7 +70,6 @@ from .work_unit import AttemptInputManifest, ExecutionReport, WorkUnitContract, 
 
 __all__ = [
     "AdaptiveDecision",
-    "ActiveMissionContract",
     "ArtifactRef",
     "ArtifactStore",
     "AttemptInputManifest",
@@ -110,6 +109,7 @@ __all__ = [
     "MissionObjective",
     "MissionResult",
     "MissionRuntime",
+    "MissionRunAudit",
     "MissionRevision",
     "MissionRevisionDecision",
     "MissionRevisionRequest",
@@ -131,6 +131,7 @@ __all__ = [
     "ProposalProvider",
     "ProposalValidator",
     "ProfileExpansion",
+    "ProfilePack",
     "ProfileRegistry",
     "Ref",
     "RepairStrategyProposal",
@@ -139,7 +140,6 @@ __all__ = [
     "ReviewerProvider",
     "RuntimeEngine",
     "RuntimeAttempt",
-    "RuntimeContractView",
     "RuntimeSafePoint",
     "RunStore",
     "StateCorrection",
@@ -163,6 +163,7 @@ __all__ = [
     "WorkerResult",
     "assert_refs_only_payload",
     "apply_mission_revision",
+    "build_run_audit",
     "expand_mission",
     "freeze_mission",
     "project_metric_events",

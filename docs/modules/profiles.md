@@ -41,18 +41,25 @@ Implemented:
 
 - `CapabilityProfile`
 - `VerificationProfile`
+- `ProfilePack`
 - `ProfileExpansion`
 - `ProfileRegistry`
 - built-in `user_provided_evidence_only`
 - built-in `explicit_output_root`
 - built-in `generic_local_verification`
 - deterministic capability and verification profile expansion
+- external profile pack composition through `ProfilePack.to_registry()`
 - validator type checks against active verification profiles
 - locked capability profile ref requirements in expansion payloads and frozen
   contract hashes
 
 The first implementation is intentionally small. Larger profile libraries,
 imperative profile expansion, and product adapters remain out of scope.
+
+Phase 20 added the external extension kit documented in
+`docs/PROFILE_EXTENSION_KIT.md`. External integrations can now ship data-first
+profile packs and compose them with built-ins without adding product-specific
+runtime branches.
 
 ## Candidate Profiles
 
@@ -109,6 +116,12 @@ Phase 2:
 ```bash
 PYTHONPATH=src python3 -m unittest tests/test_profiles.py
 # Ran 7 tests: OK
+```
+
+Phase 20:
+
+```bash
+PYTHONPATH=src python3 -m unittest tests/test_profile_extension_kit.py
 ```
 
 ## Open Questions

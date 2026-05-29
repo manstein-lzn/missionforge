@@ -112,6 +112,49 @@ class VerificationProfile:
 
 
 @dataclass(frozen=True)
+class ProfilePack:
+    """External profile bundle that can be converted into a registry."""
+
+    pack_id: str
+    capability_profiles: list[CapabilityProfile] = field(default_factory=list)
+    verification_profiles: list[VerificationProfile] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ProfilePack":
+        data = require_mapping(payload, "profile_pack")
+        pack = cls(
+            pack_id=require_non_empty_str(data.get("pack_id"), "profile_pack.pack_id"),
+            capability_profiles=[
+                CapabilityProfile.from_dict(require_mapping(item, "profile_pack.capability_profiles[]"))
+                for item in data.get("capability_profiles", [])
+            ],
+            verification_profiles=[
+                VerificationProfile.from_dict(require_mapping(item, "profile_pack.verification_profiles[]"))
+                for item in data.get("verification_profiles", [])
+            ],
+        )
+        pack.validate()
+        return pack
+
+    def validate(self) -> None:
+        require_non_empty_str(self.pack_id, "profile_pack.pack_id")
+        _profiles_by_id(self.capability_profiles, "profile_pack.capability_profiles")
+        _profiles_by_id(self.verification_profiles, "profile_pack.verification_profiles")
+
+    def to_registry(self, *, include_builtins: bool = True) -> "ProfileRegistry":
+        self.validate()
+        return ProfileRegistry.from_packs([self], include_builtins=include_builtins)
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "pack_id": self.pack_id,
+            "capability_profiles": [profile.to_dict() for profile in self.capability_profiles],
+            "verification_profiles": [profile.to_dict() for profile in self.verification_profiles],
+        }
+
+
+@dataclass(frozen=True)
 class ProfileExpansion:
     """Profile-generated fragments with provenance."""
 
@@ -155,8 +198,8 @@ class ProfileRegistry:
         capability_profiles: list[CapabilityProfile] | None = None,
         verification_profiles: list[VerificationProfile] | None = None,
     ) -> None:
-        self._capability_profiles = {profile.profile_id: profile for profile in capability_profiles or []}
-        self._verification_profiles = {profile.profile_id: profile for profile in verification_profiles or []}
+        self._capability_profiles = _profiles_by_id(capability_profiles or [], "capability_profiles")
+        self._verification_profiles = _profiles_by_id(verification_profiles or [], "verification_profiles")
 
     @classmethod
     def builtins(cls) -> "ProfileRegistry":
@@ -212,6 +255,34 @@ class ProfileRegistry:
                 )
             ],
         )
+
+    @classmethod
+    def from_packs(
+        cls,
+        packs: list[ProfilePack],
+        *,
+        include_builtins: bool = True,
+    ) -> "ProfileRegistry":
+        capability_profiles: list[CapabilityProfile] = []
+        verification_profiles: list[VerificationProfile] = []
+        if include_builtins:
+            builtins = cls.builtins()
+            capability_profiles.extend(builtins._capability_profiles.values())
+            verification_profiles.extend(builtins._verification_profiles.values())
+        for pack in packs:
+            pack.validate()
+            capability_profiles.extend(pack.capability_profiles)
+            verification_profiles.extend(pack.verification_profiles)
+        return cls(
+            capability_profiles=capability_profiles,
+            verification_profiles=verification_profiles,
+        )
+
+    def capability_profile_ids(self) -> list[str]:
+        return sorted(self._capability_profiles)
+
+    def verification_profile_ids(self) -> list[str]:
+        return sorted(self._verification_profiles)
 
     def get_capability(self, profile_id: str) -> CapabilityProfile:
         try:
@@ -308,3 +379,14 @@ def _profile_ref_hash(profile_id: str, requirements: Mapping[str, Any]) -> str:
             ),
         }
     )
+
+
+def _profiles_by_id(profiles: list[Any], field_name: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for profile in profiles:
+        profile.validate()
+        profile_id = require_non_empty_str(profile.profile_id, f"{field_name}[].profile_id")
+        if profile_id in result:
+            raise ContractValidationError(f"duplicate profile_id in {field_name}: {profile_id}")
+        result[profile_id] = profile
+    return result
