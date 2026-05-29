@@ -38,7 +38,10 @@ class FrontDeskServiceTests(unittest.TestCase):
     def test_draft_writes_structured_artifacts_without_raw_text_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             frontdesk = FrontDesk(workspace=tempdir)
-            session = frontdesk.start("Build docs for the public API.", session_id="fd-draft")
+            session = frontdesk.start(
+                "Build docs for the public API. Expected output is docs/output.md and success means the file exists.",
+                session_id="fd-draft",
+            )
             frontdesk.draft(session.session_ref)
             semantic_lock = frontdesk.workspace.read_json("frontdesk/semantic_lock.json")
 

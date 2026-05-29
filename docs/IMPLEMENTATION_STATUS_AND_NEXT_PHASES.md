@@ -1,6 +1,6 @@
 # Implementation Status And Next Phases
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 Status: `reference`
 
@@ -24,9 +24,13 @@ authoritative design documents remain:
 - `docs/MISSION_IR.md`
 - `docs/DESIGN_PROGRAM.md`
 - `docs/PRODUCT_INTEGRATION_BOUNDARY.md`
+- `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md`
 - `docs/PHASE12_TO_16_DECOUPLING_ROADMAP.md`
 - `docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`
 - `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md`
+- `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`
+- `docs/FRONTDESK_SPEC_GRILL_DESIGN.md`
+- `docs/FRONTDESK_SPEC_GRILL_IMPLEMENTATION_PLAN.md`
 - `docs/modules/*.md`
 
 Update note:
@@ -104,8 +108,9 @@ Core rules:
 | Phase 19 metric dict sunset | Implemented first slice | Operator diagnosis reads typed metric projection rather than loose route keys |
 | Phase 20 profile extension kit | Implemented first slice | `ProfilePack` supports external data-first profile packs |
 | Phase 21 run audit | Implemented first slice | `MissionRunAudit` provides refs-only stale/missing ref diagnostics |
-| FrontDesk authoring | Implemented product module | Natural-language authoring now produces approved MissionIR, freeze manifests, CLI handoff, runtime feedback, and SkillFoundry dogfood |
+| FrontDesk authoring | Implemented product module with spec-grill first slice | Natural-language authoring now scouts workspace/profile facts, actively grills unclear needs, checks semantic coverage, produces solution plans and plan review records, maps requirements to MissionIR for generic fallback, audits mapping, freezes deterministically, supports CLI handoff, runtime feedback, PiWorker node contracts, and SkillFoundry dogfood. The next boundary is `FrontDeskIntentBundle` plus Product Integration compilation. |
 | Product boundary | Implemented and tested | SkillFoundry is external under `integrations/skillfoundry/` |
+| Product context boundary | Planned Phase 22 | ProductInquiryProfile, FrontDeskIntentBundle, ProductIntegration protocol, and generic ProductGate result contracts are documented next. |
 | Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review/frontdesk, not yet a complete visual operator product |
 
 ## Verification Snapshot
@@ -114,15 +119,15 @@ The current working tree was validated with:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 292 tests: OK (skipped=2)
+# Ran 329 tests: OK (skipped=2)
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
-# Node runtime: 4 tests passed
-# Python: Ran 232 tests: OK (skipped=2)
+# Node runtime: 5 tests passed
+# Python: Ran 329 tests: OK (skipped=2)
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
-# Ran 48 tests: OK (skipped=1)
+# Ran 78 tests: OK (skipped=1)
 
 PYTHONPATH=src python3 -m unittest \
   tests/test_frontdesk_schema.py \
@@ -137,8 +142,22 @@ PYTHONPATH=src python3 -m unittest \
   tests/test_frontdesk_auditor.py \
   tests/test_frontdesk_llm_boundaries.py \
   tests/test_frontdesk_cli.py \
-  tests/test_frontdesk_runtime_feedback.py
-# Ran 44 tests: OK
+  tests/test_frontdesk_runtime_feedback.py \
+  tests/test_frontdesk_spec_grill_schema.py \
+  tests/test_frontdesk_scout.py \
+  tests/test_frontdesk_need_griller.py \
+  tests/test_frontdesk_semantic_coverage.py \
+  tests/test_frontdesk_solution_architect.py \
+  tests/test_frontdesk_plan_review.py \
+  tests/test_frontdesk_mission_mapper.py \
+  tests/test_frontdesk_mapping_auditor.py \
+  tests/test_frontdesk_spec_grill_freeze_gate.py \
+  tests/test_frontdesk_spec_grill_service.py \
+  tests/test_frontdesk_spec_grill_e2e.py \
+  tests/test_frontdesk_spec_grill_acceptance.py \
+  tests/test_frontdesk_spec_grill_boundaries.py \
+  tests/test_frontdesk_pi_node_runner.py
+# Ran 77 tests: OK
 
 PYTHONPATH=src python3 -m unittest tests/test_adapter_import_boundaries.py tests/test_pi_agent_runtime_import_boundaries.py tests/test_piworker_runtime_boundary.py
 # Ran 10 tests: OK
@@ -164,8 +183,31 @@ Approximate current maturity against the long-term vision:
 | Mission revision | Medium | Conservative durable revision works; richer contract evolution is future work |
 | Store abstraction | Medium | Main durable writes route through `JsonWorkspaceStore`; legacy state read helpers still preserve layout compatibility |
 | Arbitrary long-running complex tasks | Medium | Core primitives, profile packs, run audit, and stale-ref diagnosis exist; replay and richer revision remain future work |
+| Product-aware FrontDesk | Medium-low | Generic spec-grill works, but product-specific questioning and final MissionIR compilation still need ProductInquiryProfile and FrontDeskIntentBundle. |
 
 ## Important Current Gaps
+
+### 0. FrontDesk Still Compiles Generic MissionIR Directly
+
+The current FrontDesk spec-grill slice can produce `frontdesk/draft_mission.json`
+directly. That should now be interpreted as generic fallback behavior, not as
+the long-term product-aware boundary.
+
+The next architecture step is Phase 22:
+
+```text
+FrontDesk + ProductInquiryProfile
+  -> FrontDeskIntentBundle
+  -> ProductIntegration
+  -> ProductContract
+  -> MissionIR
+  -> ProductGateSpec
+```
+
+This is necessary because MissionIR is structurally generic but semantically
+domain-shaped. A generic FrontDesk engine cannot know SkillFoundry, finance
+research, or future customer product requirements unless a product integration
+provides inquiry metadata and a compiler.
 
 ### 1. Store Interface Is Not Fully Wired
 
@@ -240,6 +282,30 @@ runtime branches.
 Phase 20 added `ProfilePack` and the external extension kit documented in
 `docs/PROFILE_EXTENSION_KIT.md`. The built-in profile set remains small by
 design; richer task semantics should live in external packs and integrations.
+
+### 7. FrontDesk Spec-Grill Is Implemented As A First Product Slice
+
+FrontDesk now has the active spec-grill first slice implemented. The default
+`draft()` path no longer uses the shallow deterministic draft. It runs the
+offline deterministic spec-grill convenience path: scout, grill, semantic
+coverage, solution planning, policy plan review, MissionIR mapping, audit,
+approval, and deterministic freeze readiness.
+
+The next FrontDesk architecture work should follow
+`docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md` and
+`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The direct MissionIR mapping
+inside FrontDesk should become generic fallback behavior while product
+integrations provide ProductInquiryProfile metadata and compile final
+product-domain MissionIR.
+
+Follow-on hardening after the boundary work:
+
+- richer live PiWorker-backed node execution beyond the current contract
+  helper;
+- additional product dogfood scenarios outside core;
+- stronger semantic signal extraction beyond the deterministic keyword first
+  slice;
+- optional visual/operator UX on top of the refs-first CLI/API.
 
 ## Phase 17-21 First-Slice Targets
 

@@ -22,7 +22,11 @@ from missionforge.ir import CapabilityProfileRef, MissionConstraint, MissionIR, 
 from missionforge.profiles import ProfileRegistry
 
 from .product_contract import (
+    ACCEPTANCE_COVERAGE_REPORT_REF,
     BUNDLE_MANIFEST_SCHEMA_VERSION,
+    AcceptanceCoverageItem,
+    AcceptanceCoverageReport,
+    AcceptanceCoverageRoute,
     BundleProfile,
     PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
     PROMPT_ONLY_REQUIRED_PACKAGE_REFS,
@@ -31,6 +35,7 @@ from .product_contract import (
     SkillProductContract,
     manifest_for_profile,
 )
+from .validators import RAW_CONTEXT_MARKERS, SELF_GRADE_MARKERS
 from .workspace import write_json_ref
 
 
@@ -292,6 +297,7 @@ class SkillFoundryCompileResult:
     warnings: list[str] = field(default_factory=list)
     product_contract_ref: str = ""
     acceptance_matrix_ref: str = ""
+    acceptance_coverage_report_ref: str = ""
     request_ref: str = ""
 
     @classmethod
@@ -310,6 +316,7 @@ class SkillFoundryCompileResult:
                 "warnings",
                 "product_contract_ref",
                 "acceptance_matrix_ref",
+                "acceptance_coverage_report_ref",
                 "request_ref",
             },
         )
@@ -333,6 +340,7 @@ class SkillFoundryCompileResult:
             warnings=require_str_list(data.get("warnings", []), "skillfoundry_compile_result.warnings"),
             product_contract_ref=data.get("product_contract_ref", ""),
             acceptance_matrix_ref=data.get("acceptance_matrix_ref", ""),
+            acceptance_coverage_report_ref=data.get("acceptance_coverage_report_ref", ""),
             request_ref=data.get("request_ref", ""),
         )
         result.validate()
@@ -354,6 +362,11 @@ class SkillFoundryCompileResult:
             validate_ref(self.product_contract_ref, "skillfoundry_compile_result.product_contract_ref")
         if self.acceptance_matrix_ref:
             validate_ref(self.acceptance_matrix_ref, "skillfoundry_compile_result.acceptance_matrix_ref")
+        if self.acceptance_coverage_report_ref:
+            validate_ref(
+                self.acceptance_coverage_report_ref,
+                "skillfoundry_compile_result.acceptance_coverage_report_ref",
+            )
         if self.request_ref:
             validate_ref(self.request_ref, "skillfoundry_compile_result.request_ref")
 
@@ -370,6 +383,7 @@ class SkillFoundryCompileResult:
             "warnings": list(self.warnings),
             "product_contract_ref": self.product_contract_ref,
             "acceptance_matrix_ref": self.acceptance_matrix_ref,
+            "acceptance_coverage_report_ref": self.acceptance_coverage_report_ref,
             "request_ref": self.request_ref,
         }
 
@@ -469,6 +483,7 @@ class SkillFoundryMissionCompiler:
         )
         product_contract_ref = "product_contract/skill_product_contract.json"
         matrix_ref = product_contract.matrix_ref
+        coverage_report_ref = ACCEPTANCE_COVERAGE_REPORT_REF
         compiler_report_ref = "product_contract/compiler_report.json"
         write_json_ref(root, request_ref, request.to_dict())
         write_json_ref(root, product_contract_ref, product_contract.to_dict())
@@ -480,6 +495,13 @@ class SkillFoundryMissionCompiler:
         diagnostic_ref = f"evidence/{request.bundle_id}.skillfoundry_compile_diagnostics.json"
         _write_json_ref(root, mission_ir_ref, mission.to_dict())
         _write_json_ref(root, frozen_contract_ref, frozen.to_dict())
+        coverage_report = _build_acceptance_coverage_report(
+            matrix=matrix,
+            mission=mission,
+            matrix_ref=matrix_ref,
+            mission_ref=mission_ir_ref,
+        )
+        write_json_ref(root, coverage_report_ref, coverage_report.to_dict())
         write_json_ref(
             root,
             compiler_report_ref,
@@ -489,11 +511,13 @@ class SkillFoundryMissionCompiler:
                 "request_ref": request_ref,
                 "product_contract_ref": product_contract_ref,
                 "acceptance_matrix_ref": matrix_ref,
+                "acceptance_coverage_report_ref": coverage_report_ref,
                 "mission_ir_ref": mission_ir_ref,
                 "frozen_contract_ref": frozen_contract_ref,
                 "contract_hash": frozen.contract_hash,
                 "product_contract_hash": product_contract.contract_hash,
                 "acceptance_matrix_hash": matrix.matrix_hash,
+                "blocking_coverage_passed": coverage_report.blocking_coverage_passed,
             },
         )
         _write_json_ref(
@@ -505,9 +529,11 @@ class SkillFoundryMissionCompiler:
                 "request_ref": request_ref,
                 "product_contract_ref": product_contract_ref,
                 "acceptance_matrix_ref": matrix_ref,
+                "acceptance_coverage_report_ref": coverage_report_ref,
                 "compiler_report_ref": compiler_report_ref,
                 "contract_hash": frozen.contract_hash,
                 "mission_ir_hash": stable_json_hash(mission.to_dict()),
+                "blocking_coverage_passed": coverage_report.blocking_coverage_passed,
             },
         )
         result = SkillFoundryCompileResult(
@@ -520,6 +546,7 @@ class SkillFoundryMissionCompiler:
             target_package_ref=product_contract.target_package_refs[0],
             product_contract_ref=product_contract_ref,
             acceptance_matrix_ref=matrix_ref,
+            acceptance_coverage_report_ref=coverage_report_ref,
             request_ref=request_ref,
         )
         result.validate()
@@ -542,15 +569,7 @@ def compile_skillfoundry_bundle(
 def _compile_prompt_only_mission(request: SkillFoundryRequest, product_contract: SkillProductContract) -> MissionIR:
     request.validate()
     product_contract.validate()
-    validators = [
-        {
-            "validator_id": f"V-prompt-only-artifact-{index:03d}",
-            "constraint_refs": [f"SF-{request.bundle_id}-C-product-grade"],
-            "type": "file_exists",
-            "inputs": {"path": artifact_ref},
-        }
-        for index, artifact_ref in enumerate(PROMPT_ONLY_REQUIRED_PACKAGE_REFS, start=1)
-    ]
+    validators = _prompt_only_validators(request, product_contract)
     return MissionIR(
         schema_version="missionforge.mission_ir.v1",
         mission_id=f"skillfoundry-{request.bundle_id}",
@@ -937,30 +956,124 @@ def _code_runtime_validators(
     product_contract: SkillProductContract,
     manifest,
 ) -> list[dict[str, Any]]:
-    validators = [
-        {
-            "validator_id": f"V-code-runtime-artifact-{index:03d}",
-            "constraint_refs": [f"SF-{request.bundle_id}-C-product-grade"],
-            "type": "file_exists",
-            "inputs": {"path": artifact_ref},
-        }
-        for index, artifact_ref in enumerate(product_contract.target_package_refs, start=1)
+    runtime_asset_refs = [
+        ref
+        for ref in product_contract.target_package_refs
+        if ref.startswith("package/scripts/") or ref.startswith("package/bin/")
     ]
-    for field in [
-        "bundle_profile",
-        "runtime_assets",
-        "data_assets",
-        "permissions.filesystem_write_refs",
-        "verification.command_health_check",
-    ]:
-        validators.append(
-            {
-                "validator_id": f"V-code-runtime-manifest-{field.replace('.', '-')}",
-                "constraint_refs": [f"SF-{request.bundle_id}-C-runtime-assets"],
-                "type": "json_field_exists",
-                "inputs": {"path": product_contract.manifest_ref, "field": field},
-            }
-        )
+    schema_refs = [ref for ref in product_contract.target_package_refs if ref.startswith("package/schemas/")]
+    validators = [
+        _file_exists_validator(
+            "V-code-skill-exists",
+            f"SF-{request.bundle_id}-C-product-grade",
+            "package/SKILL.md",
+            "SF-CODE-SKILL-EXISTS",
+        ),
+        _file_exists_validator(
+            "V-code-manifest-exists",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.manifest_ref,
+            "SF-CODE-MANIFEST-EXISTS",
+        ),
+        _file_exists_validator(
+            "V-code-readme-exists",
+            f"SF-{request.bundle_id}-C-product-grade",
+            "package/README.md",
+            "SF-CODE-README-EXISTS",
+        ),
+        *_manifest_field_validators(
+            prefix="V-code-manifest-schema",
+            constraint_ref=f"SF-{request.bundle_id}-C-runtime-assets",
+            manifest_ref=product_contract.manifest_ref,
+            check_id="SF-CODE-MANIFEST-SCHEMA",
+            fields=PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
+        ),
+        _manifest_json_command_validator(
+            "V-code-manifest-semantics",
+            f"SF-{request.bundle_id}-C-runtime-assets",
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.CODE_RUNTIME,
+            "SF-CODE-MANIFEST-SCHEMA",
+        ),
+        _manifest_entrypoint_validator(
+            "V-code-entrypoint",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.CODE_RUNTIME,
+            "SF-CODE-ENTRYPOINT",
+        ),
+        _manifest_package_refs_validator(
+            "V-code-refs-safe",
+            f"SF-{request.bundle_id}-C-runtime-assets",
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.CODE_RUNTIME,
+            "SF-CODE-MANIFEST-SCHEMA",
+        ),
+        _json_field_validator(
+            "V-code-runtime-assets-declared",
+            f"SF-{request.bundle_id}-C-runtime-assets",
+            product_contract.manifest_ref,
+            "runtime_assets",
+            "SF-CODE-RUNTIME-ASSETS-DECLARED",
+        ),
+        _json_field_validator(
+            "V-code-data-assets-declared",
+            f"SF-{request.bundle_id}-C-runtime-assets",
+            product_contract.manifest_ref,
+            "data_assets",
+            "SF-CODE-SCHEMAS-VALID",
+        ),
+        _json_field_validator(
+            "V-code-health-command-declared",
+            f"SF-{request.bundle_id}-C-runtime-assets",
+            product_contract.manifest_ref,
+            "verification.command_health_check",
+            "SF-CODE-SCRIPTS-RUNNABLE",
+        ),
+        *_artifact_exists_validators(
+            prefix="V-code-runtime-asset-exists",
+            constraint_ref=f"SF-{request.bundle_id}-C-runtime-assets",
+            refs=runtime_asset_refs,
+            check_id="SF-CODE-RUNTIME-ASSETS-EXIST",
+        ),
+        *_artifact_exists_validators(
+            prefix="V-code-schema-exists",
+            constraint_ref=f"SF-{request.bundle_id}-C-runtime-assets",
+            refs=schema_refs,
+            check_id="SF-CODE-SCHEMAS-VALID",
+        ),
+        _forbidden_markers_validator(
+            "V-code-no-raw-context",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.target_package_refs,
+            RAW_CONTEXT_MARKERS,
+            "SF-CODE-NO-RAW-CONTEXT",
+        ),
+        _forbidden_markers_validator(
+            "V-code-no-self-grade",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.target_package_refs,
+            SELF_GRADE_MARKERS,
+            "SF-CODE-NO-SELF-GRADE",
+        ),
+        _json_field_validator(
+            "V-code-verification-matrix-ref",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.manifest_ref,
+            "verification.matrix_ref",
+            "SF-CODE-VERIFICATION",
+        ),
+        _json_field_validator(
+            "V-code-verification-product-grade-ref",
+            f"SF-{request.bundle_id}-C-product-grade",
+            product_contract.manifest_ref,
+            "verification.product_grade_ref",
+            "SF-CODE-VERIFICATION",
+        ),
+    ]
     command = manifest.verification.get("command_health_check") or manifest.environment.get("health_check")
     if command:
         validators.append(
@@ -968,10 +1081,356 @@ def _code_runtime_validators(
                 "validator_id": "V-code-runtime-health-check",
                 "constraint_refs": [f"SF-{request.bundle_id}-C-runtime-assets"],
                 "type": "command",
+                "description": "acceptance_check:SF-CODE-SCRIPTS-RUNNABLE",
                 "inputs": {"command": command, "expected_exit_code": 0, "timeout": 30},
             }
         )
+    for index, schema_ref in enumerate(schema_refs, start=1):
+        validators.append(
+            {
+                "validator_id": f"V-code-schema-parse-{index:03d}",
+                "constraint_refs": [f"SF-{request.bundle_id}-C-runtime-assets"],
+                "type": "command",
+                "description": "acceptance_check:SF-CODE-SCHEMAS-VALID",
+                "inputs": {
+                    "command": ["python3", "-m", "json.tool", schema_ref],
+                    "expected_exit_code": 0,
+                    "timeout": 30,
+                },
+            }
+        )
     return validators
+
+
+def _prompt_only_validators(
+    request: SkillFoundryRequest,
+    product_contract: SkillProductContract,
+) -> list[dict[str, Any]]:
+    constraint_ref = f"SF-{request.bundle_id}-C-product-grade"
+    return [
+        _file_exists_validator("V-prompt-skill-exists", constraint_ref, "package/SKILL.md", "SF-PROMPT-SKILL-EXISTS"),
+        _file_exists_validator(
+            "V-prompt-manifest-exists",
+            constraint_ref,
+            product_contract.manifest_ref,
+            "SF-PROMPT-MANIFEST-EXISTS",
+        ),
+        _file_exists_validator("V-prompt-readme-exists", constraint_ref, "package/README.md", "SF-PROMPT-README-EXISTS"),
+        *_manifest_field_validators(
+            prefix="V-prompt-manifest-schema",
+            constraint_ref=constraint_ref,
+            manifest_ref=product_contract.manifest_ref,
+            check_id="SF-PROMPT-MANIFEST-SCHEMA",
+            fields=PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
+        ),
+        _manifest_json_command_validator(
+            "V-prompt-manifest-semantics",
+            constraint_ref,
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.PROMPT_ONLY,
+            "SF-PROMPT-MANIFEST-SCHEMA",
+        ),
+        _manifest_entrypoint_validator(
+            "V-prompt-entrypoint",
+            constraint_ref,
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.PROMPT_ONLY,
+            "SF-PROMPT-ENTRYPOINT",
+        ),
+        _manifest_package_refs_validator(
+            "V-prompt-refs-safe",
+            constraint_ref,
+            product_contract.manifest_ref,
+            request.bundle_id,
+            BundleProfile.PROMPT_ONLY,
+            "SF-PROMPT-REFS-SAFE",
+        ),
+        _forbidden_markers_validator(
+            "V-prompt-no-raw-context",
+            constraint_ref,
+            product_contract.target_package_refs,
+            RAW_CONTEXT_MARKERS,
+            "SF-PROMPT-NO-RAW-CONTEXT",
+        ),
+        _forbidden_markers_validator(
+            "V-prompt-no-self-grade",
+            constraint_ref,
+            product_contract.target_package_refs,
+            SELF_GRADE_MARKERS,
+            "SF-PROMPT-NO-SELF-GRADE",
+        ),
+        _json_field_validator(
+            "V-prompt-verification-matrix-ref",
+            constraint_ref,
+            product_contract.manifest_ref,
+            "verification.matrix_ref",
+            "SF-PROMPT-VERIFICATION",
+        ),
+        _json_field_validator(
+            "V-prompt-verification-product-grade-ref",
+            constraint_ref,
+            product_contract.manifest_ref,
+            "verification.product_grade_ref",
+            "SF-PROMPT-VERIFICATION",
+        ),
+    ]
+
+
+def _build_acceptance_coverage_report(
+    *,
+    matrix: ProductAcceptanceMatrix,
+    mission: MissionIR,
+    matrix_ref: str,
+    mission_ref: str,
+) -> AcceptanceCoverageReport:
+    validator_ids_by_check = _validator_ids_by_acceptance_check(mission)
+    profile_ids = [profile.profile_id for profile in mission.capability_profiles]
+    items: list[AcceptanceCoverageItem] = []
+    for matrix_item in matrix.items:
+        validator_ids = validator_ids_by_check.get(matrix_item.check_id, [])
+        if validator_ids:
+            route = AcceptanceCoverageRoute.MISSION_IR_VALIDATOR
+            covered = True
+            route_profile_ids: list[str] = []
+        elif not matrix_item.blocking:
+            route = AcceptanceCoverageRoute.AUDIT_ONLY
+            covered = True
+            route_profile_ids = []
+        else:
+            route = AcceptanceCoverageRoute.MISSION_IR_VALIDATOR
+            covered = False
+            route_profile_ids = []
+        items.append(
+            AcceptanceCoverageItem(
+                check_id=matrix_item.check_id,
+                blocking=matrix_item.blocking,
+                coverage_route=route,
+                validator_ids=validator_ids,
+                profile_ids=route_profile_ids,
+                covered=covered,
+            )
+        )
+    _ensure_coverage_matches_matrix(matrix, items)
+    return AcceptanceCoverageReport(
+        bundle_id=matrix.bundle_id,
+        bundle_profile=matrix.bundle_profile,
+        matrix_ref=matrix_ref,
+        mission_ref=mission_ref,
+        items=items,
+    )
+
+
+def _validator_ids_by_acceptance_check(mission: MissionIR) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for validator in mission.verification.get("validators", []):
+        data = require_mapping(validator, "mission.verification.validators[]")
+        validator_id = require_non_empty_str(data.get("validator_id"), "mission.verification.validators[].validator_id")
+        description = data.get("description", "")
+        if not isinstance(description, str):
+            continue
+        for token in description.split():
+            if token.startswith("acceptance_check:"):
+                check_id = token.removeprefix("acceptance_check:")
+                if check_id:
+                    result.setdefault(check_id, []).append(validator_id)
+    return {check_id: _dedupe_plain(values) for check_id, values in result.items()}
+
+
+def _ensure_coverage_matches_matrix(
+    matrix: ProductAcceptanceMatrix,
+    items: list[AcceptanceCoverageItem],
+) -> None:
+    matrix_ids = [item.check_id for item in matrix.items]
+    item_ids = [item.check_id for item in items]
+    missing = sorted(set(matrix_ids) - set(item_ids))
+    extra = sorted(set(item_ids) - set(matrix_ids))
+    if missing or extra:
+        raise ContractValidationError(f"acceptance coverage matrix mismatch: missing={missing}, extra={extra}")
+
+
+def _file_exists_validator(
+    validator_id: str,
+    constraint_ref: str,
+    path: str,
+    check_id: str,
+) -> dict[str, Any]:
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "file_exists",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"path": path},
+    }
+
+
+def _json_field_validator(
+    validator_id: str,
+    constraint_ref: str,
+    manifest_ref: str,
+    field: str,
+    check_id: str,
+) -> dict[str, Any]:
+    script = (
+        "import json, pathlib\n"
+        f"data=json.loads(pathlib.Path({manifest_ref!r}).read_text(encoding='utf-8'))\n"
+        "current=data\n"
+        f"for part in {field!r}.split('.'):\n"
+        "    assert isinstance(current, dict) and part in current, part\n"
+        "    current=current[part]\n"
+    )
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "command",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"command": ["python3", "-c", script], "expected_exit_code": 0, "timeout": 30},
+    }
+
+
+def _manifest_field_validators(
+    *,
+    prefix: str,
+    constraint_ref: str,
+    manifest_ref: str,
+    check_id: str,
+    fields: list[str],
+) -> list[dict[str, Any]]:
+    return [
+        _json_field_validator(
+            f"{prefix}-{field.replace('_', '-').replace('.', '-')}",
+            constraint_ref,
+            manifest_ref,
+            field,
+            check_id,
+        )
+        for field in fields
+    ]
+
+
+def _artifact_exists_validators(
+    *,
+    prefix: str,
+    constraint_ref: str,
+    refs: list[str],
+    check_id: str,
+) -> list[dict[str, Any]]:
+    return [
+        _file_exists_validator(f"{prefix}-{index:03d}", constraint_ref, artifact_ref, check_id)
+        for index, artifact_ref in enumerate(refs, start=1)
+    ]
+
+
+def _manifest_json_command_validator(
+    validator_id: str,
+    constraint_ref: str,
+    manifest_ref: str,
+    bundle_id: str,
+    profile: BundleProfile,
+    check_id: str,
+) -> dict[str, Any]:
+    script = (
+        "import json, pathlib, sys; "
+        f"p=pathlib.Path({manifest_ref!r}); "
+        "data=json.loads(p.read_text(encoding='utf-8')); "
+        f"assert data.get('schema_version') == {BUNDLE_MANIFEST_SCHEMA_VERSION!r}; "
+        f"assert data.get('bundle_id') == {bundle_id!r}; "
+        f"assert data.get('bundle_profile') == {profile.value!r}; "
+        "assert isinstance(data.get('verification'), dict)"
+    )
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "command",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"command": ["python3", "-c", script], "expected_exit_code": 0, "timeout": 30},
+    }
+
+
+def _manifest_entrypoint_validator(
+    validator_id: str,
+    constraint_ref: str,
+    manifest_ref: str,
+    bundle_id: str,
+    profile: BundleProfile,
+    check_id: str,
+) -> dict[str, Any]:
+    script = (
+        "import json, pathlib; "
+        f"data=json.loads(pathlib.Path({manifest_ref!r}).read_text(encoding='utf-8')); "
+        f"assert data.get('bundle_id') == {bundle_id!r}; "
+        f"assert data.get('bundle_profile') == {profile.value!r}; "
+        "assert data.get('entrypoint') == 'SKILL.md'; "
+        "assert data.get('capability_surface', {}).get('codex_skill', {}).get('entry_ref') == 'package/SKILL.md'"
+    )
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "command",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"command": ["python3", "-c", script], "expected_exit_code": 0, "timeout": 30},
+    }
+
+
+def _manifest_package_refs_validator(
+    validator_id: str,
+    constraint_ref: str,
+    manifest_ref: str,
+    bundle_id: str,
+    profile: BundleProfile,
+    check_id: str,
+) -> dict[str, Any]:
+    script = (
+        "import json, pathlib, sys; "
+        f"data=json.loads(pathlib.Path({manifest_ref!r}).read_text(encoding='utf-8')); "
+        f"assert data.get('bundle_id') == {bundle_id!r}; "
+        f"assert data.get('bundle_profile') == {profile.value!r}; "
+        "refs=[]; "
+        "refs.extend(data.get('runtime_assets') or []); "
+        "refs.extend(data.get('data_assets') or []); "
+        "refs.extend(data.get('references') or []); "
+        "assert all(isinstance(ref, str) and ref.startswith('package/') and '..' not in ref.split('/') and not ref.startswith('/') for ref in refs)"
+    )
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "command",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"command": ["python3", "-c", script], "expected_exit_code": 0, "timeout": 30},
+    }
+
+
+def _forbidden_markers_validator(
+    validator_id: str,
+    constraint_ref: str,
+    refs: list[str],
+    markers: list[str],
+    check_id: str,
+) -> dict[str, Any]:
+    script = (
+        "import pathlib, sys; "
+        f"refs={refs!r}; "
+        f"markers={[marker.lower() for marker in markers]!r}; "
+        "text='\\n'.join(pathlib.Path(ref).read_text(encoding='utf-8').lower() for ref in refs if pathlib.Path(ref).exists()); "
+        "hits=[marker for marker in markers if marker in text]; "
+        "assert not hits, hits"
+    )
+    return {
+        "validator_id": validator_id,
+        "constraint_refs": [constraint_ref],
+        "type": "command",
+        "description": f"acceptance_check:{check_id}",
+        "inputs": {"command": ["python3", "-c", script], "expected_exit_code": 0, "timeout": 30},
+    }
+
+
+def _dedupe_plain(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
 
 
 def _frontdesk_constraints(contract: Mapping[str, Any]) -> list[MissionConstraint]:

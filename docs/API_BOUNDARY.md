@@ -44,9 +44,9 @@ Application code may depend on these categories from `missionforge`:
 
 ## Formal Authoring Surface
 
-FrontDesk is the formal MissionIR authoring tool. The root surface exposes only
-generic authoring contracts and facade methods, not product-specific
-SkillFoundry or Codexarium behavior.
+FrontDesk is the formal requirements-discovery and intent-authoring surface.
+The root surface exposes only generic authoring contracts and facade methods,
+not product-specific SkillFoundry or Codexarium behavior.
 
 Stable categories:
 
@@ -54,13 +54,17 @@ Stable categories:
 - `FrontDeskAuthoringSession`
 - semantic lock, mission brief, profile recommendation, mission plan, audit,
   approval, and freeze manifest contracts
-- deterministic compiler from approved FrontDesk artifacts to `MissionIR`
+- `FrontDeskIntentBundle` and ProductInquiryProfile contracts once Phase 22
+  lands
+- deterministic generic fallback compiler from approved FrontDesk artifacts to
+  `MissionIR`
 - refs-only inspect and handoff results
 - runtime feedback recommendations that may draft revision requests but cannot
   approve or apply them
 
-FrontDesk output must still enter the normal `MissionIR -> expand_mission ->
-freeze_mission -> MissionRuntime` path.
+Product-aware FrontDesk output must pass through Product Integration before it
+becomes MissionIR. Generic fallback output must still enter the normal
+`MissionIR -> expand_mission -> freeze_mission -> MissionRuntime` path.
 
 ## Experimental Root Surface
 
@@ -117,13 +121,17 @@ Not allowed:
 
 Product integrations should depend on MissionForge in this order:
 
-1. Use FrontDesk or external integration code to compile product facts into
-   `MissionIR`.
-2. Use profile refs and `ProfilePack` for reusable capability semantics.
-3. Use validators and manual gates for completion checks.
-4. Use evidence refs for proof.
-5. Use metric events for diagnostics.
-6. Use mission revisions for frozen-contract changes.
-7. Use `MissionRuntime` for execution.
+1. Use ProductInquiryProfile metadata to drive FrontDesk questioning when
+   product-scoped intake is needed.
+2. Consume `FrontDeskIntentBundle` or external source refs in product
+   integration code.
+3. Compile product facts into ProductContract and `MissionIR`.
+4. Use profile refs and `ProfilePack` for reusable capability semantics.
+5. Use validators and manual gates for completion checks.
+6. Use evidence refs for proof.
+7. Use ProductGate results for product readiness.
+8. Use metric events for diagnostics.
+9. Use mission revisions for frozen-contract changes.
+10. Use `MissionRuntime` for execution.
 
 If a product needs a branch in runtime code, the product boundary has failed.

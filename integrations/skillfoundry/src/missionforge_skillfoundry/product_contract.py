@@ -22,6 +22,8 @@ from missionforge.contracts import (
 REQUEST_SCHEMA_VERSION = "missionforge_skillfoundry.request.v1"
 PRODUCT_CONTRACT_SCHEMA_VERSION = "missionforge_skillfoundry.product_contract.v1"
 ACCEPTANCE_MATRIX_SCHEMA_VERSION = "missionforge_skillfoundry.product_acceptance_matrix.v1"
+ACCEPTANCE_COVERAGE_REPORT_SCHEMA_VERSION = "missionforge_skillfoundry.acceptance_coverage_report.v1"
+ACCEPTANCE_COVERAGE_REPORT_REF = "product_contract/acceptance_coverage_report.json"
 BUNDLE_MANIFEST_SCHEMA_VERSION = "skillfoundry.bundle.v1"
 PROMPT_ONLY_REQUIRED_PACKAGE_REFS = [
     "package/SKILL.md",
@@ -204,6 +206,15 @@ class RegistryStatus(StrEnum):
     QUARANTINED = "quarantined"
 
 
+class AcceptanceCoverageRoute(StrEnum):
+    """How one product acceptance item is enforced before product-grade audit."""
+
+    MISSION_IR_VALIDATOR = "mission_ir_validator"
+    MISSION_IR_MANUAL_GATE = "mission_ir_manual_gate"
+    MISSION_IR_PROFILE = "mission_ir_profile"
+    AUDIT_ONLY = "audit_only"
+
+
 @dataclass(frozen=True)
 class SkillFoundryRequest:
     """User-facing product request or sanitized FrontDesk output."""
@@ -334,7 +345,7 @@ class ProductAcceptanceItem:
         item = cls(
             check_id=require_non_empty_str(data.get("check_id"), "product_acceptance_item.check_id"),
             purpose=require_non_empty_str(data.get("purpose"), "product_acceptance_item.purpose"),
-            blocking=bool(data.get("blocking", True)),
+            blocking=_require_bool(data.get("blocking", True), "product_acceptance_item.blocking"),
             evaluator=require_non_empty_str(
                 data.get("evaluator", "missionforge_skillfoundry.prompt_only"),
                 "product_acceptance_item.evaluator",
@@ -496,6 +507,176 @@ class ProductAcceptanceMatrix:
             },
             "product_acceptance_matrix",
         )
+
+
+@dataclass(frozen=True)
+class AcceptanceCoverageItem:
+    """MissionIR coverage declaration for one ProductAcceptanceMatrix item."""
+
+    check_id: str
+    blocking: bool
+    coverage_route: AcceptanceCoverageRoute
+    validator_ids: list[str] = field(default_factory=list)
+    manual_gate_ids: list[str] = field(default_factory=list)
+    profile_ids: list[str] = field(default_factory=list)
+    covered: bool = False
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AcceptanceCoverageItem":
+        data = _strict_mapping(
+            payload,
+            "acceptance_coverage_item",
+            {
+                "check_id",
+                "blocking",
+                "coverage_route",
+                "validator_ids",
+                "manual_gate_ids",
+                "profile_ids",
+                "covered",
+            },
+        )
+        item = cls(
+            check_id=require_non_empty_str(data.get("check_id"), "acceptance_coverage_item.check_id"),
+            blocking=_require_bool(data.get("blocking", True), "acceptance_coverage_item.blocking"),
+            coverage_route=_coverage_route(
+                data.get("coverage_route"),
+                "acceptance_coverage_item.coverage_route",
+            ),
+            validator_ids=require_str_list(data.get("validator_ids", []), "acceptance_coverage_item.validator_ids"),
+            manual_gate_ids=require_str_list(
+                data.get("manual_gate_ids", []),
+                "acceptance_coverage_item.manual_gate_ids",
+            ),
+            profile_ids=require_str_list(data.get("profile_ids", []), "acceptance_coverage_item.profile_ids"),
+            covered=_require_bool(data.get("covered", False), "acceptance_coverage_item.covered"),
+        )
+        item.validate()
+        return item
+
+    def validate(self) -> None:
+        require_non_empty_str(self.check_id, "acceptance_coverage_item.check_id")
+        if not isinstance(self.blocking, bool):
+            raise ContractValidationError("acceptance_coverage_item.blocking must be a boolean")
+        _coverage_route(self.coverage_route, "acceptance_coverage_item.coverage_route")
+        require_str_list(self.validator_ids, "acceptance_coverage_item.validator_ids")
+        require_str_list(self.manual_gate_ids, "acceptance_coverage_item.manual_gate_ids")
+        require_str_list(self.profile_ids, "acceptance_coverage_item.profile_ids")
+        if not isinstance(self.covered, bool):
+            raise ContractValidationError("acceptance_coverage_item.covered must be a boolean")
+        if self.blocking and self.coverage_route == AcceptanceCoverageRoute.AUDIT_ONLY:
+            raise ContractValidationError("blocking acceptance coverage cannot be audit_only")
+        expected_covered = self._route_has_evidence()
+        if self.covered != expected_covered:
+            raise ContractValidationError("acceptance_coverage_item.covered does not match coverage route evidence")
+        if self.blocking and not self.covered:
+            raise ContractValidationError(f"blocking acceptance item is uncovered: {self.check_id}")
+
+    def _route_has_evidence(self) -> bool:
+        if self.coverage_route == AcceptanceCoverageRoute.MISSION_IR_VALIDATOR:
+            return bool(self.validator_ids)
+        if self.coverage_route == AcceptanceCoverageRoute.MISSION_IR_MANUAL_GATE:
+            return bool(self.manual_gate_ids)
+        if self.coverage_route == AcceptanceCoverageRoute.MISSION_IR_PROFILE:
+            return bool(self.profile_ids)
+        return not self.blocking
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "check_id": self.check_id,
+            "blocking": self.blocking,
+            "coverage_route": self.coverage_route.value,
+            "validator_ids": list(self.validator_ids),
+            "manual_gate_ids": list(self.manual_gate_ids),
+            "profile_ids": list(self.profile_ids),
+            "covered": self.covered,
+        }
+
+
+@dataclass(frozen=True)
+class AcceptanceCoverageReport:
+    """Coverage report proving acceptance matrix closure in MissionIR."""
+
+    bundle_id: str
+    bundle_profile: BundleProfile
+    matrix_ref: str
+    mission_ref: str
+    items: list[AcceptanceCoverageItem]
+    schema_version: str = ACCEPTANCE_COVERAGE_REPORT_SCHEMA_VERSION
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AcceptanceCoverageReport":
+        data = _strict_mapping(
+            payload,
+            "acceptance_coverage_report",
+            {
+                "schema_version",
+                "bundle_id",
+                "bundle_profile",
+                "matrix_ref",
+                "mission_ref",
+                "items",
+                "blocking_coverage_passed",
+            },
+        )
+        report = cls(
+            bundle_id=require_non_empty_str(data.get("bundle_id"), "acceptance_coverage_report.bundle_id"),
+            bundle_profile=_bundle_profile(data.get("bundle_profile"), "acceptance_coverage_report.bundle_profile"),
+            matrix_ref=validate_ref(data.get("matrix_ref"), "acceptance_coverage_report.matrix_ref"),
+            mission_ref=validate_ref(data.get("mission_ref"), "acceptance_coverage_report.mission_ref"),
+            items=[
+                AcceptanceCoverageItem.from_dict(require_mapping(item, "acceptance_coverage_report.items[]"))
+                for item in data.get("items", [])
+            ],
+            schema_version=require_non_empty_str(
+                data.get("schema_version", ACCEPTANCE_COVERAGE_REPORT_SCHEMA_VERSION),
+                "acceptance_coverage_report.schema_version",
+            ),
+        )
+        report.validate()
+        if data.get("blocking_coverage_passed") not in {None, report.blocking_coverage_passed}:
+            raise ContractValidationError("acceptance_coverage_report.blocking_coverage_passed does not match items")
+        return report
+
+    @property
+    def blocking_coverage_passed(self) -> bool:
+        return all(item.covered for item in self.items if item.blocking)
+
+    def validate(self) -> None:
+        if self.schema_version != ACCEPTANCE_COVERAGE_REPORT_SCHEMA_VERSION:
+            raise ContractValidationError("acceptance_coverage_report.schema_version is unsupported")
+        require_non_empty_str(self.bundle_id, "acceptance_coverage_report.bundle_id")
+        _implemented_bundle_profile(self.bundle_profile, "acceptance_coverage_report.bundle_profile")
+        validate_ref(self.matrix_ref, "acceptance_coverage_report.matrix_ref")
+        validate_ref(self.mission_ref, "acceptance_coverage_report.mission_ref")
+        if not self.items:
+            raise ContractValidationError("acceptance_coverage_report.items must not be empty")
+        seen: set[str] = set()
+        for item in self.items:
+            item.validate()
+            if item.check_id in seen:
+                raise ContractValidationError(f"duplicate acceptance coverage check_id: {item.check_id}")
+            seen.add(item.check_id)
+        if not self.blocking_coverage_passed:
+            missing = [item.check_id for item in self.items if item.blocking and not item.covered]
+            raise ContractValidationError(f"blocking acceptance coverage is incomplete: {missing}")
+        assert_refs_only_payload(self.to_dict_without_validation(), "acceptance_coverage_report")
+
+    def to_dict_without_validation(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "bundle_id": self.bundle_id,
+            "bundle_profile": self.bundle_profile.value,
+            "matrix_ref": self.matrix_ref,
+            "mission_ref": self.mission_ref,
+            "items": [item.to_dict() for item in self.items],
+            "blocking_coverage_passed": self.blocking_coverage_passed,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self.to_dict_without_validation()
 
 
 @dataclass(frozen=True)
@@ -949,6 +1130,25 @@ def _bundle_profile(value: Any, field_name: str) -> BundleProfile:
         except ValueError as exc:
             raise ContractValidationError(f"{field_name} must be a supported bundle profile") from exc
     raise ContractValidationError(f"{field_name} must be a supported bundle profile")
+
+
+def _coverage_route(value: Any, field_name: str) -> AcceptanceCoverageRoute:
+    if isinstance(value, AcceptanceCoverageRoute):
+        return value
+    if isinstance(value, str):
+        try:
+            return AcceptanceCoverageRoute(value)
+        except ValueError as exc:
+            allowed = sorted(item.value for item in AcceptanceCoverageRoute)
+            raise ContractValidationError(f"{field_name} must be one of {allowed}") from exc
+    allowed = sorted(item.value for item in AcceptanceCoverageRoute)
+    raise ContractValidationError(f"{field_name} must be one of {allowed}")
+
+
+def _require_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ContractValidationError(f"{field_name} must be a boolean")
+    return value
 
 
 def _implemented_bundle_profile(value: Any, field_name: str) -> BundleProfile:

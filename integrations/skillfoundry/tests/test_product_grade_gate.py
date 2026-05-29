@@ -34,6 +34,7 @@ class ProductGradeGateTests(unittest.TestCase):
 
             self.assertTrue(report.product_grade)
             self.assertEqual(report.recommended_registry_status, RegistryStatus.PRODUCT_GRADE_REGISTERED)
+            self.assertEqual(report.outcome_category, "product_grade_registered")
             self.assertEqual(report.findings, [])
             self.assertTrue((root / "qa/product_grade_report.json").exists())
 
@@ -52,9 +53,10 @@ class ProductGradeGateTests(unittest.TestCase):
 
             self.assertFalse(report.product_grade)
             self.assertEqual(report.recommended_registry_status, RegistryStatus.CANDIDATE_REGISTERED)
+            self.assertEqual(report.outcome_category, "mission_verifier_failed")
             self.assertTrue((root / "qa/product_repair_packet.json").exists())
 
-    def test_bundle_validation_failure_blocks_product_grade(self) -> None:
+    def test_product_grade_gate_classifies_covered_post_verifier_failure_as_coverage_miss(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
@@ -69,7 +71,8 @@ class ProductGradeGateTests(unittest.TestCase):
             )
 
             self.assertFalse(report.product_grade)
-            self.assertTrue(any("SF-PROMPT-NO-RAW-CONTEXT" in finding.finding_id for finding in report.findings))
+            self.assertEqual(report.outcome_category, "coverage_miss")
+            self.assertTrue(any("coverage_miss:SF-PROMPT-NO-RAW-CONTEXT" == finding.finding_id for finding in report.findings))
 
     def test_code_runtime_product_grade_pass_requires_verifier_and_bundle_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -97,6 +100,7 @@ class ProductGradeGateTests(unittest.TestCase):
 
             self.assertTrue(report.product_grade)
             self.assertEqual(report.recommended_registry_status, RegistryStatus.PRODUCT_GRADE_REGISTERED)
+            self.assertEqual(report.outcome_category, "product_grade_registered")
 
     def test_product_grade_blocks_contract_package_ref_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -113,6 +117,7 @@ class ProductGradeGateTests(unittest.TestCase):
             )
 
             self.assertFalse(report.product_grade)
+            self.assertEqual(report.outcome_category, "coverage_miss")
             self.assertTrue(any("SF-PG-PACKAGE-REFS-MISMATCH" == finding.finding_id for finding in report.findings))
 
 

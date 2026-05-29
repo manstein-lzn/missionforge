@@ -31,18 +31,31 @@ MissionForge is:
 
 ## Authoring Surface
 
-FrontDesk is the formal MissionIR authoring tool. It sits before the runtime
-contract and helps users turn natural language, governed source refs, and
-ProfilePack-backed capability choices into reviewable MissionIR.
+FrontDesk is the formal requirements-discovery and intent-authoring surface. It
+sits before the runtime contract and helps users turn natural language,
+governed source refs, and optional product-scoped inquiry metadata into a
+reviewable `FrontDeskIntentBundle`.
 
 FrontDesk is not a runtime shortcut. LLM-backed FrontDesk nodes may draft,
-clarify, recommend profiles, and audit mission shape, but deterministic code
-owns source admission, schema validation, profile validation, approval gates,
-freeze, and runtime handoff.
+clarify, fill product inquiry slots, recommend profiles, and audit authoring
+shape, but deterministic code owns source admission, schema validation, profile
+validation, approval gates, product compiler readiness, freeze, and runtime
+handoff.
 
 ```text
-FrontDesk -> MissionIR -> ExpandedMission -> FrozenMissionContract -> MissionRun
+FrontDesk + optional ProductInquiryProfile
+  -> FrontDeskIntentBundle
+  -> ProductIntegration or GenericProductIntegration
+  -> MissionIR
+  -> ExpandedMission
+  -> FrozenMissionContract
+  -> MissionRun
 ```
+
+The existing direct FrontDesk-to-MissionIR path is a generic fallback compiler,
+not the permanent boundary for product domains. Product-specific MissionIR
+content belongs in external product integrations that consume the intent bundle
+and compile product contracts.
 
 ## Planes
 
@@ -55,8 +68,9 @@ objective, environment, contract, capabilities, evidence, verification rules,
 adaptation policy, budget, and observability requirements.
 
 Chat history is not task truth. FrontDesk may compile user dialogue and
-governed source refs into Mission IR, but the runtime consumes the IR and its
-frozen contract, not raw conversation.
+governed source refs into a sanitized intent bundle. A generic compiler or
+external product integration may then compile that bundle into Mission IR. The
+runtime consumes the IR and its frozen contract, not raw conversation.
 
 Mission Plane objects are layered:
 
@@ -186,8 +200,9 @@ host state -> MissionIR -> MissionRuntime -> MissionResult -> host state
 ## Core Rule
 
 MissionForge core code must not special-case named missions. Domain complexity
-belongs in Mission IR, capability profile data, verification profile data,
-validator data, evidence data, and generated artifacts.
+belongs in product inquiry profiles, external product integrations, Mission IR,
+capability profile data, verification profile data, validator data, evidence
+data, product gate criteria, and generated artifacts.
 
 Worker self-report is never acceptance. Completion must come from a locked
 FrozenMissionContract, EvidenceLedger records, and VerificationResult.

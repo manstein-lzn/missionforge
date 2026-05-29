@@ -11,6 +11,10 @@ from .compiler import (
 from .dogfood import SkillFoundryDogfoodReport, run_skillfoundry_live_dogfood
 from .product_contract import (
     BUNDLE_MANIFEST_SCHEMA_VERSION,
+    ACCEPTANCE_COVERAGE_REPORT_REF,
+    AcceptanceCoverageItem,
+    AcceptanceCoverageReport,
+    AcceptanceCoverageRoute,
     BundleProfile,
     CODE_RUNTIME_REQUIRED_PACKAGE_REFS,
     PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
@@ -35,6 +39,10 @@ from .validators import BundleValidationCheck, BundleValidationReport, validate_
 
 __all__ = [
     "BUNDLE_MANIFEST_SCHEMA_VERSION",
+    "ACCEPTANCE_COVERAGE_REPORT_REF",
+    "AcceptanceCoverageItem",
+    "AcceptanceCoverageReport",
+    "AcceptanceCoverageRoute",
     "BundleProfile",
     "BundleValidationCheck",
     "BundleValidationReport",

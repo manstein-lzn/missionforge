@@ -18,15 +18,28 @@ from missionforge.contracts import (
 )
 from missionforge.runner import MissionResult
 
-from .product_contract import RegistryStatus, SkillProductContract
+from .product_contract import (
+    ACCEPTANCE_COVERAGE_REPORT_REF,
+    AcceptanceCoverageReport,
+    AcceptanceCoverageRoute,
+    RegistryStatus,
+    SkillProductContract,
+)
 from .validators import BundleValidationReport
-from .workspace import package_fingerprint, read_json_ref, write_json_ref
+from .workspace import package_fingerprint, read_json_ref, ref_exists, write_json_ref
 
 
 PRODUCT_GRADE_REPORT_SCHEMA_VERSION = "missionforge_skillfoundry.product_grade_report.v1"
 PRODUCT_REPAIR_PACKET_SCHEMA_VERSION = "missionforge_skillfoundry.product_repair_packet.v1"
 PRODUCT_GRADE_REPORT_REF = "qa/product_grade_report.json"
 PRODUCT_REPAIR_PACKET_REF = "qa/product_repair_packet.json"
+PRODUCT_GRADE_OUTCOME_CATEGORIES = {
+    "mission_verifier_failed",
+    "product_grade_failed_after_covered_verification",
+    "coverage_miss",
+    "product_grade_registered",
+    "candidate_registered",
+}
 
 
 @dataclass(frozen=True)
@@ -138,6 +151,7 @@ class ProductGradeReport:
     product_grade: bool
     recommended_registry_status: RegistryStatus
     findings: list[ProductGradeFinding] = field(default_factory=list)
+    outcome_category: str = "candidate_registered"
     repair_packet_ref: str = ""
     schema_version: str = PRODUCT_GRADE_REPORT_SCHEMA_VERSION
 
@@ -165,6 +179,10 @@ class ProductGradeReport:
                 ProductGradeFinding.from_dict(require_mapping(item, "product_grade_report.findings[]"))
                 for item in data.get("findings", [])
             ],
+            outcome_category=require_non_empty_str(
+                data.get("outcome_category", "candidate_registered"),
+                "product_grade_report.outcome_category",
+            ),
             repair_packet_ref=data.get("repair_packet_ref", ""),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_GRADE_REPORT_SCHEMA_VERSION),
@@ -194,6 +212,10 @@ class ProductGradeReport:
             raise ContractValidationError("product_grade_report.product_grade must be a boolean")
         if self.product_grade and self.findings:
             raise ContractValidationError("product-grade report cannot pass with findings")
+        if self.outcome_category not in PRODUCT_GRADE_OUTCOME_CATEGORIES:
+            raise ContractValidationError("product_grade_report.outcome_category is unsupported")
+        if self.product_grade and self.outcome_category != "product_grade_registered":
+            raise ContractValidationError("product-grade pass must use product_grade_registered outcome")
         if self.product_grade and self.recommended_registry_status != RegistryStatus.PRODUCT_GRADE_REGISTERED:
             raise ContractValidationError("product-grade pass must recommend product_grade_registered")
         if not self.product_grade and self.recommended_registry_status == RegistryStatus.PRODUCT_GRADE_REGISTERED:
@@ -216,6 +238,7 @@ class ProductGradeReport:
             "product_grade": self.product_grade,
             "recommended_registry_status": self.recommended_registry_status.value,
             "findings": [finding.to_dict() for finding in self.findings],
+            "outcome_category": self.outcome_category,
             "repair_packet_ref": self.repair_packet_ref,
         }
 
@@ -238,6 +261,7 @@ def evaluate_product_grade(
     bundle_report = BundleValidationReport.from_dict(
         read_json_ref(workspace, bundle_validation_report_ref, "bundle_validation_report")
     )
+    coverage_report = _read_acceptance_coverage_report(workspace)
     findings: list[ProductGradeFinding] = []
     if mission_result.status != VerificationStatus.COMPLETED_VERIFIED.value:
         findings.append(
@@ -249,9 +273,15 @@ def evaluate_product_grade(
             )
         )
     for check in bundle_report.blocking_failures:
+        finding_id = f"bundle_validator:{check.check_id}"
+        if mission_result.status == VerificationStatus.COMPLETED_VERIFIED.value and _is_mission_ir_covered(
+            coverage_report,
+            check.check_id,
+        ):
+            finding_id = f"coverage_miss:{check.check_id}"
         findings.append(
             ProductGradeFinding(
-                finding_id=f"bundle_validator:{check.check_id}",
+                finding_id=finding_id,
                 severity="blocking",
                 message=check.message,
                 source_refs=list(check.evidence_refs),
@@ -275,6 +305,11 @@ def evaluate_product_grade(
     product_grade = not findings
     package_hash = package_fingerprint(workspace, bundle_report.package_refs)
     recommended = RegistryStatus.PRODUCT_GRADE_REGISTERED if product_grade else RegistryStatus.CANDIDATE_REGISTERED
+    outcome_category = _outcome_category(
+        product_grade=product_grade,
+        mission_status=mission_result.status,
+        findings=findings,
+    )
     written_repair_ref = ""
     if findings:
         packet = ProductRepairPacket(
@@ -294,6 +329,7 @@ def evaluate_product_grade(
         product_grade=product_grade,
         recommended_registry_status=recommended,
         findings=findings,
+        outcome_category=outcome_category,
         repair_packet_ref=written_repair_ref,
     )
     write_json_ref(workspace, report_ref, report.to_dict())
@@ -309,3 +345,41 @@ def _read_product_contract(workspace: str | Path) -> SkillProductContract | None
         if "ref does not exist" in str(exc):
             return None
         raise
+
+
+def _read_acceptance_coverage_report(workspace: str | Path) -> AcceptanceCoverageReport | None:
+    if not ref_exists(workspace, ACCEPTANCE_COVERAGE_REPORT_REF):
+        return None
+    return AcceptanceCoverageReport.from_dict(
+        read_json_ref(workspace, ACCEPTANCE_COVERAGE_REPORT_REF, "acceptance_coverage_report")
+    )
+
+
+def _is_mission_ir_covered(report: AcceptanceCoverageReport | None, check_id: str) -> bool:
+    if report is None:
+        return False
+    for item in report.items:
+        if item.check_id == check_id:
+            return item.covered and item.coverage_route in {
+                AcceptanceCoverageRoute.MISSION_IR_VALIDATOR,
+                AcceptanceCoverageRoute.MISSION_IR_MANUAL_GATE,
+                AcceptanceCoverageRoute.MISSION_IR_PROFILE,
+            }
+    return False
+
+
+def _outcome_category(
+    *,
+    product_grade: bool,
+    mission_status: str,
+    findings: list[ProductGradeFinding],
+) -> str:
+    if product_grade:
+        return "product_grade_registered"
+    if mission_status != VerificationStatus.COMPLETED_VERIFIED.value:
+        return "mission_verifier_failed"
+    if any(finding.finding_id.startswith("coverage_miss:") for finding in findings):
+        return "coverage_miss"
+    if findings:
+        return "product_grade_failed_after_covered_verification"
+    return "candidate_registered"

@@ -4,6 +4,9 @@ import unittest
 
 from missionforge.contracts import ContractValidationError
 from missionforge_skillfoundry import (
+    AcceptanceCoverageItem,
+    AcceptanceCoverageReport,
+    AcceptanceCoverageRoute,
     BundleProfile,
     CODE_RUNTIME_REQUIRED_PACKAGE_REFS,
     ProductAcceptanceMatrix,
@@ -204,6 +207,45 @@ class ProductContractTests(unittest.TestCase):
         self.assertIn("SF-CODE-RUNTIME-ASSETS-EXIST", [item.check_id for item in matrix.items])
         self.assertIn("SF-CODE-SCHEMAS-VALID", [item.check_id for item in matrix.items])
         self.assertTrue(matrix.matrix_hash.startswith("sha256:"))
+
+    def test_acceptance_coverage_report_round_trip(self) -> None:
+        report = AcceptanceCoverageReport(
+            bundle_id="demo-skill",
+            bundle_profile=BundleProfile.PROMPT_ONLY,
+            matrix_ref="product_contract/product_acceptance_matrix.json",
+            mission_ref="missions/demo-skill.mission.json",
+            items=[
+                AcceptanceCoverageItem(
+                    check_id="SF-PROMPT-SKILL-EXISTS",
+                    blocking=True,
+                    coverage_route=AcceptanceCoverageRoute.MISSION_IR_VALIDATOR,
+                    validator_ids=["V-prompt-skill-exists"],
+                    covered=True,
+                )
+            ],
+        )
+
+        self.assertEqual(AcceptanceCoverageReport.from_dict(report.to_dict()), report)
+        self.assertTrue(report.blocking_coverage_passed)
+
+    def test_blocking_acceptance_coverage_rejects_audit_only(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "audit_only"):
+            AcceptanceCoverageItem(
+                check_id="SF-PROMPT-SKILL-EXISTS",
+                blocking=True,
+                coverage_route=AcceptanceCoverageRoute.AUDIT_ONLY,
+                covered=False,
+            ).validate()
+
+    def test_non_blocking_acceptance_coverage_allows_audit_only(self) -> None:
+        item = AcceptanceCoverageItem(
+            check_id="SF-PROMPT-NOTE",
+            blocking=False,
+            coverage_route=AcceptanceCoverageRoute.AUDIT_ONLY,
+            covered=True,
+        )
+
+        self.assertEqual(AcceptanceCoverageItem.from_dict(item.to_dict()), item)
 
     def test_prompt_only_manifest_round_trip(self) -> None:
         manifest = SkillBundleManifest.prompt_only("demo-skill", references=["package/references/workflow.md"])

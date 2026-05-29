@@ -44,8 +44,11 @@ MissionForge uses multiple mission objects rather than one overloaded schema.
 
 ```text
 MissionIR
-  The authoring-level structured intent supplied by a host, FrontDesk-like
-  compiler, CLI, service, or another orchestrator.
+  The authoring-level structured contract supplied by a host, product
+  integration compiler, generic FrontDesk fallback compiler, CLI, service, or
+  another orchestrator. Product-aware FrontDesk normally emits a
+  FrontDeskIntentBundle first; Product Integration compiles that bundle into
+  MissionIR.
 
 CapabilityProfile
   A reusable capability declaration. It expands generic or domain capabilities

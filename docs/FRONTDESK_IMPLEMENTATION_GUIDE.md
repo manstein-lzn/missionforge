@@ -1,6 +1,6 @@
 # FrontDesk Implementation Guide
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 Status: `implemented`
 
@@ -12,16 +12,18 @@ The authoritative architecture reference is `docs/modules/frontdesk.md`. This
 document converts that design into phases, files, tests, and acceptance gates a
 developer can follow directly.
 
-For a current-state, start-coding-now runbook, use
-`docs/FRONTDESK_DEVELOPMENT_RUNBOOK.md`. That document records the active
-implementation position, immediate patch order, verification commands, and
-failure-handling table.
+For the current product-context architecture, use
+`docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md` and
+`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. For a current-state,
+start-coding-now runbook, use `docs/FRONTDESK_DEVELOPMENT_RUNBOOK.md`.
 
 FrontDesk must be implemented as a formal MissionForge product capability:
 
 ```text
 natural language + governed source refs
   -> FrontDesk authoring artifacts
+  -> FrontDeskIntentBundle
+  -> ProductIntegration or GenericProductIntegration
   -> approved MissionIR
   -> freeze_mission
   -> MissionRuntime
@@ -31,7 +33,8 @@ It is not an MVP, not a SkillFoundry adapter, and not a runtime inner loop.
 
 ## Non-Negotiable Rules
 
-1. FrontDesk is generic MissionIR authoring.
+1. FrontDesk is generic requirements discovery and intent bundling. Direct
+   MissionIR authoring is generic fallback behavior.
 2. Product-specific behavior stays outside `src/missionforge`.
 3. Runtime code must not branch on FrontDesk, SkillFoundry, Codexarium, product
    names, mission names, or benchmark names.
@@ -69,7 +72,7 @@ Expected responsibilities:
 - `schema.py`: dataclasses and validation for authoring artifacts.
 - `state.py`: `FrontDeskAuthoringSession` and state transitions.
 - `workspace.py`: safe ref read/write helpers backed by `JsonWorkspaceStore`.
-- `compiler.py`: approved FrontDesk artifacts to `MissionIR`.
+- `compiler.py`: approved FrontDesk artifacts to generic fallback `MissionIR`.
 - `freeze_gate.py`: deterministic approval, validation, and freeze manifest.
 - `elicitor.py`: LLM-assisted clarification boundary with scripted test client.
 - `planner.py`: LLM-assisted MissionIR/profile draft boundary.

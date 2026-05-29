@@ -63,6 +63,7 @@ def run_skillfoundry_bundle_build(
         product_grade_report_ref=PRODUCT_GRADE_REPORT_REF,
         registry_entry=registry_entry,
         package_refs=list(product_grade.package_refs),
+        product_grade_outcome_category=product_grade.outcome_category,
     )
 
 

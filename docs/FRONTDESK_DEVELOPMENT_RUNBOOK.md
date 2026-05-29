@@ -1,6 +1,6 @@
 # FrontDesk Development Runbook
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 Status: `direct-start implementation runbook`
 
@@ -18,28 +18,46 @@ handling.
 
 ## Current Position
 
-As of 2026-05-29, the repository already contains the main FrontDesk package
-and tests for phases 1 through 5:
+As of 2026-05-29, the repository contains the main FrontDesk package, the
+original authoring phases, runtime feedback, SkillFoundry dogfood, and the
+spec-grill first product slice:
 
 - `src/missionforge/frontdesk/schema.py`
+- `src/missionforge/frontdesk/spec_grill_schema.py`
 - `src/missionforge/frontdesk/state.py`
 - `src/missionforge/frontdesk/workspace.py`
+- `src/missionforge/frontdesk/scout.py`
+- `src/missionforge/frontdesk/need_griller.py`
+- `src/missionforge/frontdesk/semantic_coverage.py`
+- `src/missionforge/frontdesk/solution_architect.py`
+- `src/missionforge/frontdesk/mission_mapper.py`
+- `src/missionforge/frontdesk/spec_grill.py`
+- `src/missionforge/frontdesk/pi_node_runner.py`
 - `src/missionforge/frontdesk/compiler.py`
 - `src/missionforge/frontdesk/freeze_gate.py`
 - `src/missionforge/frontdesk/service.py`
 - `src/missionforge/frontdesk/elicitor.py`
 - `src/missionforge/frontdesk/planner.py`
 - `src/missionforge/frontdesk/auditor.py`
+- `src/missionforge/frontdesk/runtime_feedback.py`
 - `src/missionforge/frontdesk/cli.py`
 - `tests/test_frontdesk_*.py`
 
-The immediate open work is:
+The previous immediate work items are complete:
 
-1. Finish Phase 5 CLI hardening.
-2. Implement Phase 6 runtime feedback.
-3. Implement Phase 7 SkillFoundry dogfood.
-4. Run final integration gates.
-5. Update documentation with verification evidence.
+1. Phase 5 CLI hardening.
+2. Phase 6 runtime feedback.
+3. Phase 7 SkillFoundry dogfood.
+4. Spec-grill SG0-SG12 offline deterministic first slice.
+5. Project and integration validation.
+
+Current follow-on work should start from
+`docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md` and
+`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The spec-grill first slice is
+complete; the next boundary is product-aware intent bundles and Product
+Integration compilation. Remaining live PiWorker smoke hardening stays
+separate. The current PiWorker node runner already supports explicit adapter
+injection for offline/scripted execution and contract validation.
 
 Do not restart from Phase 1 unless the current implementation is intentionally
 discarded.
@@ -48,8 +66,11 @@ discarded.
 
 These constraints apply to every step in this runbook:
 
-- FrontDesk is generic MissionIR authoring, not a SkillFoundry adapter.
+- FrontDesk is generic requirements discovery and intent bundling, not a
+  SkillFoundry adapter and not the owner of final product-domain MissionIR.
 - Product-specific code stays under `integrations/*`.
+- ProductInquiryProfile may drive FrontDesk questioning, but it is data from a
+  Product Integration and not a core product branch.
 - No runtime branch may key on FrontDesk, SkillFoundry, Codexarium, product
   names, mission names, or benchmark names.
 - LLM nodes may draft, recommend, and audit only.

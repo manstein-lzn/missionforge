@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from ..contracts import ContractValidationError
+from .schema import ApprovalAuthority
 from .service import FrontDesk
+from .spec_grill_schema import PlanReviewDecision
 
 
 def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
@@ -24,6 +26,31 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
     if action == "inspect":
         result = frontdesk.inspect(args.session)
         return result.to_dict(), [result.refs["session_ref"]]
+    if action == "scout":
+        result = frontdesk.scout(args.session)
+        return result.to_dict(), result.refs
+    if action == "grill":
+        result = frontdesk.grill(args.session)
+        return result.to_dict(), result.refs
+    if action == "cover-semantics":
+        result = frontdesk.cover_semantics(args.session)
+        return result.to_dict(), result.refs
+    if action == "plan":
+        result = frontdesk.plan_solution(args.session)
+        return result.to_dict(), result.refs
+    if action == "review-plan":
+        review = frontdesk.review_plan(
+            args.session,
+            reviewed_by=args.reviewed_by,
+            decision=PlanReviewDecision(args.decision),
+            authority=ApprovalAuthority(args.authority),
+            notes=[args.note] if args.note else None,
+        )
+        session = frontdesk.load_session(args.session)
+        return {"plan_review": review.to_dict(), "session": session.to_dict()}, [session.session_ref, "frontdesk/plan_review.json"]
+    if action == "map":
+        result = frontdesk.map_mission(args.session)
+        return result.to_dict(), result.refs
     if action == "draft":
         session = frontdesk.draft(args.session)
         return {"session": session.to_dict()}, [
@@ -32,6 +59,10 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
             session.mission_brief_ref,
             session.profile_recommendations_ref,
             session.mission_plan_ref,
+            "frontdesk/semantic_coverage.json",
+            "frontdesk/solution_plan.json",
+            "frontdesk/plan_review.json",
+            "frontdesk/mission_mapping_report.json",
         ]
     if action == "audit":
         audit = frontdesk.audit(args.session)
