@@ -21,6 +21,18 @@ from missionforge.freeze import freeze_mission
 from missionforge.ir import CapabilityProfileRef, MissionConstraint, MissionIR, MissionObjective
 from missionforge.profiles import ProfileRegistry
 
+from .product_contract import (
+    BUNDLE_MANIFEST_SCHEMA_VERSION,
+    BundleProfile,
+    PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
+    PROMPT_ONLY_REQUIRED_PACKAGE_REFS,
+    ProductAcceptanceMatrix,
+    SkillFoundryRequest,
+    SkillProductContract,
+    manifest_for_profile,
+)
+from .workspace import write_json_ref
+
 
 SKILLFOUNDRY_SOURCE_TYPES = {
     "frontdesk_contract",
@@ -278,6 +290,9 @@ class SkillFoundryCompileResult:
     diagnostic_refs: list[str] = field(default_factory=list)
     target_package_ref: str = ""
     warnings: list[str] = field(default_factory=list)
+    product_contract_ref: str = ""
+    acceptance_matrix_ref: str = ""
+    request_ref: str = ""
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "SkillFoundryCompileResult":
@@ -293,6 +308,9 @@ class SkillFoundryCompileResult:
                 "diagnostic_refs",
                 "target_package_ref",
                 "warnings",
+                "product_contract_ref",
+                "acceptance_matrix_ref",
+                "request_ref",
             },
         )
         result = cls(
@@ -313,6 +331,9 @@ class SkillFoundryCompileResult:
                 "skillfoundry_compile_result.target_package_ref",
             ),
             warnings=require_str_list(data.get("warnings", []), "skillfoundry_compile_result.warnings"),
+            product_contract_ref=data.get("product_contract_ref", ""),
+            acceptance_matrix_ref=data.get("acceptance_matrix_ref", ""),
+            request_ref=data.get("request_ref", ""),
         )
         result.validate()
         return result
@@ -329,6 +350,12 @@ class SkillFoundryCompileResult:
             validate_ref(ref, "skillfoundry_compile_result.diagnostic_refs[]")
         validate_ref(self.target_package_ref, "skillfoundry_compile_result.target_package_ref")
         require_str_list(self.warnings, "skillfoundry_compile_result.warnings")
+        if self.product_contract_ref:
+            validate_ref(self.product_contract_ref, "skillfoundry_compile_result.product_contract_ref")
+        if self.acceptance_matrix_ref:
+            validate_ref(self.acceptance_matrix_ref, "skillfoundry_compile_result.acceptance_matrix_ref")
+        if self.request_ref:
+            validate_ref(self.request_ref, "skillfoundry_compile_result.request_ref")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -341,6 +368,9 @@ class SkillFoundryCompileResult:
             "diagnostic_refs": list(self.diagnostic_refs),
             "target_package_ref": self.target_package_ref,
             "warnings": list(self.warnings),
+            "product_contract_ref": self.product_contract_ref,
+            "acceptance_matrix_ref": self.acceptance_matrix_ref,
+            "request_ref": self.request_ref,
         }
 
 
@@ -418,16 +448,277 @@ class SkillFoundryMissionCompiler:
         result.validate()
         return result
 
+    def compile_request(
+        self,
+        request: SkillFoundryRequest,
+        *,
+        workspace: str | Path = ".",
+        registry: ProfileRegistry | None = None,
+        request_ref: str = "product_contract/skillfoundry_request.json",
+    ) -> SkillFoundryCompileResult:
+        """Compile a SkillFoundryRequest into MissionIR and product refs."""
+
+        request.validate()
+        root = Path(workspace).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        product_contract = SkillProductContract.from_request(request, request_ref=request_ref)
+        matrix = ProductAcceptanceMatrix.for_profile(
+            bundle_id=request.bundle_id,
+            profile=product_contract.bundle_profile,
+            risk_domains=list(product_contract.risk_domains),
+        )
+        product_contract_ref = "product_contract/skill_product_contract.json"
+        matrix_ref = product_contract.matrix_ref
+        compiler_report_ref = "product_contract/compiler_report.json"
+        write_json_ref(root, request_ref, request.to_dict())
+        write_json_ref(root, product_contract_ref, product_contract.to_dict())
+        write_json_ref(root, matrix_ref, matrix.to_dict())
+        mission = _compile_product_mission(request, product_contract)
+        frozen = freeze_mission(mission, registry=registry)
+        mission_ir_ref = f"missions/{request.bundle_id}.mission.json"
+        frozen_contract_ref = f"missions/{request.bundle_id}.frozen_contract.json"
+        diagnostic_ref = f"evidence/{request.bundle_id}.skillfoundry_compile_diagnostics.json"
+        _write_json_ref(root, mission_ir_ref, mission.to_dict())
+        _write_json_ref(root, frozen_contract_ref, frozen.to_dict())
+        write_json_ref(
+            root,
+            compiler_report_ref,
+            {
+                "bundle_id": request.bundle_id,
+                "adapter_id": self.adapter_id,
+                "request_ref": request_ref,
+                "product_contract_ref": product_contract_ref,
+                "acceptance_matrix_ref": matrix_ref,
+                "mission_ir_ref": mission_ir_ref,
+                "frozen_contract_ref": frozen_contract_ref,
+                "contract_hash": frozen.contract_hash,
+                "product_contract_hash": product_contract.contract_hash,
+                "acceptance_matrix_hash": matrix.matrix_hash,
+            },
+        )
+        _write_json_ref(
+            root,
+            diagnostic_ref,
+            {
+                "bundle_id": request.bundle_id,
+                "adapter_id": self.adapter_id,
+                "request_ref": request_ref,
+                "product_contract_ref": product_contract_ref,
+                "acceptance_matrix_ref": matrix_ref,
+                "compiler_report_ref": compiler_report_ref,
+                "contract_hash": frozen.contract_hash,
+                "mission_ir_hash": stable_json_hash(mission.to_dict()),
+            },
+        )
+        result = SkillFoundryCompileResult(
+            bundle_id=request.bundle_id,
+            mission_ir_ref=mission_ir_ref,
+            frozen_contract_ref=frozen_contract_ref,
+            contract_hash=frozen.contract_hash,
+            profile_refs=[profile_ref.profile_id for profile_ref in mission.capability_profiles],
+            diagnostic_refs=[diagnostic_ref, compiler_report_ref],
+            target_package_ref=product_contract.target_package_refs[0],
+            product_contract_ref=product_contract_ref,
+            acceptance_matrix_ref=matrix_ref,
+            request_ref=request_ref,
+        )
+        result.validate()
+        return result
+
 
 def compile_skillfoundry_bundle(
-    bundle: SkillFoundrySourceBundle,
+    bundle: SkillFoundrySourceBundle | SkillFoundryRequest,
     *,
     workspace: str | Path = ".",
     registry: ProfileRegistry | None = None,
 ) -> SkillFoundryCompileResult:
     """Compile one SkillFoundry source bundle into refs-only MissionIR output."""
 
+    if isinstance(bundle, SkillFoundryRequest):
+        return SkillFoundryMissionCompiler().compile_request(bundle, workspace=workspace, registry=registry)
     return SkillFoundryMissionCompiler().compile(bundle, workspace=workspace, registry=registry)
+
+
+def _compile_prompt_only_mission(request: SkillFoundryRequest, product_contract: SkillProductContract) -> MissionIR:
+    request.validate()
+    product_contract.validate()
+    validators = [
+        {
+            "validator_id": f"V-prompt-only-artifact-{index:03d}",
+            "constraint_refs": [f"SF-{request.bundle_id}-C-product-grade"],
+            "type": "file_exists",
+            "inputs": {"path": artifact_ref},
+        }
+        for index, artifact_ref in enumerate(PROMPT_ONLY_REQUIRED_PACKAGE_REFS, start=1)
+    ]
+    return MissionIR(
+        schema_version="missionforge.mission_ir.v1",
+        mission_id=f"skillfoundry-{request.bundle_id}",
+        objective=MissionObjective(
+            summary=f"Build prompt-only SkillFoundry Capability Bundle {request.bundle_id}: {request.desired_capability}",
+            deliverable_type="capability_bundle",
+            success_signals=[
+                "MissionForge verifier passes for all required prompt-only package refs.",
+                "SkillFoundry ProductGradeGate passes before product-grade registry.",
+            ],
+        ),
+        inputs={
+            "request_ref": product_contract.request_ref,
+            "product_contract_ref": "product_contract/skill_product_contract.json",
+            "acceptance_matrix_ref": product_contract.matrix_ref,
+            "admitted_source_refs": list(request.source_refs),
+        },
+        outputs={
+            "required_artifacts": list(product_contract.target_package_refs),
+            "allowed_write_scopes": list(product_contract.allowed_write_scopes),
+            "bundle_profile": product_contract.bundle_profile.value,
+            "bundle_manifest_ref": product_contract.manifest_ref,
+            "artifact_contracts": _prompt_only_artifact_contracts(request, product_contract),
+        },
+        constraints=[
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-source-boundary",
+                kind="data_boundary",
+                priority="must",
+                statement="Use only sanitized SkillFoundry request and source refs for task facts.",
+                source_refs=_dedupe_refs([product_contract.request_ref, *request.source_refs]),
+                evidence_obligations=["evidence/source_manifest.json"],
+                validator=None,
+                repair_hints=["Remove raw prompt, transcript, or unadmitted source material."],
+            ),
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-output-root",
+                kind="workspace_boundary",
+                priority="must",
+                statement="Write SkillFoundry prompt-only package output only under package/.",
+                source_refs=[product_contract.request_ref, product_contract.matrix_ref],
+                evidence_obligations=["evidence/output_manifest.json"],
+                validator=None,
+                repair_hints=["Move generated package files under package/."],
+            ),
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-product-grade",
+                kind="product_grade",
+                priority="must",
+                statement="Produce all prompt-only Capability Bundle artifacts required by the product acceptance matrix.",
+                source_refs=[product_contract.request_ref, product_contract.matrix_ref],
+                evidence_obligations=list(product_contract.target_package_refs),
+                validator=None,
+                repair_hints=["Create SKILL.md, skillfoundry.bundle.json, and README.md."],
+            ),
+        ],
+        capability_profiles=[
+            CapabilityProfileRef("user_provided_evidence_only", {}),
+            CapabilityProfileRef("explicit_output_root", {"output_root": "package"}),
+        ],
+        verification={
+            "required_evidence": ["evidence/source_manifest.json", "evidence/output_manifest.json"],
+            "verification_profiles": [{"profile_id": "generic_local_verification"}],
+            "validators": validators,
+        },
+        repair_policy={"rules": []},
+        budget={},
+        observability={"adapter": "skillfoundry_mission_ir_compiler", "bundle_profile": "prompt_only"},
+    )
+
+
+def _compile_product_mission(request: SkillFoundryRequest, product_contract: SkillProductContract) -> MissionIR:
+    if product_contract.bundle_profile == BundleProfile.PROMPT_ONLY:
+        return _compile_prompt_only_mission(request, product_contract)
+    if product_contract.bundle_profile == BundleProfile.CODE_RUNTIME:
+        return _compile_code_runtime_mission(request, product_contract)
+    raise ContractValidationError(f"unsupported SkillFoundry bundle profile: {product_contract.bundle_profile.value}")
+
+
+def _compile_code_runtime_mission(request: SkillFoundryRequest, product_contract: SkillProductContract) -> MissionIR:
+    request.validate()
+    product_contract.validate()
+    manifest = manifest_for_profile(
+        product_contract.bundle_profile,
+        request.bundle_id,
+        target_package_refs=product_contract.target_package_refs,
+    )
+    validators = _code_runtime_validators(request, product_contract, manifest)
+    return MissionIR(
+        schema_version="missionforge.mission_ir.v1",
+        mission_id=f"skillfoundry-{request.bundle_id}",
+        objective=MissionObjective(
+            summary=f"Build code-runtime SkillFoundry Capability Bundle {request.bundle_id}: {request.desired_capability}",
+            deliverable_type="capability_bundle",
+            success_signals=[
+                "MissionForge verifier passes for all required code-runtime package refs.",
+                "Helper runtime assets and schema artifacts are present and locally inspectable.",
+                "SkillFoundry ProductGradeGate passes before product-grade registry.",
+            ],
+        ),
+        inputs={
+            "request_ref": product_contract.request_ref,
+            "product_contract_ref": "product_contract/skill_product_contract.json",
+            "acceptance_matrix_ref": product_contract.matrix_ref,
+            "admitted_source_refs": list(request.source_refs),
+        },
+        outputs={
+            "required_artifacts": list(product_contract.target_package_refs),
+            "allowed_write_scopes": list(product_contract.allowed_write_scopes),
+            "bundle_profile": product_contract.bundle_profile.value,
+            "bundle_manifest_ref": product_contract.manifest_ref,
+            "artifact_contracts": _code_runtime_artifact_contracts(request, product_contract, manifest),
+        },
+        constraints=[
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-source-boundary",
+                kind="data_boundary",
+                priority="must",
+                statement="Use only sanitized SkillFoundry request and source refs for task facts.",
+                source_refs=_dedupe_refs([product_contract.request_ref, *request.source_refs]),
+                evidence_obligations=["evidence/source_manifest.json"],
+                validator=None,
+                repair_hints=["Remove raw prompt, transcript, provider payload, or unadmitted source material."],
+            ),
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-output-root",
+                kind="workspace_boundary",
+                priority="must",
+                statement="Write SkillFoundry code-runtime package output only under package/.",
+                source_refs=[product_contract.request_ref, product_contract.matrix_ref],
+                evidence_obligations=["evidence/output_manifest.json"],
+                validator=None,
+                repair_hints=["Move generated package files under package/."],
+            ),
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-runtime-assets",
+                kind="runtime_asset_boundary",
+                priority="must",
+                statement="Produce declared runtime assets, helper scripts, and schema refs as package-local artifacts.",
+                source_refs=[product_contract.request_ref, product_contract.matrix_ref],
+                evidence_obligations=list(product_contract.target_package_refs),
+                validator=None,
+                repair_hints=["Create helper scripts under package/scripts/ and schemas under package/schemas/."],
+            ),
+            MissionConstraint(
+                constraint_id=f"SF-{request.bundle_id}-C-product-grade",
+                kind="product_grade",
+                priority="must",
+                statement="Produce all code-runtime Capability Bundle artifacts required by the product acceptance matrix.",
+                source_refs=[product_contract.request_ref, product_contract.matrix_ref],
+                evidence_obligations=list(product_contract.target_package_refs),
+                validator=None,
+                repair_hints=["Create SKILL.md, skillfoundry.bundle.json, README.md, runtime assets, and schemas."],
+            ),
+        ],
+        capability_profiles=[
+            CapabilityProfileRef("user_provided_evidence_only", {}),
+            CapabilityProfileRef("explicit_output_root", {"output_root": "package"}),
+        ],
+        verification={
+            "required_evidence": ["evidence/source_manifest.json", "evidence/output_manifest.json"],
+            "verification_profiles": [{"profile_id": "generic_local_verification"}],
+            "validators": validators,
+        },
+        repair_policy={"rules": []},
+        budget={},
+        observability={"adapter": "skillfoundry_mission_ir_compiler", "bundle_profile": "code_runtime"},
+    )
 
 
 def _compile_mission(
@@ -483,6 +774,204 @@ def _compile_mission(
     )
     mission.validate()
     return mission
+
+
+def _prompt_only_artifact_contracts(
+    request: SkillFoundryRequest,
+    product_contract: SkillProductContract,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "artifact_ref": "package/SKILL.md",
+            "kind": "markdown",
+            "role": "agent_entrypoint",
+            "required": True,
+            "notes": [
+                "Codex skill entry file.",
+                "Describe trigger conditions, non-trigger conditions, operating boundaries, and verification expectations.",
+                "Do not claim ProductGradeGate approval inside package content.",
+            ],
+        },
+        {
+            "artifact_ref": "package/skillfoundry.bundle.json",
+            "kind": "json",
+            "role": "skillfoundry_bundle_manifest",
+            "required": True,
+            "schema_version": BUNDLE_MANIFEST_SCHEMA_VERSION,
+            "required_keys": list(PROMPT_ONLY_MANIFEST_REQUIRED_KEYS),
+            "forbidden_extra_keys": True,
+            "field_contract": {
+                "schema_version": BUNDLE_MANIFEST_SCHEMA_VERSION,
+                "bundle_id": request.bundle_id,
+                "bundle_profile": product_contract.bundle_profile.value,
+                "entrypoint": "SKILL.md",
+                "capability_surface": {"codex_skill": {"entry_ref": "package/SKILL.md"}},
+                "runtime_assets": [],
+                "data_assets": [],
+                "references": [],
+                "environment": {},
+                "permissions": {},
+                "verification": {
+                    "matrix_ref": product_contract.matrix_ref,
+                    "product_grade_ref": "qa/product_grade_report.json",
+                },
+                "distribution": {"status": "local"},
+            },
+            "notes": [
+                "Write only the keys listed in required_keys.",
+                "Use entrypoint exactly SKILL.md, not package/SKILL.md.",
+                "Keep runtime_assets, data_assets, and references as package-relative refs when non-empty.",
+            ],
+        },
+        {
+            "artifact_ref": "package/README.md",
+            "kind": "markdown",
+            "role": "local_use_readme",
+            "required": True,
+            "notes": [
+                "Explain local install/use boundaries.",
+                "Do not claim ProductGradeGate approval inside package content.",
+            ],
+        },
+    ]
+
+
+def _code_runtime_artifact_contracts(
+    request: SkillFoundryRequest,
+    product_contract: SkillProductContract,
+    manifest,
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = [
+        {
+            "artifact_ref": "package/SKILL.md",
+            "kind": "markdown",
+            "role": "agent_entrypoint",
+            "required": True,
+            "notes": [
+                "Codex skill entry file.",
+                "Describe trigger conditions, operating boundaries, runtime helper usage, and verification expectations.",
+                "Do not claim ProductGradeGate approval inside package content.",
+            ],
+        },
+        {
+            "artifact_ref": "package/skillfoundry.bundle.json",
+            "kind": "json",
+            "role": "skillfoundry_bundle_manifest",
+            "required": True,
+            "schema_version": BUNDLE_MANIFEST_SCHEMA_VERSION,
+            "required_keys": list(PROMPT_ONLY_MANIFEST_REQUIRED_KEYS),
+            "forbidden_extra_keys": True,
+            "field_contract": manifest.to_dict(),
+            "notes": [
+                "Write only the keys listed in required_keys.",
+                "Use entrypoint exactly SKILL.md, not package/SKILL.md.",
+                "Keep runtime_assets, data_assets, and references as package-relative refs.",
+                "Keep network permission false unless a future profile explicitly allows it.",
+            ],
+        },
+        {
+            "artifact_ref": "package/README.md",
+            "kind": "markdown",
+            "role": "local_use_readme",
+            "required": True,
+            "notes": [
+                "Explain local install, health check, and runtime boundaries.",
+                "Do not claim ProductGradeGate approval inside package content.",
+            ],
+        },
+    ]
+    for ref in product_contract.target_package_refs:
+        if ref in {"package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"}:
+            continue
+        if ref.startswith("package/scripts/"):
+            contracts.append(
+                {
+                    "artifact_ref": ref,
+                    "kind": "python",
+                    "role": "helper_script",
+                    "required": True,
+                    "notes": [
+                        "Expose a --help path that exits 0.",
+                        "Do not require network, credentials, or host-specific absolute paths for health checks.",
+                    ],
+                }
+            )
+        elif ref.startswith("package/bin/"):
+            contracts.append(
+                {
+                    "artifact_ref": ref,
+                    "kind": "runtime_binary_or_sidecar_ref",
+                    "role": "runtime_asset",
+                    "required": True,
+                    "notes": [
+                        "Keep the asset package-local.",
+                        "Document the health command in package/README.md and manifest verification.",
+                    ],
+                }
+            )
+        elif ref.startswith("package/schemas/"):
+            contracts.append(
+                {
+                    "artifact_ref": ref,
+                    "kind": "json_schema",
+                    "role": "schema",
+                    "required": True,
+                    "notes": ["Must parse as JSON."],
+                }
+            )
+        else:
+            contracts.append(
+                {
+                    "artifact_ref": ref,
+                    "kind": "package_artifact",
+                    "role": "supporting_artifact",
+                    "required": True,
+                    "notes": ["Keep artifact package-local and refs-only in reports."],
+                }
+            )
+    return contracts
+
+
+def _code_runtime_validators(
+    request: SkillFoundryRequest,
+    product_contract: SkillProductContract,
+    manifest,
+) -> list[dict[str, Any]]:
+    validators = [
+        {
+            "validator_id": f"V-code-runtime-artifact-{index:03d}",
+            "constraint_refs": [f"SF-{request.bundle_id}-C-product-grade"],
+            "type": "file_exists",
+            "inputs": {"path": artifact_ref},
+        }
+        for index, artifact_ref in enumerate(product_contract.target_package_refs, start=1)
+    ]
+    for field in [
+        "bundle_profile",
+        "runtime_assets",
+        "data_assets",
+        "permissions.filesystem_write_refs",
+        "verification.command_health_check",
+    ]:
+        validators.append(
+            {
+                "validator_id": f"V-code-runtime-manifest-{field.replace('.', '-')}",
+                "constraint_refs": [f"SF-{request.bundle_id}-C-runtime-assets"],
+                "type": "json_field_exists",
+                "inputs": {"path": product_contract.manifest_ref, "field": field},
+            }
+        )
+    command = manifest.verification.get("command_health_check") or manifest.environment.get("health_check")
+    if command:
+        validators.append(
+            {
+                "validator_id": "V-code-runtime-health-check",
+                "constraint_refs": [f"SF-{request.bundle_id}-C-runtime-assets"],
+                "type": "command",
+                "inputs": {"command": command, "expected_exit_code": 0, "timeout": 30},
+            }
+        )
+    return validators
 
 
 def _frontdesk_constraints(contract: Mapping[str, Any]) -> list[MissionConstraint]:

@@ -29,6 +29,21 @@ MissionForge is:
 - a contract-freezing and verification substrate
 - a reusable node that other orchestrators may call
 
+## Authoring Surface
+
+FrontDesk is the formal MissionIR authoring tool. It sits before the runtime
+contract and helps users turn natural language, governed source refs, and
+ProfilePack-backed capability choices into reviewable MissionIR.
+
+FrontDesk is not a runtime shortcut. LLM-backed FrontDesk nodes may draft,
+clarify, recommend profiles, and audit mission shape, but deterministic code
+owns source admission, schema validation, profile validation, approval gates,
+freeze, and runtime handoff.
+
+```text
+FrontDesk -> MissionIR -> ExpandedMission -> FrozenMissionContract -> MissionRun
+```
+
 ## Planes
 
 MissionForge has six planes.
@@ -39,8 +54,9 @@ The Mission IR is the canonical task truth at authoring time. It contains
 objective, environment, contract, capabilities, evidence, verification rules,
 adaptation policy, budget, and observability requirements.
 
-Chat history is not task truth. FrontDesk-like systems may compile chat into
-Mission IR, but the runtime consumes the IR.
+Chat history is not task truth. FrontDesk may compile user dialogue and
+governed source refs into Mission IR, but the runtime consumes the IR and its
+frozen contract, not raw conversation.
 
 Mission Plane objects are layered:
 

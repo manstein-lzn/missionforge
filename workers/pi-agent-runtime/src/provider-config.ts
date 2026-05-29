@@ -16,7 +16,7 @@ export interface RuntimeProviderConfig {
 export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): RuntimeProviderConfig {
   const mode = normalizeMode(env.MISSIONFORGE_PI_AGENT_PROVIDER ?? "faux");
   const reasoning = normalizeReasoning(env.MISSIONFORGE_PI_AGENT_REASONING ?? "off");
-  const maxTurns = positiveInt(env.MISSIONFORGE_PI_AGENT_MAX_TURNS, 8);
+  const maxTurns = positiveInt(env.MISSIONFORGE_PI_AGENT_MAX_TURNS, 12);
   const toolTimeoutSeconds = positiveInt(env.MISSIONFORGE_PI_AGENT_TOOL_TIMEOUT_SECONDS, 60);
   const cancelAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_CANCEL_AFTER_TURNS);
   const compactAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_COMPACT_AFTER_TURNS);

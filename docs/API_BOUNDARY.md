@@ -42,6 +42,26 @@ Application code may depend on these categories from `missionforge`:
   `VerificationStatus`, `ValidatorMode`, `ValidatorSeverity`,
   `EvidenceTrustLevel`
 
+## Formal Authoring Surface
+
+FrontDesk is the formal MissionIR authoring tool. The root surface exposes only
+generic authoring contracts and facade methods, not product-specific
+SkillFoundry or Codexarium behavior.
+
+Stable categories:
+
+- `FrontDesk` authoring facade
+- `FrontDeskAuthoringSession`
+- semantic lock, mission brief, profile recommendation, mission plan, audit,
+  approval, and freeze manifest contracts
+- deterministic compiler from approved FrontDesk artifacts to `MissionIR`
+- refs-only inspect and handoff results
+- runtime feedback recommendations that may draft revision requests but cannot
+  approve or apply them
+
+FrontDesk output must still enter the normal `MissionIR -> expand_mission ->
+freeze_mission -> MissionRuntime` path.
+
 ## Experimental Root Surface
 
 These are currently exported but should be treated as lower-level or
@@ -97,7 +117,8 @@ Not allowed:
 
 Product integrations should depend on MissionForge in this order:
 
-1. Compile product facts into `MissionIR`.
+1. Use FrontDesk or external integration code to compile product facts into
+   `MissionIR`.
 2. Use profile refs and `ProfilePack` for reusable capability semantics.
 3. Use validators and manual gates for completion checks.
 4. Use evidence refs for proof.

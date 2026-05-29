@@ -72,3 +72,14 @@ test("resolveProviderConfig validates live budget fields", () => {
     /Invalid positive integer/,
   );
 });
+
+test("resolveProviderConfig defaults to enough turns for multi-artifact live work", () => {
+  const config = resolveProviderConfig({
+    MISSIONFORGE_PI_AGENT_PROVIDER: "live",
+    MISSIONFORGE_PI_AGENT_MODEL: "gpt-5.5",
+    MISSIONFORGE_PI_AGENT_BASE_URL: "https://example.test/v1",
+    MISSIONFORGE_PI_AGENT_API_KEY: "sk-live-secret",
+  });
+
+  assert.equal(config.maxTurns, 12);
+});

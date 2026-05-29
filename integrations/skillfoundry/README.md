@@ -20,3 +20,9 @@ PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s int
 ```
 
 The default MissionForge validation path does not run product integrations.
+
+Planning:
+
+- [SkillFoundry integration contract](docs/skillfoundry_integration.md)
+- [SkillFoundry on MissionForge plan](docs/skillfoundry_on_missionforge_plan.md)
+- [SkillFoundry product shell validation plan](docs/skillfoundry_product_shell_validation_plan.md)

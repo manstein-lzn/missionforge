@@ -35,7 +35,7 @@ from ..state import (
 
 
 COMMAND_RESULT_SCHEMA_VERSION = "missionforge.command_result.v1"
-COMMAND_NAMES = {"run", "inspect", "diagnose", "resume", "control halt", "review record", "validate"}
+COMMAND_NAMES = {"run", "inspect", "diagnose", "resume", "control halt", "review record", "validate", "frontdesk"}
 COMMAND_RESULT_STATUSES = {"completed", "failed", "blocked", "unsupported"}
 COMMAND_EXIT_CODE_BY_REASON = {
     "success": 0,
@@ -384,6 +384,8 @@ class MissionCLI:
             return self._command_review_record(args)
         if command == "validate":
             return self._command_validate(args)
+        if command == "frontdesk":
+            return self._command_frontdesk(args)
         return _error_result("inspect", "unsupported_operation", f"unsupported command: {command}")
 
     def run(self, argv: Sequence[str]) -> MissionCLIResult:
@@ -576,6 +578,17 @@ class MissionCLI:
         except (OSError, ContractValidationError) as exc:
             return _error_result("validate", "validation_failed", str(exc), refs=[script_ref])
 
+    def _command_frontdesk(self, args: argparse.Namespace) -> MissionCommandResult:
+        try:
+            from ..frontdesk.cli import run_frontdesk_command
+
+            data, refs = run_frontdesk_command(args)
+            return _success_result("frontdesk", data=data, refs=refs)
+        except FileNotFoundError as exc:
+            return _error_result("frontdesk", "missing_state", str(exc))
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            return _error_result("frontdesk", "invalid_input", str(exc))
+
     def _run_validation(self, root: Path) -> tuple[int, str]:
         if self._validate_runner is not None:
             return self._validate_runner(root)
@@ -670,6 +683,29 @@ def _command_parser() -> argparse.ArgumentParser:
     validate.add_argument("--workspace", default=".", help="Repository/workspace root.")
     validate.add_argument("--log-ref", default=None, help="Workspace-relative validation log ref.")
     validate.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
+    frontdesk = subparsers.add_parser("frontdesk", help="Author MissionIR with FrontDesk.")
+    frontdesk_subparsers = frontdesk.add_subparsers(dest="frontdesk_command", required=True)
+    fd_start = frontdesk_subparsers.add_parser("start", help="Start a FrontDesk session.")
+    fd_start.add_argument("--workspace", default=".", help="Workspace root.")
+    fd_start.add_argument("--text", required=True, help="Initial user intent.")
+    fd_start.add_argument("--session-id", default="frontdesk-session", help="FrontDesk session id.")
+    fd_start.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    fd_answer = frontdesk_subparsers.add_parser("answer", help="Append a FrontDesk answer.")
+    fd_answer.add_argument("--workspace", default=".", help="Workspace root.")
+    fd_answer.add_argument("--session", required=True, help="FrontDesk session ref.")
+    fd_answer.add_argument("--text", required=True, help="User answer text.")
+    fd_answer.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    for name in ("inspect", "draft", "audit", "freeze", "run"):
+        fd_command = frontdesk_subparsers.add_parser(name, help=f"FrontDesk {name}.")
+        fd_command.add_argument("--workspace", default=".", help="Workspace root.")
+        fd_command.add_argument("--session", required=True, help="FrontDesk session ref.")
+        fd_command.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    fd_approve = frontdesk_subparsers.add_parser("approve", help="Approve a FrontDesk draft.")
+    fd_approve.add_argument("--workspace", default=".", help="Workspace root.")
+    fd_approve.add_argument("--session", required=True, help="FrontDesk session ref.")
+    fd_approve.add_argument("--approved-by", required=True, help="Approver id.")
+    fd_approve.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
     return parser
 
 

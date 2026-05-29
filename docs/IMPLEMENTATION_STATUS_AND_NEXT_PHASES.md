@@ -104,8 +104,9 @@ Core rules:
 | Phase 19 metric dict sunset | Implemented first slice | Operator diagnosis reads typed metric projection rather than loose route keys |
 | Phase 20 profile extension kit | Implemented first slice | `ProfilePack` supports external data-first profile packs |
 | Phase 21 run audit | Implemented first slice | `MissionRunAudit` provides refs-only stale/missing ref diagnostics |
+| FrontDesk authoring | Implemented product module | Natural-language authoring now produces approved MissionIR, freeze manifests, CLI handoff, runtime feedback, and SkillFoundry dogfood |
 | Product boundary | Implemented and tested | SkillFoundry is external under `integrations/skillfoundry/` |
-| Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review, not yet a complete operator product |
+| Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review/frontdesk, not yet a complete visual operator product |
 
 ## Verification Snapshot
 
@@ -113,7 +114,7 @@ The current working tree was validated with:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 232 tests: OK (skipped=2)
+# Ran 292 tests: OK (skipped=2)
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # Node runtime: 4 tests passed
@@ -121,7 +122,23 @@ MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
-# Ran 20 tests: OK
+# Ran 48 tests: OK (skipped=1)
+
+PYTHONPATH=src python3 -m unittest \
+  tests/test_frontdesk_schema.py \
+  tests/test_frontdesk_state.py \
+  tests/test_frontdesk_workspace.py \
+  tests/test_frontdesk_compiler.py \
+  tests/test_frontdesk_freeze_gate.py \
+  tests/test_frontdesk_profile_integration.py \
+  tests/test_frontdesk_service.py \
+  tests/test_frontdesk_elicitor.py \
+  tests/test_frontdesk_planner.py \
+  tests/test_frontdesk_auditor.py \
+  tests/test_frontdesk_llm_boundaries.py \
+  tests/test_frontdesk_cli.py \
+  tests/test_frontdesk_runtime_feedback.py
+# Ran 44 tests: OK
 
 PYTHONPATH=src python3 -m unittest tests/test_adapter_import_boundaries.py tests/test_pi_agent_runtime_import_boundaries.py tests/test_piworker_runtime_boundary.py
 # Ran 10 tests: OK

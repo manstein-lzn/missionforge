@@ -118,7 +118,7 @@ class SkillFoundryImportBoundaryTests(unittest.TestCase):
             if ADAPTER_ROOT in path.parents:
                 continue
             text = path.read_text(encoding="utf-8").lower()
-            if "skillfoundry" in text or "frontdesk" in text:
+            if "skillfoundry" in text or "codexarium" in text:
                 violations.append(str(path))
 
         self.assertEqual(violations, [])

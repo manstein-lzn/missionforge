@@ -30,14 +30,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       });
       unregisterFaux = faux.unregister;
       provider.model = faux.getModel();
-      const firstOutput = input.contract.expected_outputs[0];
-      if (!firstOutput) throw new Error("Work unit requires at least one expected output");
+      const outputs = input.contract.expected_outputs;
+      if (outputs.length === 0) throw new Error("Work unit requires at least one expected output");
       faux.setResponses([
         fauxAssistantMessage(
-          fauxToolCall("write", {
-            path: firstOutput,
-            content: `pi-agent-runtime faux artifact for ${input.work_unit_id}\n`,
-          }),
+          outputs.map((outputRef, index) =>
+            fauxToolCall("write", {
+              path: outputRef,
+              content: `pi-agent-runtime faux artifact for ${input.work_unit_id} output ${index + 1}\n`,
+            }),
+          ),
           { stopReason: "toolUse" },
         ),
         fauxAssistantMessage(`Completed ${input.work_unit_id}.`),
@@ -56,6 +58,7 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       },
       streamFn: streamSimple,
       getApiKey: () => provider.apiKey,
+      transformContext: stripUnreplayableResponsesReasoning,
       toolExecution: "parallel",
     });
     agent.subscribe(async (event) => {
@@ -116,6 +119,15 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     recommendedNextSteps: cancelled ? ["Run was cancelled at a MissionForge safe point."] : undefined,
   });
   await writeRuntimeOutput(workspaceRoot, input, output);
+}
+
+export async function stripUnreplayableResponsesReasoning(messages: any[]): Promise<any[]> {
+  return messages.map((message) => {
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) return message;
+    if (message.api !== "openai-responses") return message;
+    const content = message.content.filter((block: any) => block?.type !== "thinking");
+    return { ...message, content };
+  });
 }
 
 function buildSystemPrompt(input: RuntimeInput): string {

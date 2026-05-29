@@ -537,6 +537,14 @@ def _initial_proposal(
     required_artifacts: list[str],
     allowed_scopes: list[str],
 ) -> SteeringProposal:
+    output_list = ", ".join(required_artifacts)
+    artifact_contracts = _artifact_contract_instructions(contract_view.outputs)
+    objective_parts = [
+        contract_view.objective_summary,
+        f"Write all required artifacts before stopping: {output_list}.",
+    ]
+    if artifact_contracts:
+        objective_parts.append("Follow these artifact contracts: " + " ".join(artifact_contracts))
     return SteeringProposal(
         proposal_id="P-000001",
         mission_run_id=f"run-{contract_view.mission_id}",
@@ -544,16 +552,55 @@ def _initial_proposal(
         input_refs=[frozen_ref],
         recommended_route=AdaptiveDecision.CONTINUE,
         proposed_contract={
-            "next_objective": contract_view.objective_summary,
+            "next_objective": " ".join(objective_parts),
             "allowed_scope": list(allowed_scopes),
             "visible_refs": [frozen_ref],
             "expected_outputs": list(required_artifacts),
-            "exit_criteria": ["Run verification after fake worker output."],
+            "exit_criteria": [
+                f"All expected outputs exist: {output_list}.",
+                *artifact_contracts,
+                "MissionForge will run verification after worker output.",
+            ],
             "stop_conditions": ["A halt control is active."],
         },
         rationale="Deterministic initial runtime proposal.",
         confidence=1.0,
     )
+
+
+def _artifact_contract_instructions(outputs: dict[str, Any]) -> list[str]:
+    contracts = outputs.get("artifact_contracts")
+    if not isinstance(contracts, list):
+        return []
+    instructions: list[str] = []
+    for index, item in enumerate(contracts, start=1):
+        if not isinstance(item, dict):
+            continue
+        artifact_ref = item.get("artifact_ref")
+        if not isinstance(artifact_ref, str) or not artifact_ref:
+            continue
+        parts = [f"Artifact {artifact_ref}:"]
+        kind = item.get("kind")
+        role = item.get("role")
+        if isinstance(kind, str) and kind:
+            parts.append(f"kind={kind}.")
+        if isinstance(role, str) and role:
+            parts.append(f"role={role}.")
+        required_keys = item.get("required_keys")
+        if isinstance(required_keys, list) and all(isinstance(key, str) and key for key in required_keys):
+            parts.append(f"required JSON keys={', '.join(required_keys)}.")
+        if item.get("forbidden_extra_keys") is True:
+            parts.append("Do not add extra JSON keys.")
+        field_contract = item.get("field_contract")
+        if isinstance(field_contract, dict) and field_contract:
+            parts.append(f"field contract={json.dumps(field_contract, sort_keys=True, separators=(',', ':'))}.")
+        notes = item.get("notes")
+        if isinstance(notes, list):
+            safe_notes = [note for note in notes if isinstance(note, str) and note]
+            if safe_notes:
+                parts.append("Notes: " + " ".join(safe_notes))
+        instructions.append(f"{index}. " + " ".join(parts))
+    return instructions
 
 
 def _repair_proposal(previous: SteeringProposal, verification) -> SteeringProposal:

@@ -9,15 +9,21 @@ import { readJson, sampleInput, withWorkspace, writeInput } from "./helpers.mjs"
 
 test("faux runtime writes expected artifact and output artifacts", async () => {
   await withWorkspace(async (root) => {
-    const input = sampleInput();
+    const input = sampleInput({
+      contract: {
+        ...sampleInput().contract,
+        expected_outputs: ["attempts/WU-000001/artifact.txt", "attempts/WU-000001/second.txt"],
+      },
+    });
     await writeInput(root, input);
     process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
     await runMissionForgePiAgent(parseRuntimeInput(input), root);
 
     const output = await readJson(join(root, input.output_ref));
     assert.equal(output.status, "completed");
-    assert.deepEqual(output.produced_artifacts, [input.contract.expected_outputs[0]]);
+    assert.deepEqual(output.produced_artifacts, input.contract.expected_outputs);
     await access(join(root, input.contract.expected_outputs[0]));
+    await access(join(root, input.contract.expected_outputs[1]));
     await access(join(root, input.events_ref));
     await access(join(root, input.session_ref));
     await access(join(root, input.metrics_ref));

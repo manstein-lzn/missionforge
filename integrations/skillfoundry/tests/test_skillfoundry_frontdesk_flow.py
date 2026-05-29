@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+import tempfile
+import unittest
+
+from missionforge import FrontDesk, MissionIR, MissionRuntime
+from missionforge.runner import MissionResult
+from missionforge_skillfoundry import BundleProfile, SkillFoundryMissionCompiler, SkillFoundryRequest
+from missionforge_skillfoundry.runtime import run_skillfoundry_bundle_build
+from missionforge_skillfoundry.workspace import read_json_ref
+
+
+CORE_ROOT = Path("src/missionforge")
+
+
+class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
+    def test_frontdesk_authored_refs_compile_to_skillfoundry_mission(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            frontdesk = FrontDesk(workspace=root)
+            session = frontdesk.start(
+                "Build a prompt-only SkillFoundry skill package for release-note review. "
+                "The expected package entrypoint is package/SKILL.md.",
+                session_id="sf-frontdesk",
+            )
+            frontdesk.answer(
+                session.session_ref,
+                "Use sanitized source refs only and verify package/SKILL.md, "
+                "package/skillfoundry.bundle.json, and package/README.md.",
+            )
+            frontdesk.draft(session.session_ref)
+            frontdesk.audit(session.session_ref)
+            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
+            freeze_result = frontdesk.freeze(session.session_ref)
+
+            request = _request_from_frontdesk(root, freeze_result.mission_ir_ref)
+            result = SkillFoundryMissionCompiler().compile_request(request, workspace=root)
+            mission = MissionIR.from_dict(read_json_ref(root, result.mission_ir_ref, "mission_ir"))
+
+            self.assertEqual(request.bundle_id, "sf-frontdesk-skill")
+            self.assertEqual(result.target_package_ref, "package/SKILL.md")
+            self.assertEqual(
+                mission.outputs["required_artifacts"],
+                ["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+            )
+            self.assertEqual(
+                [profile.profile_id for profile in mission.capability_profiles],
+                ["user_provided_evidence_only", "explicit_output_root"],
+            )
+            self.assertEqual(
+                mission.verification["verification_profiles"],
+                [{"profile_id": "generic_local_verification"}],
+            )
+            self.assertTrue((root / result.frozen_contract_ref).exists())
+            self.assertIn(freeze_result.mission_ir_ref, request.source_refs)
+
+    def test_frontdesk_authored_skillfoundry_request_uses_normal_runtime_facade(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            frontdesk = FrontDesk(workspace=root)
+            session = frontdesk.start(
+                "Build a prompt-only SkillFoundry skill package with package/SKILL.md.",
+                session_id="sf-runtime-frontdesk",
+            )
+            frontdesk.draft(session.session_ref)
+            frontdesk.audit(session.session_ref)
+            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
+            freeze_result = frontdesk.freeze(session.session_ref)
+            request = _request_from_frontdesk(root, freeze_result.mission_ir_ref, bundle_id="sf-runtime-skill")
+
+            report = run_skillfoundry_bundle_build(
+                request,
+                workspace=root,
+                runtime=_PackageFixtureRuntime(root),
+            )
+
+            self.assertEqual(report.final_status, "product_grade_registered")
+            self.assertTrue((root / "package/SKILL.md").exists())
+            self.assertTrue((root / "reports/skillfoundry_product_report.json").exists())
+
+    def test_frontdesk_mapping_selects_code_runtime_when_runtime_assets_are_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            frontdesk = FrontDesk(workspace=root)
+            session = frontdesk.start(
+                "Build a Codex skill with helper scripts, JSON schemas, and local runtime assets.",
+                session_id="sf-code-runtime-frontdesk",
+            )
+            frontdesk.answer(
+                session.session_ref,
+                "The package must include package/scripts/skill_runtime.py and package/schemas/runtime.schema.json.",
+            )
+            frontdesk.draft(session.session_ref)
+            frontdesk.audit(session.session_ref)
+            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
+            freeze_result = frontdesk.freeze(session.session_ref)
+
+            request = _request_from_frontdesk(
+                root,
+                freeze_result.mission_ir_ref,
+                bundle_id="sf-code-runtime-skill",
+                bundle_profile=BundleProfile.CODE_RUNTIME,
+                extra_expected_outputs=[
+                    "package/scripts/skill_runtime.py",
+                    "package/schemas/runtime.schema.json",
+                ],
+            )
+            result = SkillFoundryMissionCompiler().compile_request(request, workspace=root)
+            mission = MissionIR.from_dict(read_json_ref(root, result.mission_ir_ref, "mission_ir"))
+
+            self.assertEqual(request.desired_bundle_profile, BundleProfile.CODE_RUNTIME)
+            self.assertEqual(mission.outputs["bundle_profile"], "code_runtime")
+            self.assertIn("package/scripts/skill_runtime.py", mission.outputs["required_artifacts"])
+            self.assertIn(freeze_result.mission_ir_ref, request.source_refs)
+
+    def test_missionforge_core_has_no_skillfoundry_or_codexarium_product_branches(self) -> None:
+        violations: list[str] = []
+        for path in CORE_ROOT.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root_name = alias.name.split(".", 1)[0]
+                        if root_name in {"missionforge_skillfoundry", "codexarium"}:
+                            violations.append(f"{path}: import {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    root_name = module.split(".", 1)[0]
+                    if root_name in {"missionforge_skillfoundry", "codexarium"}:
+                        violations.append(f"{path}: from {module} import ...")
+
+        self.assertEqual(violations, [])
+
+
+def _request_from_frontdesk(
+    root: Path,
+    mission_ref: str,
+    *,
+    bundle_id: str = "sf-frontdesk-skill",
+    bundle_profile: BundleProfile = BundleProfile.PROMPT_ONLY,
+    extra_expected_outputs: list[str] | None = None,
+) -> SkillFoundryRequest:
+    mission = MissionIR.from_dict(read_json_ref(root, mission_ref, "frontdesk_mission_ir"))
+    expected_outputs = list(mission.outputs.get("required_artifacts", ["package/SKILL.md"]))
+    for ref in extra_expected_outputs or []:
+        if ref not in expected_outputs:
+            expected_outputs.append(ref)
+    return SkillFoundryRequest(
+        request_id=f"request-{bundle_id}",
+        bundle_id=bundle_id,
+        desired_capability=mission.objective.summary,
+        target_user="codex_user",
+        triggers=["When release-note review needs a local prompt-only Codex skill."],
+        non_triggers=["When a code runtime or service runtime bundle is required."],
+        expected_outputs=expected_outputs,
+        must=["Write package files only under package/."],
+        must_not=["Do not include raw conversations or provider payloads."],
+        privacy_boundaries=["Use sanitized FrontDesk and MissionIR refs only."],
+        distribution_boundaries=["Local distribution only."],
+        source_refs=[
+            mission_ref,
+            "frontdesk/semantic_lock.json",
+            "frontdesk/mission_brief.json",
+            "frontdesk/mission_plan.json",
+            "frontdesk/freeze_manifest.json",
+        ],
+        desired_bundle_profile=bundle_profile,
+    )
+
+
+class _PackageFixtureRuntime(MissionRuntime):
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def run(self, mission: MissionIR) -> MissionResult:
+        (self.root / "package").mkdir(parents=True, exist_ok=True)
+        (self.root / "package/SKILL.md").write_text(
+            "# Release Notes Review\n\nUse sanitized release-note refs only.\n",
+            encoding="utf-8",
+        )
+        (self.root / "package/skillfoundry.bundle.json").write_text(
+            (
+                '{"schema_version":"skillfoundry.bundle.v1","bundle_id":"'
+                + mission.mission_id.removeprefix("skillfoundry-")
+                + '","bundle_profile":"prompt_only","entrypoint":"SKILL.md",'
+                '"capability_surface":{"codex_skill":{"entry_ref":"package/SKILL.md"}},'
+                '"runtime_assets":[],"data_assets":[],"references":[],"environment":{},'
+                '"permissions":{},"verification":{"matrix_ref":"product_contract/product_acceptance_matrix.json",'
+                '"product_grade_ref":"qa/product_grade_report.json"},"distribution":{"status":"local"}}'
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "package/README.md").write_text(
+            "# Release Notes Review Skill\n\nLocal prompt-only package.\n",
+            encoding="utf-8",
+        )
+        return MissionResult(
+            mission_id=mission.mission_id,
+            status="completed_verified",
+            evidence_refs=["evidence/verifier.json"],
+            artifact_refs=["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
