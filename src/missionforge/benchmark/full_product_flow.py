@@ -311,6 +311,7 @@ class MissionForgeFullProductFlowBenchmarkRunner:
             product_compile_result=product_compile_result,
             mission_result=mission_result,
             product_gate_outcome=product_gate_outcome,
+            frontdesk_metrics=frontdesk_metrics,
             failure_stage=failure_stage,
             failure_error_type=failure_error_type,
         )
@@ -725,13 +726,22 @@ def _failure_taxonomy(
     product_compile_result: ProductCompileResult,
     mission_result: MissionResult,
     product_gate_outcome: ProductGateOutcome,
+    frontdesk_metrics: Mapping[str, Any],
     failure_stage: str,
     failure_error_type: str,
 ) -> list[str]:
     failures: list[str] = []
     if failure_stage:
         if failure_stage.startswith("frontdesk"):
-            failures.append("frontdesk_missing_llm_artifact" if failure_error_type == "ContractValidationError" else "frontdesk_semantic_gap")
+            if failure_error_type == "ContractValidationError":
+                completed_nodes = int(frontdesk_metrics.get("frontdesk_completed_node_count", 0))
+                failures.append(
+                    "frontdesk_schema_validation_failed"
+                    if completed_nodes > 0
+                    else "frontdesk_missing_llm_artifact"
+                )
+            else:
+                failures.append("frontdesk_semantic_gap")
         elif failure_stage == "product_compile":
             failures.append("product_compile_failed_closed")
         elif failure_stage == "runtime":

@@ -44,14 +44,26 @@ from missionforge_skillfoundry.validators import BUNDLE_VALIDATION_REPORT_REF
 ROOT = Path.cwd().resolve()
 DEFAULT_MAX_TURNS = 16
 DEFAULT_TOOL_TIMEOUT_SECONDS = 60
-LEAK_MARKERS = [
+SCHEMA_MARKERS = [
     "raw_prompt",
     "raw_transcript",
-    "raw_provider_payload",
     "provider_payload",
+]
+HARD_LEAK_MARKERS = [
+    "raw_provider_payload",
     "OPENAI_API_KEY",
     "MISSIONFORGE_PI_AGENT_API_KEY",
 ]
+LEAK_MARKERS = SCHEMA_MARKERS + HARD_LEAK_MARKERS
+RUN_PUBLISHABLE_CANDIDATE_NAMES = {
+    "aggregate.json",
+    "manifest.json",
+    "mode_comparisons.json",
+    "multiseed_result.json",
+    "report.md",
+    "table_data.json",
+}
+MAX_LEAK_SCAN_BYTES = 2_000_000
 
 
 class RuntimeOnlyModeRunner:
@@ -441,7 +453,9 @@ def scan_run_for_leaks(*, run_id: str) -> list[str]:
     if not root.exists():
         return hits
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.stat().st_size > 2_000_000:
+        if path.name not in RUN_PUBLISHABLE_CANDIDATE_NAMES:
+            continue
+        if not path.is_file() or path.stat().st_size > MAX_LEAK_SCAN_BYTES:
             continue
         try:
             text = path.read_text(encoding="utf-8")

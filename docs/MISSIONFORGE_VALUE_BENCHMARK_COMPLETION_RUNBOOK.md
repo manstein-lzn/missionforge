@@ -4,6 +4,10 @@ Last updated: 2026-05-31
 
 Status: executable follow-on plan from the current `value-benchmark` branch.
 
+Current execution handoff: use
+`docs/MISSIONFORGE_VALUE_BENCHMARK_NEXT_EXECUTION_PLAN.md` for the concrete
+remaining steps from the Stage 3 shakedown through the final report pack.
+
 ## Purpose
 
 This document is the runbook for getting from the current clean Pilot 01 result
@@ -532,4 +536,3 @@ Do not mark the benchmark complete until every item is checked:
 - [ ] final test commands pass;
 - [ ] final claims are separated from non-claims;
 - [ ] branch is committed and pushed.
-

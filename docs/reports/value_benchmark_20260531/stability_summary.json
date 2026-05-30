@@ -1,0 +1,254 @@
+{
+  "failure_taxonomy_counts": {
+    "hidden_acceptance_failed": 1,
+    "product_compile_failed_closed": 1,
+    "product_gate_failed": 1,
+    "runtime_verifier_failed": 1
+  },
+  "interpretation": "Stage 5 weakened the full-product-flow signal relative to direct chat.",
+  "mode_rows": [
+    {
+      "accepted_count": 15,
+      "avg_time_to_accepted_deliverable_ms": 62395.53333333333,
+      "comparable_trial_count": 15,
+      "cost_per_accepted_deliverable_usd": 0.04888346666666667,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 15,
+      "failure_taxonomy_counts": {},
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 15,
+      "mode": "direct_piworker_chat",
+      "p50_cost_per_acceptance_usd": 0.0445892,
+      "p50_time_to_accepted_deliverable_ms": 60948.0,
+      "p95_cost_per_acceptance_usd": 0.0687236,
+      "p95_time_to_accepted_deliverable_ms": 85282.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 15,
+      "product_gate_passed_count": 0,
+      "product_gate_status_counts": {
+        "not_applicable": 15
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 1.0,
+      "trial_count": 15
+    },
+    {
+      "accepted_count": 13,
+      "avg_time_to_accepted_deliverable_ms": 425537.07692307694,
+      "comparable_trial_count": 15,
+      "cost_per_accepted_deliverable_usd": 0.06526473846153846,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 14,
+      "failure_taxonomy_counts": {
+        "hidden_acceptance_failed": 1,
+        "product_compile_failed_closed": 1,
+        "product_gate_failed": 1,
+        "runtime_verifier_failed": 1
+      },
+      "hidden_acceptance_failed_count": 1,
+      "hidden_acceptance_passed_count": 14,
+      "mode": "missionforge_full_product_flow",
+      "p50_cost_per_acceptance_usd": 0.0490228,
+      "p50_time_to_accepted_deliverable_ms": 431397.0,
+      "p95_cost_per_acceptance_usd": 0.0969352,
+      "p95_time_to_accepted_deliverable_ms": 485790.0,
+      "product_gate_failed_count": 1,
+      "product_gate_not_applicable_count": 0,
+      "product_gate_passed_count": 13,
+      "product_gate_status_counts": {
+        "failed": 1,
+        "product_grade": 13,
+        "unsupported": 1
+      },
+      "product_gate_unsupported_count": 1,
+      "success_rate": 0.8666666666666667,
+      "trial_count": 15
+    }
+  ],
+  "modes": [
+    "direct_piworker_chat",
+    "missionforge_full_product_flow"
+  ],
+  "primary_run_id": "vb-stage4-ab-20260531T000000Z",
+  "schema_version": "missionforge.value_benchmark_stability_summary.v1",
+  "seed_list": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "stage5_run_id": "vb-stage5-stability-20260531T000000Z",
+  "status": "available",
+  "task_ids": [
+    "codexarium-dogfood-001",
+    "sf-ambiguous-skill-001",
+    "sf-simple-skill-001"
+  ],
+  "task_mode_rows": [
+    {
+      "accepted_count": 5,
+      "avg_time_to_accepted_deliverable_ms": 77869.8,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.06384263999999999,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 5,
+      "failure_taxonomy_counts": {},
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 5,
+      "mode": "direct_piworker_chat",
+      "p50_cost_per_acceptance_usd": 0.0645344,
+      "p50_time_to_accepted_deliverable_ms": 78081.0,
+      "p95_cost_per_acceptance_usd": 0.0709758,
+      "p95_time_to_accepted_deliverable_ms": 94022.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 5,
+      "product_gate_passed_count": 0,
+      "product_gate_status_counts": {
+        "not_applicable": 5
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 1.0,
+      "task_id": "codexarium-dogfood-001",
+      "trial_count": 5
+    },
+    {
+      "accepted_count": 5,
+      "avg_time_to_accepted_deliverable_ms": 463949.0,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.06880028,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 5,
+      "failure_taxonomy_counts": {},
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 5,
+      "mode": "missionforge_full_product_flow",
+      "p50_cost_per_acceptance_usd": 0.0493514,
+      "p50_time_to_accepted_deliverable_ms": 468589.0,
+      "p95_cost_per_acceptance_usd": 0.127618,
+      "p95_time_to_accepted_deliverable_ms": 521309.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 0,
+      "product_gate_passed_count": 5,
+      "product_gate_status_counts": {
+        "product_grade": 5
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 1.0,
+      "task_id": "codexarium-dogfood-001",
+      "trial_count": 5
+    },
+    {
+      "accepted_count": 5,
+      "avg_time_to_accepted_deliverable_ms": 63094.6,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.04741452,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 5,
+      "failure_taxonomy_counts": {},
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 5,
+      "mode": "direct_piworker_chat",
+      "p50_cost_per_acceptance_usd": 0.0445892,
+      "p50_time_to_accepted_deliverable_ms": 62603.0,
+      "p95_cost_per_acceptance_usd": 0.059005,
+      "p95_time_to_accepted_deliverable_ms": 66865.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 5,
+      "product_gate_passed_count": 0,
+      "product_gate_status_counts": {
+        "not_applicable": 5
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 1.0,
+      "task_id": "sf-ambiguous-skill-001",
+      "trial_count": 5
+    },
+    {
+      "accepted_count": 4,
+      "avg_time_to_accepted_deliverable_ms": 424002.75,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.0611605,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 4,
+      "failure_taxonomy_counts": {
+        "hidden_acceptance_failed": 1,
+        "product_compile_failed_closed": 1
+      },
+      "hidden_acceptance_failed_count": 1,
+      "hidden_acceptance_passed_count": 4,
+      "mode": "missionforge_full_product_flow",
+      "p50_cost_per_acceptance_usd": 0.0644444,
+      "p50_time_to_accepted_deliverable_ms": 436745.0,
+      "p95_cost_per_acceptance_usd": 0.0764278,
+      "p95_time_to_accepted_deliverable_ms": 444914.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 0,
+      "product_gate_passed_count": 4,
+      "product_gate_status_counts": {
+        "product_grade": 4,
+        "unsupported": 1
+      },
+      "product_gate_unsupported_count": 1,
+      "success_rate": 0.8,
+      "task_id": "sf-ambiguous-skill-001",
+      "trial_count": 5
+    },
+    {
+      "accepted_count": 5,
+      "avg_time_to_accepted_deliverable_ms": 46222.2,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.03539324,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 5,
+      "failure_taxonomy_counts": {},
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 5,
+      "mode": "direct_piworker_chat",
+      "p50_cost_per_acceptance_usd": 0.0341596,
+      "p50_time_to_accepted_deliverable_ms": 45168.0,
+      "p95_cost_per_acceptance_usd": 0.0442768,
+      "p95_time_to_accepted_deliverable_ms": 52522.0,
+      "product_gate_failed_count": 0,
+      "product_gate_not_applicable_count": 5,
+      "product_gate_passed_count": 0,
+      "product_gate_status_counts": {
+        "not_applicable": 5
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 1.0,
+      "task_id": "sf-simple-skill-001",
+      "trial_count": 5
+    },
+    {
+      "accepted_count": 4,
+      "avg_time_to_accepted_deliverable_ms": 379056.5,
+      "comparable_trial_count": 5,
+      "cost_per_accepted_deliverable_usd": 0.06494955,
+      "cost_source": "pricing_table",
+      "estimated_cost_available_count": 5,
+      "failure_taxonomy_counts": {
+        "product_gate_failed": 1,
+        "runtime_verifier_failed": 1
+      },
+      "hidden_acceptance_failed_count": 0,
+      "hidden_acceptance_passed_count": 5,
+      "mode": "missionforge_full_product_flow",
+      "p50_cost_per_acceptance_usd": 0.042808,
+      "p50_time_to_accepted_deliverable_ms": 378143.0,
+      "p95_cost_per_acceptance_usd": 0.0969352,
+      "p95_time_to_accepted_deliverable_ms": 421238.0,
+      "product_gate_failed_count": 1,
+      "product_gate_not_applicable_count": 0,
+      "product_gate_passed_count": 4,
+      "product_gate_status_counts": {
+        "failed": 1,
+        "product_grade": 4
+      },
+      "product_gate_unsupported_count": 0,
+      "success_rate": 0.8,
+      "task_id": "sf-simple-skill-001",
+      "trial_count": 5
+    }
+  ]
+}

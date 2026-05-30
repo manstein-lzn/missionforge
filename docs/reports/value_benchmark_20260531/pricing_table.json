@@ -1,0 +1,22 @@
+{
+  "currency": "USD",
+  "effective_date": "2026-05-31",
+  "model_prices": {
+    "gpt-5.5": {
+      "cache_read_per_1m_tokens_usd": 0.1,
+      "cache_write_per_1m_tokens_usd": 2.0,
+      "input_per_1m_tokens_usd": 1.0,
+      "model": "gpt-5.5",
+      "output_per_1m_tokens_usd": 10.0
+    },
+    "missionforge-faux": {
+      "cache_read_per_1m_tokens_usd": 0.0,
+      "cache_write_per_1m_tokens_usd": 0.0,
+      "input_per_1m_tokens_usd": 0.0,
+      "model": "missionforge-faux",
+      "output_per_1m_tokens_usd": 0.0
+    }
+  },
+  "pricing_table_id": "pi-pricing-20260531",
+  "schema_version": "missionforge.benchmark_pricing_table.v1"
+}
