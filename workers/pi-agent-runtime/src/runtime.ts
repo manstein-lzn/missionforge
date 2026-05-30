@@ -114,7 +114,7 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     failures,
     workerClaims: workerClaims.filter(Boolean),
     durationMs,
-    metrics: recorder.metrics as unknown as Record<string, unknown>,
+    metrics: recorder.safeMetrics() as unknown as Record<string, unknown>,
     statusOverride: cancelled ? "cancelled" : undefined,
     recommendedNextSteps: cancelled ? ["Run was cancelled at a MissionForge safe point."] : undefined,
   });

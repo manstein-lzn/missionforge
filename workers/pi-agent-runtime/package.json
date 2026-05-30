@@ -5,7 +5,8 @@
   "type": "module",
   "description": "MissionForge dedicated PI Agent runtime worker.",
   "bin": {
-    "missionforge-pi-agent-runtime": "./dist/main.js"
+    "missionforge-pi-agent-runtime": "./dist/main.js",
+    "missionforge-pi-agent-direct-benchmark": "./dist/direct-main.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

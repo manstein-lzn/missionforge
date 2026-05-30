@@ -494,6 +494,23 @@ class PiAgentRuntimeAdapter:
                 "model": self.config.model,
                 "tool_call_count": _non_negative_metric(run_result.metrics, "tool_call_count", "tool_calls"),
                 "token_count": _non_negative_metric(run_result.metrics, "total_tokens", "token_count"),
+                "total_tokens": _non_negative_metric(run_result.metrics, "total_tokens", "token_count"),
+                "input_tokens": _non_negative_metric(run_result.metrics, "input_tokens"),
+                "output_tokens": _non_negative_metric(run_result.metrics, "output_tokens"),
+                "cache_read_tokens": _non_negative_metric(run_result.metrics, "cache_read_tokens"),
+                "cache_write_tokens": _non_negative_metric(run_result.metrics, "cache_write_tokens"),
+                "input_cost_usd": _non_negative_number_metric(run_result.metrics, "input_cost_usd"),
+                "output_cost_usd": _non_negative_number_metric(run_result.metrics, "output_cost_usd"),
+                "cache_read_cost_usd": _non_negative_number_metric(run_result.metrics, "cache_read_cost_usd"),
+                "cache_write_cost_usd": _non_negative_number_metric(run_result.metrics, "cache_write_cost_usd"),
+                "provider_reported_cost_usd": _non_negative_number_metric(run_result.metrics, "provider_reported_cost_usd"),
+                "tool_error_count": _non_negative_metric(run_result.metrics, "tool_error_count"),
+                "tool_latency_ms_total": _non_negative_metric(run_result.metrics, "tool_latency_ms_total"),
+                "command_count": _non_negative_metric(run_result.metrics, "command_count"),
+                "test_command_count": _non_negative_metric(run_result.metrics, "test_command_count"),
+                "command_failure_count": _non_negative_metric(run_result.metrics, "command_failure_count"),
+                "time_to_first_tool_ms": _non_negative_metric(run_result.metrics, "time_to_first_tool_ms"),
+                "time_to_first_artifact_ms": _non_negative_metric(run_result.metrics, "time_to_first_artifact_ms"),
                 "input_ref": refs["input"],
                 "output_ref": run_result.output_ref,
                 "metrics_ref": run_result.metrics_ref,
@@ -955,6 +972,14 @@ def _non_negative_metric(metrics: Mapping[str, Any], *keys: str) -> int:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
     return 0
+
+
+def _non_negative_number_metric(metrics: Mapping[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = metrics.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+            return float(value)
+    return 0.0
 
 
 def _dedupe_refs(refs: list[str]) -> list[str]:

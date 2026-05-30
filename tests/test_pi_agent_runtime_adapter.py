@@ -55,6 +55,27 @@ class RecordingRunner:
             events_ref = str(self.captured_input["events_ref"])
             metrics_ref = str(self.captured_input["metrics_ref"])
             savepoints_ref = str(self.captured_input["savepoints_ref"])
+            metrics = {
+                "tool_call_count": 1,
+                "total_tokens": 7,
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 1,
+                "input_cost_usd": 0.01,
+                "output_cost_usd": 0.02,
+                "cache_read_cost_usd": 0.003,
+                "cache_write_cost_usd": 0.004,
+                "provider_reported_cost_usd": 0.037,
+                "tool_error_count": 0,
+                "tool_latency_ms_total": 12,
+                "tool_latency_ms_by_name": {"write": 12},
+                "command_count": 0,
+                "test_command_count": 0,
+                "command_failure_count": 0,
+                "time_to_first_tool_ms": 1,
+                "time_to_first_artifact_ms": 2,
+            }
             payload = self.output_payload or {
                 "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
                 "work_unit_id": "WU-000001",
@@ -76,11 +97,11 @@ class RecordingRunner:
                 "metrics_ref": metrics_ref,
                 "savepoints_ref": savepoints_ref,
                 "duration_ms": 1,
-                "metrics": {"tool_call_count": 1, "total_tokens": 7},
+                "metrics": metrics,
             }
             _write_text(cwd / session_ref, "{}\n")
             _write_text(cwd / events_ref, "{}\n")
-            _write_text(cwd / metrics_ref, '{"tool_call_count": 1}\n')
+            _write_text(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
             if self.write_savepoints:
                 _write_text(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
             _write_text(cwd / output_ref, json.dumps(payload, sort_keys=True, indent=2) + "\n")
@@ -133,6 +154,20 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result.execution_report.produced_artifacts, ["package/SKILL.md"])
         self.assertEqual(result.execution_report.worker_claims, ["PI Agent says the artifact is done."])
         self.assertEqual(result.execution_report.metrics["provider_mode"], "faux")
+        self.assertEqual(result.execution_report.metrics["total_tokens"], 7)
+        self.assertEqual(result.execution_report.metrics["input_tokens"], 5)
+        self.assertEqual(result.execution_report.metrics["output_tokens"], 2)
+        self.assertEqual(result.execution_report.metrics["cache_read_tokens"], 3)
+        self.assertEqual(result.execution_report.metrics["cache_write_tokens"], 1)
+        self.assertEqual(result.execution_report.metrics["provider_reported_cost_usd"], 0.037)
+        self.assertEqual(result.execution_report.metrics["tool_error_count"], 0)
+        self.assertEqual(result.execution_report.metrics["tool_latency_ms_total"], 12)
+        self.assertEqual(result.execution_report.metrics["command_count"], 0)
+        self.assertEqual(result.execution_report.metrics["test_command_count"], 0)
+        self.assertEqual(result.execution_report.metrics["command_failure_count"], 0)
+        self.assertEqual(result.execution_report.metrics["time_to_first_tool_ms"], 1)
+        self.assertEqual(result.execution_report.metrics["time_to_first_artifact_ms"], 2)
+        self.assertNotIn("tool_latency_ms_by_name", result.execution_report.metrics)
         self.assertEqual(input_payload["schema_version"], "missionforge.pi_agent_runtime_input.v1")
         self.assertEqual(input_payload["repair"]["mode"], "none")
         self.assertEqual(input_payload["savepoints_ref"], "attempts/WU-000001/pi_agent_savepoints.jsonl")

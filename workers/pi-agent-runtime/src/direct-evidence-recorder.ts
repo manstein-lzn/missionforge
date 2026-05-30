@@ -1,11 +1,11 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 
-import type { RuntimeInput } from "./contract.js";
+import type { DirectRuntimeInput } from "./direct-contract.js";
 import { appendJsonLine, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
-import { redactJson, redactText } from "./redaction.js";
+import { redactText } from "./redaction.js";
 
-export interface RuntimeMetrics {
+export interface DirectRuntimeMetrics {
   turn_count: number;
   tool_call_count: number;
   total_tokens: number;
@@ -31,13 +31,13 @@ export interface RuntimeMetrics {
   stop_reason?: string;
 }
 
-export class EvidenceRecorder {
+export class DirectEvidenceRecorder {
   private sequence = 0;
   private readonly startedAtMs = Date.now();
   private readonly toolStarts = new Map<string, { toolName: string; startedAtMs: number }>();
   private hasRecordedFirstTool = false;
   private hasRecordedFirstArtifact = false;
-  readonly metrics: RuntimeMetrics = {
+  readonly metrics: DirectRuntimeMetrics = {
     turn_count: 0,
     tool_call_count: 0,
     total_tokens: 0,
@@ -63,7 +63,7 @@ export class EvidenceRecorder {
   };
 
   constructor(
-    private readonly input: RuntimeInput,
+    private readonly input: DirectRuntimeInput,
     private readonly workspaceRoot: string,
     private readonly env: NodeJS.ProcessEnv = process.env,
   ) {}
@@ -71,44 +71,44 @@ export class EvidenceRecorder {
   async record(event: AgentEvent): Promise<void> {
     this.updateMetrics(event);
     await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref), {
-      schema_version: "missionforge.pi_agent_runtime_event.v1",
-      event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
+      schema_version: "missionforge.pi_agent_direct_event.v1",
+      event_id: `pi-agent-direct-event-${String(++this.sequence).padStart(6, "0")}`,
       created_at: new Date().toISOString(),
-      work_unit_id: this.input.work_unit_id,
+      benchmark_run_id: this.input.benchmark_run_id,
+      task_id: this.input.task_id,
+      seed: this.input.seed,
       event_type: event.type,
-      payload: redactJson(summarizeEvent(event), this.env),
+      payload: summarizeEvent(event, this.env),
     });
     if (event.type === "tool_execution_end" || event.type === "turn_end") {
       await this.recordFirstArtifactIfPresent();
     }
-    if (event.type === "turn_end") {
-      await this.writeSavepoint(event);
-    }
   }
 
   async writeSession(messages: AgentMessage[]): Promise<void> {
-    const path = resolveWorkspaceRef(this.workspaceRoot, this.input.session_ref);
     const lines = messages.map((message, index) =>
       JSON.stringify({
-        schema_version: "missionforge.pi_agent_runtime_session_entry.v1",
+        schema_version: "missionforge.pi_agent_direct_session_entry.v1",
         index,
-        message: redactJson(summarizeMessage(message), this.env),
+        message: summarizeMessage(message),
       }),
     );
-    await writeText(path, `${lines.join("\n")}${lines.length ? "\n" : ""}`);
+    await writeText(resolveWorkspaceRef(this.workspaceRoot, this.input.session_ref), `${lines.join("\n")}${lines.length ? "\n" : ""}`);
   }
 
   async writeMetrics(durationMs: number): Promise<void> {
     await this.recordFirstArtifactIfPresent();
     await writeJsonFile(resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref), {
-      schema_version: "missionforge.pi_agent_runtime_metrics.v1",
-      work_unit_id: this.input.work_unit_id,
+      schema_version: "missionforge.pi_agent_direct_metrics.v1",
+      benchmark_run_id: this.input.benchmark_run_id,
+      task_id: this.input.task_id,
+      seed: this.input.seed,
       duration_ms: durationMs,
       ...this.safeMetrics(),
     });
   }
 
-  safeMetrics(): RuntimeMetrics {
+  safeMetrics(): DirectRuntimeMetrics {
     return {
       turn_count: this.metrics.turn_count,
       tool_call_count: this.metrics.tool_call_count,
@@ -134,49 +134,6 @@ export class EvidenceRecorder {
       tests_run: this.metrics.tests_run.map((command) => redactText(command, this.env)),
       stop_reason: this.metrics.stop_reason ? redactText(this.metrics.stop_reason, this.env) : undefined,
     };
-  }
-
-  async writeCompactionMarker(reason: string): Promise<void> {
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref), {
-      schema_version: "missionforge.pi_agent_runtime_event.v1",
-      event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
-      created_at: new Date().toISOString(),
-      work_unit_id: this.input.work_unit_id,
-      event_type: "compaction",
-      payload: redactJson({
-        reason,
-        turn_index: this.metrics.turn_count,
-        savepoints_ref: this.input.savepoints_ref,
-        resume_boundary: "after_completed_turn",
-      }, this.env),
-    });
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref), redactJson({
-      schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-      work_unit_id: this.input.work_unit_id,
-      turn_index: this.metrics.turn_count,
-      created_at: new Date().toISOString(),
-      message_ref: `${this.input.session_ref}#compact`,
-      events_ref: this.input.events_ref,
-      changed_refs: [],
-      tool_call_count: this.metrics.tool_call_count,
-      commands_run: this.metrics.commands_run.slice(),
-      stop_reason: "compacted",
-      token_count: this.metrics.total_tokens,
-      resume_hint: {
-        supported: true,
-        boundary: "after_completed_turn",
-        unsupported: [
-          "mid_tool_call",
-          "active_shell_process",
-          "partial_provider_stream",
-          "uncommitted_filesystem_mutations",
-        ],
-      },
-      compaction: {
-        applied: true,
-        reason,
-      },
-    }, this.env));
   }
 
   private updateMetrics(event: AgentEvent): void {
@@ -233,40 +190,128 @@ export class EvidenceRecorder {
 
   private async recordFirstArtifactIfPresent(): Promise<void> {
     if (this.hasRecordedFirstArtifact) return;
-    for (const ref of this.input.contract.expected_outputs) {
-      if (await fileExists(resolveWorkspaceRef(this.workspaceRoot, ref))) {
+    for (const ref of this.input.expected_output_refs) {
+      if (await fileExists(resolveWorkspaceRef(this.workspaceRoot, joinRef(this.input.workspace_ref, ref)))) {
         this.hasRecordedFirstArtifact = true;
         this.metrics.time_to_first_artifact_ms = elapsedMs(this.startedAtMs);
         return;
       }
     }
   }
+}
 
-  private async writeSavepoint(event: Extract<AgentEvent, { type: "turn_end" }>): Promise<void> {
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref), redactJson({
-      schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-      work_unit_id: this.input.work_unit_id,
-      turn_index: this.metrics.turn_count,
-      created_at: new Date().toISOString(),
-      message_ref: `${this.input.session_ref}#turn=${this.metrics.turn_count}`,
-      events_ref: this.input.events_ref,
-      changed_refs: [],
-      tool_call_count: event.toolResults.length,
-      commands_run: this.metrics.commands_run.slice(),
-      stop_reason: event.message.role === "assistant" ? event.message.stopReason : undefined,
-      token_count: this.metrics.total_tokens,
-      resume_hint: {
-        supported: true,
-        boundary: "after_completed_turn",
-        unsupported: [
-          "mid_tool_call",
-          "active_shell_process",
-          "partial_provider_stream",
-          "uncommitted_filesystem_mutations",
-        ],
-      },
-    }, this.env));
+function summarizeEvent(event: AgentEvent, env: NodeJS.ProcessEnv): unknown {
+  switch (event.type) {
+    case "message_start":
+    case "message_update":
+    case "message_end":
+      return { type: event.type, message: summarizeMessage(event.message) };
+    case "tool_execution_start":
+      return {
+        type: event.type,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: summarizeToolArgs(event.args, env),
+      };
+    case "tool_execution_end":
+      return summarizeToolResult(event as unknown as ToolResultMessage);
+    case "turn_end":
+      return {
+        type: event.type,
+        message: summarizeMessage(event.message),
+        toolResults: event.toolResults.map(summarizeToolResult),
+      };
+    default:
+      return { type: (event as { type?: string }).type ?? "unknown" };
   }
+}
+
+function summarizeMessage(message: AgentMessage): unknown {
+  const item = message as any;
+  return {
+    role: item.role,
+    stopReason: item.role === "assistant" ? item.stopReason : undefined,
+    usage: item.role === "assistant" ? summarizeUsage(item.usage) : undefined,
+    content_summary: summarizeContent(item.content),
+  };
+}
+
+function summarizeToolResult(message: ToolResultMessage): unknown {
+  const item = message as any;
+  return {
+    role: item.role,
+    toolCallId: item.toolCallId,
+    toolName: item.toolName,
+    isError: item.isError,
+    content_summary: summarizeContent(item.content),
+  };
+}
+
+function summarizeUsage(usage: any): unknown {
+  if (!usage || typeof usage !== "object") return undefined;
+  return {
+    input: nonNegativeNumber(usage.input),
+    output: nonNegativeNumber(usage.output),
+    cacheRead: nonNegativeNumber(usage.cacheRead),
+    cacheWrite: nonNegativeNumber(usage.cacheWrite),
+    totalTokens: nonNegativeNumber(usage.totalTokens),
+    cost: usage.cost && typeof usage.cost === "object"
+      ? {
+          input: nonNegativeNumber(usage.cost.input),
+          output: nonNegativeNumber(usage.cost.output),
+          cacheRead: nonNegativeNumber(usage.cost.cacheRead),
+          cacheWrite: nonNegativeNumber(usage.cost.cacheWrite),
+          total: nonNegativeNumber(usage.cost.total),
+        }
+      : undefined,
+  };
+}
+
+function summarizeContent(content: unknown): unknown[] {
+  if (!Array.isArray(content)) return [];
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return { type: typeof block };
+    const item = block as Record<string, unknown>;
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    if (type === "toolUse") {
+      return {
+        type,
+        id: typeof item.id === "string" ? item.id : undefined,
+        name: typeof item.name === "string" ? item.name : undefined,
+        input_keys: item.input && typeof item.input === "object" && !Array.isArray(item.input)
+          ? Object.keys(item.input as Record<string, unknown>).sort()
+          : [],
+      };
+    }
+    return {
+      type,
+      text_char_count: typeof item.text === "string" ? item.text.length : undefined,
+      thinking_char_count: typeof item.thinking === "string" ? item.thinking.length : undefined,
+    };
+  });
+}
+
+function summarizeToolArgs(args: unknown, env: NodeJS.ProcessEnv): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return {};
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (key === "command" && typeof value === "string") {
+      result[key] = redactText(value, env);
+    } else if (typeof value === "string" && /^(path|file|cwd|pattern|glob)$/i.test(key)) {
+      result[key] = redactText(value, env);
+    } else {
+      result[key] = summarizeArgumentValue(value);
+    }
+  }
+  return result;
+}
+
+function summarizeArgumentValue(value: unknown): unknown {
+  if (typeof value === "string") return { string_char_count: value.length };
+  if (Array.isArray(value)) return { array_length: value.length };
+  if (value && typeof value === "object") return { keys: Object.keys(value as Record<string, unknown>).sort() };
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  return null;
 }
 
 function elapsedMs(startedAtMs: number): number {
@@ -283,52 +328,16 @@ function safeNumericRecord(values: Record<string, number>): Record<string, numbe
   return result;
 }
 
-function summarizeEvent(event: AgentEvent): unknown {
-  switch (event.type) {
-    case "message_start":
-    case "message_update":
-    case "message_end":
-      return { ...event, message: summarizeMessage(event.message) };
-    case "turn_end":
-      return {
-        type: event.type,
-        message: summarizeMessage(event.message),
-        toolResults: event.toolResults.map(summarizeToolResult),
-      };
-    default:
-      return event;
-  }
-}
-
-function summarizeToolResult(message: ToolResultMessage): unknown {
-  return {
-    role: message.role,
-    toolCallId: message.toolCallId,
-    toolName: message.toolName,
-    isError: message.isError,
-    content: message.content.map((block) => (block.type === "text" ? { ...block, text: truncate(block.text) } : block)),
-  };
-}
-
-function summarizeMessage(message: AgentMessage): unknown {
-  if (message.role !== "assistant") return message;
-  return {
-    ...message,
-    content: message.content.map((block) => {
-      if (block.type === "text") return { ...block, text: truncate(block.text) };
-      if (block.type === "thinking") return { ...block, thinking: truncate(block.thinking) };
-      return block;
-    }),
-  };
-}
-
-function truncate(value: string, limit = 4000): string {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, limit)}\n[truncated]`;
+function nonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function looksLikeTestCommand(command: string): boolean {
   return /\b(pytest|unittest|npm test|vitest|make test|go test|cargo test)\b/.test(command);
+}
+
+function joinRef(prefix: string, ref: string): string {
+  return prefix ? `${prefix.replace(/\/+$/, "")}/${ref.replace(/^\/+/, "")}` : ref;
 }
 
 async function writeText(path: string, text: string): Promise<void> {

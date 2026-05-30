@@ -28,6 +28,19 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     await access(join(root, input.session_ref));
     await access(join(root, input.metrics_ref));
     await access(join(root, input.savepoints_ref));
+    const metrics = await readJson(join(root, input.metrics_ref));
+    assert.equal(metrics.tool_call_count, 2);
+    assert.equal(metrics.cache_read_tokens, 0);
+    assert.equal(metrics.cache_write_tokens, 0);
+    assert.equal(metrics.provider_reported_cost_usd, 0);
+    assert.equal(metrics.tool_error_count, 0);
+    assert.equal(metrics.command_count, 0);
+    assert.equal(metrics.test_command_count, 0);
+    assert.equal(metrics.command_failure_count, 0);
+    assert.equal(metrics.tool_latency_ms_total >= 0, true);
+    assert.equal(metrics.tool_latency_ms_by_name.write >= 0, true);
+    assert.equal(Object.hasOwn(metrics, "time_to_first_tool_ms"), true);
+    assert.equal(Object.hasOwn(metrics, "time_to_first_artifact_ms"), true);
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
     assert.equal(savepoints.includes("missionforge.pi_agent_runtime_savepoint.v1"), true);
     assert.equal(savepoints.includes("after_completed_turn"), true);
@@ -45,8 +58,9 @@ test("faux runtime does not serialize api keys", async () => {
     const output = await readFile(join(root, input.output_ref), "utf-8");
     const events = await readFile(join(root, input.events_ref), "utf-8");
     const session = await readFile(join(root, input.session_ref), "utf-8");
+    const metrics = await readFile(join(root, input.metrics_ref), "utf-8");
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
-    assert.equal(`${output}${events}${session}${savepoints}`.includes("secret-value-12345"), false);
+    assert.equal(`${output}${events}${session}${metrics}${savepoints}`.includes("secret-value-12345"), false);
   });
 });
 
