@@ -477,7 +477,11 @@ def _hidden_result_ref(*, trial: BenchmarkTrial, pack_id: str) -> str:
 
 
 def _winner(modes: Mapping[str, Mapping[str, Any]], metric: str, *, higher: bool) -> str:
-    candidates = [(mode, _number(values.get(metric))) for mode, values in modes.items()]
+    candidates = [
+        (mode, _number(values.get(metric)))
+        for mode, values in modes.items()
+        if _eligible_for_metric_winner(values, metric)
+    ]
     if not candidates:
         return ""
     if not higher:
@@ -485,6 +489,17 @@ def _winner(modes: Mapping[str, Mapping[str, Any]], metric: str, *, higher: bool
         candidates = non_zero or candidates
     selected = max(candidates, key=lambda item: (item[1], item[0])) if higher else min(candidates, key=lambda item: (item[1], item[0]))
     return selected[0]
+
+
+def _eligible_for_metric_winner(values: Mapping[str, Any], metric: str) -> bool:
+    if metric in {
+        "cost_per_accepted_deliverable_usd",
+        "avg_time_to_accepted_deliverable_ms",
+        "p50_time_to_accepted_deliverable_ms",
+        "p95_time_to_accepted_deliverable_ms",
+    }:
+        return int(values.get("comparable_accepted_count", 0)) > 0
+    return True
 
 
 def _number(value: Any) -> float:

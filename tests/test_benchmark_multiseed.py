@@ -11,12 +11,15 @@ from missionforge.benchmark import (
     AcceptancePack,
     AcceptanceVisibility,
     BenchmarkBudget,
+    BenchmarkAggregate,
     BenchmarkMode,
     BenchmarkStatus,
     BenchmarkSummary,
     BenchmarkTask,
     BenchmarkTrial,
     MultiSeedBenchmarkRunner,
+    build_aggregate_report,
+    build_mode_comparisons,
 )
 from missionforge.json_store import JsonWorkspaceStore
 
@@ -107,6 +110,44 @@ class MultiSeedBenchmarkTests(unittest.TestCase):
             self.assertIn("comparable_accepted", report)
             self.assertIn("total_accepted", report)
             self.assertIn("hidden_acceptance_failed", report)
+
+    def test_cost_and_time_winners_ignore_modes_without_comparable_acceptance(self) -> None:
+        aggregate = BenchmarkAggregate(
+            benchmark_run_id="bench-ms",
+            summary_refs=[],
+            task_count=1,
+            trial_count=2,
+            accepted_count=1,
+            comparable_trial_count=2,
+            mode_summaries={
+                "direct_piworker_chat": {
+                    "trial_count": 1,
+                    "comparable_trial_count": 1,
+                    "accepted_count": 0,
+                    "comparable_accepted_count": 0,
+                    "success_rate_within_budget": 0.0,
+                    "cost_per_accepted_deliverable_usd": 0.0,
+                    "avg_time_to_accepted_deliverable_ms": 0.0,
+                },
+                "missionforge_runtime_only": {
+                    "trial_count": 1,
+                    "comparable_trial_count": 1,
+                    "accepted_count": 1,
+                    "comparable_accepted_count": 1,
+                    "success_rate_within_budget": 1.0,
+                    "cost_per_accepted_deliverable_usd": 2.0,
+                    "avg_time_to_accepted_deliverable_ms": 1000.0,
+                },
+            },
+        )
+
+        comparisons = build_mode_comparisons(aggregate)
+        report = build_aggregate_report(aggregate)
+
+        self.assertEqual(comparisons["winner_by_cost_per_acceptance"], "missionforge_runtime_only")
+        self.assertEqual(comparisons["winner_by_time_to_acceptance"], "missionforge_runtime_only")
+        self.assertIn("cost_per_accepted_deliverable_usd: missionforge_runtime_only", report)
+        self.assertIn("avg_time_to_accepted_deliverable_ms: missionforge_runtime_only", report)
 
 
 @dataclass(frozen=True)

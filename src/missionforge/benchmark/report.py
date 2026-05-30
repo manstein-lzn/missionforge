@@ -72,6 +72,7 @@ def _winner(mode_summaries: dict[str, dict[str, object]], metric: str, *, higher
         (mode, float(summary.get(metric, 0.0)))
         for mode, summary in mode_summaries.items()
         if isinstance(summary.get(metric, 0.0), (int, float))
+        and _eligible_for_metric_winner(summary, metric)
     ]
     if not values:
         return ""
@@ -80,3 +81,15 @@ def _winner(mode_summaries: dict[str, dict[str, object]], metric: str, *, higher
         values = non_zero or values
     selected = max(values, key=lambda item: (item[1], item[0])) if higher else min(values, key=lambda item: (item[1], item[0]))
     return selected[0]
+
+
+def _eligible_for_metric_winner(summary: dict[str, object], metric: str) -> bool:
+    if metric in {
+        "cost_per_accepted_deliverable_usd",
+        "avg_time_to_accepted_deliverable_ms",
+        "p50_time_to_accepted_deliverable_ms",
+        "p95_time_to_accepted_deliverable_ms",
+    }:
+        count = summary.get("comparable_accepted_count", 0)
+        return isinstance(count, int) and count > 0
+    return True
