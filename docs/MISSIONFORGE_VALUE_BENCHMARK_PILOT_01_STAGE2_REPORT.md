@@ -8,6 +8,11 @@ valid as a Pilot 01 harness result. It should still not be treated as a broad
 MissionForge value verdict because it covers one fixture only and provider cost
 metrics are still unavailable.
 
+Cost note: the `final3` packet predates benchmark pricing-table projection, so
+its cost fields should be interpreted as `cost_source=unavailable`. Future
+runs can project `estimated_cost_usd` from PiWorker token usage and a versioned
+pricing table while preserving provider-reported cost separately.
+
 Update after repair pass: the hidden semantic check has been upgraded to a
 case-insensitive token group and the run has been locally regraded without
 overwriting the raw packet. That regrade made full-flow instability the primary
@@ -166,7 +171,8 @@ Current comparison winners in this repair rerun:
 - cost per accepted deliverable: `direct_piworker_chat`
 - average accepted-deliverable time: `direct_piworker_chat`
 
-Cost remains unavailable because provider-reported cost is still zero.
+Cost remains unavailable in this packet because provider-reported cost is still
+zero and this run did not use a pricing table.
 
 ### Repair Rerun Interpretation
 
@@ -449,8 +455,8 @@ Before expanding to more fixtures or making value claims:
 
 1. Keep raw, regraded, repair, `final2`, and `final3` packets visible next to
    each other as benchmark evolution evidence.
-2. Add provider cost projection or explicitly mark cost metrics as unavailable
-   in any user-facing comparison.
+2. Re-run with a versioned pricing table if cost comparison is part of the
+   claim; otherwise keep user-facing cost comparisons marked unavailable.
 3. Add at least two more fixtures before making a value claim:
    one where FrontDesk should outperform direct chat by preventing ambiguity,
    and one where full-flow overhead is expected not to pay for itself.

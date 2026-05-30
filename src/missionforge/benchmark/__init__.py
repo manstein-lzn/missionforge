@@ -59,6 +59,13 @@ from .multiseed import (
     build_mode_comparisons,
     build_table_data,
 )
+from .pricing import (
+    BENCHMARK_PRICING_TABLE_SCHEMA_VERSION,
+    BenchmarkCostProjection,
+    BenchmarkPricingTable,
+    ModelTokenPrice,
+    project_benchmark_cost,
+)
 from .report import build_aggregate_report
 from .runtime_only import (
     RUNTIME_ONLY_RESULT_SCHEMA_VERSION,
@@ -75,9 +82,12 @@ __all__ = [
     "BENCHMARK_SUMMARY_SCHEMA_VERSION",
     "BENCHMARK_TASK_SCHEMA_VERSION",
     "BENCHMARK_TRIAL_SCHEMA_VERSION",
+    "BENCHMARK_PRICING_TABLE_SCHEMA_VERSION",
     "BenchmarkAggregate",
     "BenchmarkBudget",
+    "BenchmarkCostProjection",
     "BenchmarkMode",
+    "BenchmarkPricingTable",
     "BenchmarkStatus",
     "BenchmarkSummary",
     "BenchmarkTask",
@@ -107,6 +117,7 @@ __all__ = [
     "MultiSeedBenchmarkManifest",
     "MultiSeedBenchmarkResult",
     "MultiSeedBenchmarkRunner",
+    "ModelTokenPrice",
     "OfflineBenchmarkHarness",
     "OfflineTrialOutcome",
     "OfflineTrialRecord",
@@ -123,4 +134,5 @@ __all__ = [
     "build_table_data",
     "evaluate_acceptance_pack",
     "load_acceptance_pack",
+    "project_benchmark_cost",
 ]

@@ -14,6 +14,8 @@ from missionforge.benchmark import (
     DirectPiWorkerBenchmarkRunner,
     DirectPiWorkerCommandResult,
     DirectPiWorkerConfig,
+    BenchmarkPricingTable,
+    ModelTokenPrice,
 )
 from missionforge.benchmark.direct_piworker import DIRECT_PIWORKER_INPUT_SCHEMA_VERSION
 from missionforge.metrics import MetricEvent
@@ -126,7 +128,10 @@ class DirectPiWorkerBenchmarkRunnerTests(unittest.TestCase):
             self.assertEqual(record.summary.output_tokens, 4)
             self.assertEqual(record.summary.cache_read_tokens, 2)
             self.assertEqual(record.summary.cache_write_tokens, 1)
+            self.assertEqual(record.summary.estimated_cost_usd, 0.05)
             self.assertEqual(record.summary.provider_reported_cost_usd, 0.05)
+            self.assertEqual(record.summary.cost_source, "provider_reported")
+            self.assertEqual(record.summary.pricing_table_id, "")
             self.assertEqual(record.summary.tool_call_count, 1)
             self.assertEqual(record.summary.repair_count, 0)
             self.assertEqual(record.summary.user_turn_count, 1)
@@ -151,6 +156,31 @@ class DirectPiWorkerBenchmarkRunnerTests(unittest.TestCase):
             self.assertNotIn("mode", review_packet)
             self.assertEqual(review_packet["direct_output_ref"], record.direct_output_ref)
             self.assertEqual(review_packet["artifact_refs"], record.summary.artifact_refs)
+
+    def test_pricing_table_cost_projection_uses_config_model_without_overwriting_provider_cost(self) -> None:
+        task = sample_task()
+        runner = RecordingDirectRunner()
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "benchmarks/tasks/task-001").mkdir(parents=True)
+            (root / task.initial_user_text_ref).write_text("Build it.\n", encoding="utf-8")
+            service = DirectPiWorkerBenchmarkRunner(
+                DirectPiWorkerConfig(
+                    command=("fake-direct",),
+                    provider_mode="faux",
+                    model="pi-test-model",
+                    pricing_table=_pricing_table(),
+                ),
+                runner=runner,
+                environ={},
+            )
+
+            record = service.run_trial(benchmark_run_id="bench-001", task=task, seed=1, workspace=root)
+
+            self.assertEqual(record.summary.cost_source, "pricing_table")
+            self.assertEqual(record.summary.pricing_table_id, "pi-test-2026-05-30")
+            self.assertEqual(record.summary.provider_reported_cost_usd, 0.05)
+            self.assertAlmostEqual(record.summary.estimated_cost_usd, 0.0000482)
 
     def test_missing_output_becomes_failed_summary_without_worker_claim_acceptance(self) -> None:
         class MissingOutputRunner(RecordingDirectRunner):
@@ -244,6 +274,22 @@ def sample_task() -> BenchmarkTask:
             max_user_turns=6,
         ),
         acceptance_refs=["benchmarks/tasks/task-001/acceptance/hidden_checks.json"],
+    )
+
+
+def _pricing_table() -> BenchmarkPricingTable:
+    return BenchmarkPricingTable(
+        pricing_table_id="pi-test-2026-05-30",
+        effective_date="2026-05-30",
+        model_prices={
+            "pi-test-model": ModelTokenPrice(
+                model="pi-test-model",
+                input_per_1m_tokens_usd=1.0,
+                output_per_1m_tokens_usd=10.0,
+                cache_read_per_1m_tokens_usd=0.1,
+                cache_write_per_1m_tokens_usd=2.0,
+            )
+        },
     )
 
 

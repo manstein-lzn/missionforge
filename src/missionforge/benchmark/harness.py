@@ -177,6 +177,8 @@ def _summary_from_outcome(
         wall_duration_ms=int(values.get("wall_duration_ms", 0)),
         estimated_cost_usd=float(values.get("estimated_cost_usd", 0.0)),
         provider_reported_cost_usd=float(values.get("provider_reported_cost_usd", 0.0)),
+        cost_source=values.get("cost_source", "unavailable"),
+        pricing_table_id=values.get("pricing_table_id", "") or "",
         total_tokens=int(values.get("total_tokens", 0)),
         input_tokens=int(values.get("input_tokens", 0)),
         output_tokens=int(values.get("output_tokens", 0)),

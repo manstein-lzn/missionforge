@@ -229,6 +229,11 @@ The benchmark should optimize for accepted deliverables, not attractive logs.
 - `total_tokens`
 - `provider_reported_cost_usd`
 - `estimated_cost_usd`
+- `cost_source`: `pricing_table`, `provider_reported`, or `unavailable`.
+- `pricing_table_id`: versioned pricing table used for deterministic
+  projections, required only when `cost_source` is `pricing_table`.
+- `estimated_cost_available_count`
+- `provider_reported_cost_available_count`
 - `cost_per_accepted_deliverable_usd`
 - `user_turn_count`
 - `clarification_turn_count`
@@ -278,10 +283,18 @@ Every benchmark summary should preserve trust source:
 - `harness_diagnostic`: cross-trial values computed by benchmark harness.
 - `reviewer_reported`: manual or blind-review scores.
 - `integration_diagnostic`: ProductIntegration or ProductGate summaries.
+- `pricing_table`: deterministic benchmark projection from provider token
+  usage and a versioned pricing table.
 
 When provider cost is unavailable, the benchmark may compute
 `estimated_cost_usd` from a versioned pricing table. It must not label that
 value as provider-reported cost.
+
+`provider_reported_cost_usd` means the value came from PiWorker/provider usage
+telemetry. `estimated_cost_usd` may come from the same provider-reported cost as
+a fallback, or from deterministic token projection. Reports and comparison
+tables must preserve `cost_source`; a cost winner must not be selected from
+accepted trials whose cost source is `unavailable`.
 
 ## Benchmark Artifact Layout
 
@@ -377,6 +390,8 @@ embed raw conversation or provider payloads.
   "time_to_accepted_deliverable_ms": 600000,
   "estimated_cost_usd": 2.15,
   "provider_reported_cost_usd": 0,
+  "cost_source": "pricing_table",
+  "pricing_table_id": "pi-pricing-2026-05-30",
   "total_tokens": 180000,
   "tool_call_count": 42,
   "repair_count": 0,
@@ -447,6 +462,7 @@ Patch `workers/pi-agent-runtime/src/evidence-recorder.ts` to record:
 
 - `cache_read_tokens`
 - `cache_write_tokens`
+- `model`
 - `input_cost_usd`
 - `output_cost_usd`
 - `cache_read_cost_usd`
@@ -483,6 +499,14 @@ integration.skillfoundry
 If a future implementation needs `missionforge.benchmark`, add it deliberately
 to the metric namespace allowlist and docs. The first implementation can use
 `missionforge.harness` for benchmark trial metrics.
+
+Benchmark pricing projection is a benchmark-layer concern. It should use a
+strict refs-only `BenchmarkPricingTable` with per-million-token input, output,
+cache-read, and cache-write rates keyed by model id. The pricing table is not a
+runtime dependency, does not affect routing or repair decisions, and must not
+overwrite provider-reported cost. When both are available, summaries keep both:
+`provider_reported_cost_usd` remains provider telemetry, while
+`estimated_cost_usd` carries the deterministic pricing-table projection.
 
 ### Acceptance and Review Harness
 
@@ -834,7 +858,8 @@ The infrastructure is complete when:
 
 - a direct PiWorker baseline and MissionForge full flow can run the same task;
 - both modes produce the same summary schema;
-- PI usage/cost/tool metrics are captured or explicitly marked unavailable;
+- PI usage/cost/tool metrics are captured or explicitly marked unavailable via
+  `cost_source`;
 - hidden checks and ProductGate results are joined into summaries;
 - aggregate reports compute accepted-deliverable time, cost, and success rate;
 - raw prompt/transcript/provider payloads do not enter public metrics;

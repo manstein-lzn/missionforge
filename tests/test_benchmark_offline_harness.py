@@ -37,6 +37,8 @@ class OfflineBenchmarkHarnessTests(unittest.TestCase):
                         "time_to_accepted_deliverable_ms": 600000,
                         "wall_duration_ms": 600000,
                         "estimated_cost_usd": 2.0,
+                        "cost_source": "pricing_table",
+                        "pricing_table_id": "fixture-prices",
                         "total_tokens": 1000,
                         "tool_call_count": 3,
                         "user_turn_count": 2,
@@ -55,6 +57,8 @@ class OfflineBenchmarkHarnessTests(unittest.TestCase):
                     metric_values={
                         "wall_duration_ms": 900000,
                         "estimated_cost_usd": 3.0,
+                        "cost_source": "pricing_table",
+                        "pricing_table_id": "fixture-prices",
                         "total_tokens": 1500,
                         "tool_call_count": 5,
                         "repair_count": 1,

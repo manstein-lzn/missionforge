@@ -21,14 +21,14 @@ def build_aggregate_report(aggregate: BenchmarkAggregate) -> str:
         "",
         "## Modes",
         "",
-        "| mode | trials | comparable | non_comparable | comparable_accepted | total_accepted | success_rate | comparison_cost | total_cost | cost_per_acceptance | avg_time_ms | p95_time_ms | tokens | tools | repairs |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| mode | trials | comparable | non_comparable | comparable_accepted | total_accepted | success_rate | cost_source | cost_available | comparison_cost | total_cost | cost_per_acceptance | avg_time_ms | p95_time_ms | tokens | tools | repairs |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for mode, values in sorted(aggregate.mode_summaries.items()):
         lines.append(
             "| {mode} | {trial_count} | {comparable_trial_count} | {non_comparable_trial_count} | "
             "{comparable_accepted_count} | {total_accepted_count} | {success_rate:.6f} | "
-            "{estimated_cost:.6f} | {total_cost:.6f} | {cost_per_acceptance:.6f} | "
+            "{cost_source} | {cost_available_count} | {estimated_cost:.6f} | {total_cost:.6f} | {cost_per_acceptance:.6f} | "
             "{avg_time:.2f} | {p95_time:.2f} | {tokens} | {tools} | {repairs} |".format(
                 mode=mode,
                 trial_count=int(values.get("trial_count", 0)),
@@ -37,6 +37,8 @@ def build_aggregate_report(aggregate: BenchmarkAggregate) -> str:
                 comparable_accepted_count=int(values.get("comparable_accepted_count", 0)),
                 total_accepted_count=int(values.get("accepted_count", 0)),
                 success_rate=float(values.get("success_rate_within_budget", 0.0)),
+                cost_source=str(values.get("cost_source", "unavailable")),
+                cost_available_count=int(values.get("estimated_cost_available_count", 0)),
                 estimated_cost=float(values.get("estimated_cost_usd", 0.0)),
                 total_cost=float(values.get("total_estimated_cost_usd", 0.0)),
                 cost_per_acceptance=float(values.get("cost_per_accepted_deliverable_usd", 0.0)),
@@ -84,8 +86,11 @@ def _winner(mode_summaries: dict[str, dict[str, object]], metric: str, *, higher
 
 
 def _eligible_for_metric_winner(summary: dict[str, object], metric: str) -> bool:
+    if metric == "cost_per_accepted_deliverable_usd":
+        count = summary.get("comparable_accepted_count", 0)
+        cost_available = summary.get("estimated_cost_available_count", 0)
+        return isinstance(count, int) and count > 0 and isinstance(cost_available, int) and cost_available > 0
     if metric in {
-        "cost_per_accepted_deliverable_usd",
         "avg_time_to_accepted_deliverable_ms",
         "p50_time_to_accepted_deliverable_ms",
         "p95_time_to_accepted_deliverable_ms",

@@ -26,6 +26,7 @@ BENCHMARK_TRIAL_SCHEMA_VERSION = "missionforge.benchmark_trial.v1"
 BENCHMARK_SUMMARY_SCHEMA_VERSION = "missionforge.benchmark_summary.v1"
 BENCHMARK_AGGREGATE_SCHEMA_VERSION = "missionforge.benchmark_aggregate.v1"
 OFFLINE_TRIAL_OUTCOME_SCHEMA_VERSION = "missionforge.offline_trial_outcome.v1"
+BENCHMARK_COST_SOURCES = {"unavailable", "provider_reported", "pricing_table"}
 
 
 class BenchmarkMode(StrEnum):
@@ -219,6 +220,8 @@ class BenchmarkSummary:
     wall_duration_ms: int = 0
     estimated_cost_usd: float = 0.0
     provider_reported_cost_usd: float = 0.0
+    cost_source: str = "unavailable"
+    pricing_table_id: str = ""
     total_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -323,6 +326,8 @@ class BenchmarkSummary:
                 "benchmark_summary.provider_reported_cost_usd",
                 0.0,
             ),
+            cost_source=_require_cost_source(data.get("cost_source", "unavailable"), "benchmark_summary.cost_source"),
+            pricing_table_id=_optional_id(data.get("pricing_table_id", ""), "benchmark_summary.pricing_table_id"),
             total_tokens=require_int_at_least(data.get("total_tokens", 0), "benchmark_summary.total_tokens", 0),
             input_tokens=require_int_at_least(data.get("input_tokens", 0), "benchmark_summary.input_tokens", 0),
             output_tokens=require_int_at_least(data.get("output_tokens", 0), "benchmark_summary.output_tokens", 0),
@@ -391,6 +396,13 @@ class BenchmarkSummary:
             require_int_at_least(getattr(self, name), f"benchmark_summary.{name}", 0)
         for name in _NON_NEGATIVE_FLOAT_SUMMARY_FIELDS:
             _require_number_at_least(getattr(self, name), f"benchmark_summary.{name}", 0.0)
+        _require_cost_source(self.cost_source, "benchmark_summary.cost_source")
+        if self.pricing_table_id:
+            _require_id(self.pricing_table_id, "benchmark_summary.pricing_table_id")
+        if self.cost_source == "pricing_table" and not self.pricing_table_id:
+            raise ContractValidationError("benchmark_summary.pricing_table_id is required when cost_source is pricing_table")
+        if self.cost_source != "pricing_table" and self.pricing_table_id:
+            raise ContractValidationError("benchmark_summary.pricing_table_id is only allowed when cost_source is pricing_table")
         require_str_list(self.failure_taxonomy, "benchmark_summary.failure_taxonomy")
         assert_refs_only_payload(self.to_dict_without_validation(), "benchmark_summary")
 
@@ -420,6 +432,8 @@ class BenchmarkSummary:
                 "wall_duration_ms": self.wall_duration_ms,
                 "estimated_cost_usd": self.estimated_cost_usd,
                 "provider_reported_cost_usd": self.provider_reported_cost_usd,
+                "cost_source": self.cost_source,
+                "pricing_table_id": self.pricing_table_id,
                 "total_tokens": self.total_tokens,
                 "input_tokens": self.input_tokens,
                 "output_tokens": self.output_tokens,
@@ -465,6 +479,8 @@ class BenchmarkSummary:
             "wall_duration_ms": self.wall_duration_ms,
             "estimated_cost_usd": self.estimated_cost_usd,
             "provider_reported_cost_usd": self.provider_reported_cost_usd,
+            "cost_source": self.cost_source,
+            "pricing_table_id": self.pricing_table_id,
             "total_tokens": self.total_tokens,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
@@ -792,6 +808,8 @@ _SUMMARY_FIELDS = {
     "wall_duration_ms",
     "estimated_cost_usd",
     "provider_reported_cost_usd",
+    "cost_source",
+    "pricing_table_id",
     "total_tokens",
     "input_tokens",
     "output_tokens",
@@ -865,6 +883,10 @@ def build_aggregate(*, benchmark_run_id: str, summaries: list[BenchmarkSummary],
                 "total_estimated_cost_usd": 0.0,
                 "provider_reported_cost_usd": 0.0,
                 "total_provider_reported_cost_usd": 0.0,
+                "estimated_cost_available_count": 0,
+                "provider_reported_cost_available_count": 0,
+                "cost_source": "unavailable",
+                "pricing_table_id": "",
                 "total_tokens": 0,
                 "tool_call_count": 0,
                 "repair_count": 0,
@@ -887,6 +909,16 @@ def build_aggregate(*, benchmark_run_id: str, summaries: list[BenchmarkSummary],
         bucket["non_comparable_trial_count"] += 0 if summary.comparable else 1
         bucket["total_estimated_cost_usd"] += summary.estimated_cost_usd
         bucket["total_provider_reported_cost_usd"] += summary.provider_reported_cost_usd
+        if summary.estimated_cost_usd > 0.0 and summary.cost_source in {"pricing_table", "provider_reported"}:
+            bucket["estimated_cost_available_count"] += 1
+        if summary.provider_reported_cost_usd > 0.0:
+            bucket["provider_reported_cost_available_count"] += 1
+        if summary.cost_source == "pricing_table":
+            bucket["cost_source"] = "pricing_table"
+            if summary.pricing_table_id:
+                bucket["pricing_table_id"] = summary.pricing_table_id
+        elif summary.cost_source == "provider_reported" and bucket["cost_source"] == "unavailable":
+            bucket["cost_source"] = "provider_reported"
         bucket["total_wall_duration_ms"] += summary.wall_duration_ms
         if summary.comparable:
             bucket["estimated_cost_usd"] += summary.estimated_cost_usd
@@ -963,6 +995,12 @@ def _require_id(value: Any, field_name: str) -> str:
     return text
 
 
+def _optional_id(value: Any, field_name: str) -> str:
+    if value is None or value == "":
+        return ""
+    return _require_id(value, field_name)
+
+
 def _require_bool(value: Any, field_name: str) -> bool:
     if not isinstance(value, bool):
         raise ContractValidationError(f"{field_name} must be a boolean")
@@ -973,6 +1011,13 @@ def _require_number_at_least(value: Any, field_name: str, minimum: float) -> flo
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value < minimum:
         raise ContractValidationError(f"{field_name} must be a number >= {minimum}")
     return float(value)
+
+
+def _require_cost_source(value: Any, field_name: str) -> str:
+    text = require_non_empty_str(value, field_name)
+    if text not in BENCHMARK_COST_SOURCES:
+        raise ContractValidationError(f"{field_name} must be one of {sorted(BENCHMARK_COST_SOURCES)}")
+    return text
 
 
 def _require_int_mapping(value: Any, field_name: str) -> dict[str, int]:

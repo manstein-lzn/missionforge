@@ -147,6 +147,8 @@ def sample_summary(
         time_to_accepted_deliverable_ms=600000 if accepted else 0,
         wall_duration_ms=600000,
         estimated_cost_usd=2.5,
+        cost_source="pricing_table",
+        pricing_table_id="fixture-prices",
         total_tokens=1000,
         tool_call_count=4,
         repair_count=0,

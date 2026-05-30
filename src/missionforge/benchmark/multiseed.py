@@ -338,6 +338,8 @@ class MultiSeedBenchmarkRunner:
                 wall_duration_ms=current.wall_duration_ms,
                 estimated_cost_usd=current.estimated_cost_usd,
                 provider_reported_cost_usd=current.provider_reported_cost_usd,
+                cost_source=current.cost_source,
+                pricing_table_id=current.pricing_table_id,
                 total_tokens=current.total_tokens,
                 input_tokens=current.input_tokens,
                 output_tokens=current.output_tokens,
@@ -380,6 +382,10 @@ def build_mode_comparisons(aggregate: BenchmarkAggregate) -> dict[str, Any]:
                 - int(baseline.get("comparable_accepted_count", 0)),
                 "total_accepted_count_delta": int(values.get("accepted_count", 0)) - int(baseline.get("accepted_count", 0)),
                 "non_comparable_trial_count": int(values.get("non_comparable_trial_count", 0)),
+                "cost_source": _string(values.get("cost_source")),
+                "pricing_table_id": _string(values.get("pricing_table_id")),
+                "estimated_cost_available_count": int(values.get("estimated_cost_available_count", 0)),
+                "provider_reported_cost_available_count": int(values.get("provider_reported_cost_available_count", 0)),
             }
         )
     payload = {
@@ -410,6 +416,10 @@ def build_table_data(*, aggregate: BenchmarkAggregate, comparisons: Mapping[str,
                 "comparable_accepted_count": int(values.get("comparable_accepted_count", 0)),
                 "total_accepted_count": int(values.get("accepted_count", 0)),
                 "success_rate_within_budget": _number(values.get("success_rate_within_budget")),
+                "cost_source": _string(values.get("cost_source")),
+                "pricing_table_id": _string(values.get("pricing_table_id")),
+                "estimated_cost_available_count": int(values.get("estimated_cost_available_count", 0)),
+                "provider_reported_cost_available_count": int(values.get("provider_reported_cost_available_count", 0)),
                 "estimated_cost_usd": _number(values.get("estimated_cost_usd")),
                 "total_estimated_cost_usd": _number(values.get("total_estimated_cost_usd")),
                 "cost_per_accepted_deliverable_usd": _number(values.get("cost_per_accepted_deliverable_usd")),
@@ -492,8 +502,12 @@ def _winner(modes: Mapping[str, Mapping[str, Any]], metric: str, *, higher: bool
 
 
 def _eligible_for_metric_winner(values: Mapping[str, Any], metric: str) -> bool:
+    if metric == "cost_per_accepted_deliverable_usd":
+        return (
+            int(values.get("comparable_accepted_count", 0)) > 0
+            and int(values.get("estimated_cost_available_count", 0)) > 0
+        )
     if metric in {
-        "cost_per_accepted_deliverable_usd",
         "avg_time_to_accepted_deliverable_ms",
         "p50_time_to_accepted_deliverable_ms",
         "p95_time_to_accepted_deliverable_ms",
@@ -506,6 +520,10 @@ def _number(value: Any) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     return 0.0
+
+
+def _string(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
 def _require_id(value: Any, field_name: str) -> str:

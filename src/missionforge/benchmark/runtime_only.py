@@ -29,6 +29,7 @@ from .contracts import (
     BenchmarkTask,
     BenchmarkTrial,
 )
+from .pricing import BenchmarkPricingTable, project_benchmark_cost
 
 
 RUNTIME_ONLY_RESULT_SCHEMA_VERSION = "missionforge.benchmark_runtime_only_result.v1"
@@ -41,6 +42,7 @@ class RuntimeOnlyConfig:
     max_attempts: int = 1
     pi_agent_config: Any | None = None
     product_gate_status: str = ""
+    pricing_table: BenchmarkPricingTable | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -48,6 +50,8 @@ class RuntimeOnlyConfig:
         ensure_json_value(require_mapping(self.metadata, "runtime_only_config.metadata"), "runtime_only_config.metadata")
         if self.product_gate_status:
             require_non_empty_str(self.product_gate_status, "runtime_only_config.product_gate_status")
+        if self.pricing_table is not None:
+            self.pricing_table.validate()
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,7 @@ class MissionForgeRuntimeOnlyBenchmarkRunner:
             workspace_ref=refs["workspace"],
             metric_events_ref=refs["metric_events"],
             product_gate_status=self.config.product_gate_status,
+            pricing_table=self.config.pricing_table,
         )
         metric_event = MetricEvent(
             metric_id=f"BM-{task.task_id}-{BenchmarkMode.MISSIONFORGE_RUNTIME_ONLY.value}-seed-{seed:04d}",
@@ -236,6 +241,7 @@ def _summary_from_runtime_result(
     workspace_ref: str,
     metric_events_ref: str,
     product_gate_status: str,
+    pricing_table: BenchmarkPricingTable | None = None,
 ) -> BenchmarkSummary:
     worker_metrics = _runtime_worker_metrics(runtime_workspace, result.mission_id)
     accepted = result.status == "completed_verified"
@@ -246,6 +252,7 @@ def _summary_from_runtime_result(
         failure_taxonomy.append(f"runtime_{verification_status}")
         if repair_count:
             failure_taxonomy.append("runtime_repair_incomplete")
+    cost = project_benchmark_cost(worker_metrics, pricing_table=pricing_table)
     return BenchmarkSummary(
         task_id=task.task_id,
         mode=BenchmarkMode.MISSIONFORGE_RUNTIME_ONLY,
@@ -259,8 +266,10 @@ def _summary_from_runtime_result(
         time_to_generic_verifier_pass_ms=duration_ms if accepted else 0,
         time_to_accepted_deliverable_ms=duration_ms if accepted else 0,
         wall_duration_ms=duration_ms,
-        estimated_cost_usd=_non_negative_number_metric(worker_metrics, "provider_reported_cost_usd"),
-        provider_reported_cost_usd=_non_negative_number_metric(worker_metrics, "provider_reported_cost_usd"),
+        estimated_cost_usd=cost.estimated_cost_usd,
+        provider_reported_cost_usd=cost.provider_reported_cost_usd,
+        cost_source=cost.cost_source,
+        pricing_table_id=cost.pricing_table_id,
         total_tokens=_non_negative_metric(worker_metrics, "total_tokens", "token_count"),
         input_tokens=_non_negative_metric(worker_metrics, "input_tokens"),
         output_tokens=_non_negative_metric(worker_metrics, "output_tokens"),

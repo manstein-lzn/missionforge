@@ -29,6 +29,7 @@ from .contracts import (
     BenchmarkTask,
     BenchmarkTrial,
 )
+from .pricing import BenchmarkPricingTable, project_benchmark_cost
 
 
 DIRECT_PIWORKER_INPUT_SCHEMA_VERSION = "missionforge.pi_agent_direct_input.v1"
@@ -49,6 +50,7 @@ class DirectPiWorkerConfig:
     provider_mode: str = "faux"
     provider_config_source: str = "env"
     model: str | None = None
+    pricing_table: BenchmarkPricingTable | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -71,6 +73,8 @@ class DirectPiWorkerConfig:
             )
         if self.model is not None:
             require_non_empty_str(self.model, "direct_piworker_config.model")
+        if self.pricing_table is not None:
+            self.pricing_table.validate()
         metadata = ensure_json_value(require_mapping(self.metadata, "direct_piworker_config.metadata"), "direct_piworker_config.metadata")
         _reject_sensitive_metadata(metadata)
 
@@ -311,7 +315,14 @@ class DirectPiWorkerBenchmarkRunner:
             env=provider_env.env,
         )
         run_result = self._enforce_output_contract(root=root, run_id=run_id, task=task, seed=seed, refs=refs, result=run_result)
-        summary = _summary_from_direct_result(task=task, seed=seed, result=run_result, metric_events_ref=refs["metric_events"])
+        summary = _summary_from_direct_result(
+            task=task,
+            seed=seed,
+            result=run_result,
+            metric_events_ref=refs["metric_events"],
+            pricing_table=self.config.pricing_table,
+            model=self.config.model,
+        )
         metric_event = MetricEvent(
             metric_id=f"BM-{task.task_id}-{BenchmarkMode.DIRECT_PIWORKER_CHAT.value}-seed-{seed:04d}",
             mission_run_id=run_id,
@@ -498,6 +509,8 @@ def _summary_from_direct_result(
     seed: int,
     result: DirectPiWorkerRunResult,
     metric_events_ref: str,
+    pricing_table: BenchmarkPricingTable | None = None,
+    model: str | None = None,
 ) -> BenchmarkSummary:
     accepted = result.status == "completed" and all(ref in result.produced_artifacts for ref in task.expected_output_refs)
     failure_taxonomy: list[str] = []
@@ -506,6 +519,7 @@ def _summary_from_direct_result(
         if any("expected output was not produced" in failure for failure in result.failures):
             failure_taxonomy.append("missing_expected_output")
     duration_ms = result.duration_ms
+    cost = project_benchmark_cost(result.metrics, pricing_table=pricing_table, model=model)
     return BenchmarkSummary(
         task_id=task.task_id,
         mode=BenchmarkMode.DIRECT_PIWORKER_CHAT,
@@ -517,8 +531,10 @@ def _summary_from_direct_result(
         time_to_first_artifact_ms=_non_negative_metric(result.metrics, "time_to_first_artifact_ms"),
         time_to_accepted_deliverable_ms=duration_ms if accepted else 0,
         wall_duration_ms=duration_ms,
-        estimated_cost_usd=_non_negative_number_metric(result.metrics, "provider_reported_cost_usd"),
-        provider_reported_cost_usd=_non_negative_number_metric(result.metrics, "provider_reported_cost_usd"),
+        estimated_cost_usd=cost.estimated_cost_usd,
+        provider_reported_cost_usd=cost.provider_reported_cost_usd,
+        cost_source=cost.cost_source,
+        pricing_table_id=cost.pricing_table_id,
         total_tokens=_non_negative_metric(result.metrics, "total_tokens", "token_count"),
         input_tokens=_non_negative_metric(result.metrics, "input_tokens"),
         output_tokens=_non_negative_metric(result.metrics, "output_tokens"),

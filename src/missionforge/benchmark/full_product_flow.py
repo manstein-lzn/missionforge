@@ -29,6 +29,7 @@ from ..runner import MissionResult, MissionRuntime
 from ..runtime import RuntimeEngine
 from ..state import mission_run_id_for
 from .contracts import BenchmarkMode, BenchmarkStatus, BenchmarkSummary, BenchmarkTask, BenchmarkTrial
+from .pricing import BenchmarkPricingTable, project_benchmark_cost
 
 
 FULL_PRODUCT_FLOW_RESULT_SCHEMA_VERSION = "missionforge.benchmark_full_product_flow_result.v1"
@@ -147,12 +148,15 @@ class FullProductFlowConfig:
     max_attempts: int = 1
     pi_agent_config: Any | None = None
     frontdesk_no_user_loop: bool = True
+    pricing_table: BenchmarkPricingTable | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_int_at_least(self.max_attempts, "full_product_flow_config.max_attempts", 1)
         if not isinstance(self.frontdesk_no_user_loop, bool):
             raise ContractValidationError("full_product_flow_config.frontdesk_no_user_loop must be boolean")
+        if self.pricing_table is not None:
+            self.pricing_table.validate()
         ensure_json_value(require_mapping(self.metadata, "full_product_flow_config.metadata"), "full_product_flow_config.metadata")
 
 
@@ -323,6 +327,7 @@ class MissionForgeFullProductFlowBenchmarkRunner:
             intent_bundle_metrics=intent_bundle_metrics,
             runtime_worker_metrics=runtime_worker_metrics,
             failure_taxonomy=failure_taxonomy,
+            pricing_table=self.config.pricing_table,
         )
         metric_events = _metric_events(
             run_id=run_id,
@@ -473,6 +478,7 @@ def _summary_from_full_product_flow(
     intent_bundle_metrics: Mapping[str, Any],
     runtime_worker_metrics: Mapping[str, Any],
     failure_taxonomy: list[str],
+    pricing_table: BenchmarkPricingTable | None = None,
 ) -> BenchmarkSummary:
     generic_verifier_passed = mission_result.status == VerificationStatus.COMPLETED_VERIFIED.value
     accepted = (
@@ -486,6 +492,7 @@ def _summary_from_full_product_flow(
             *[_join_ref(workspace_ref, ref) for ref in product_gate_outcome.artifact_refs],
         ]
     )
+    cost = project_benchmark_cost(runtime_worker_metrics, pricing_table=pricing_table)
     return BenchmarkSummary(
         task_id=task.task_id,
         mode=BenchmarkMode.MISSIONFORGE_FULL_PRODUCT_FLOW,
@@ -510,8 +517,10 @@ def _summary_from_full_product_flow(
         time_to_product_gate_pass_ms=duration_ms if product_gate_outcome.passed else 0,
         time_to_accepted_deliverable_ms=duration_ms if accepted else 0,
         wall_duration_ms=duration_ms,
-        estimated_cost_usd=_non_negative_number_metric(runtime_worker_metrics, "provider_reported_cost_usd"),
-        provider_reported_cost_usd=_non_negative_number_metric(runtime_worker_metrics, "provider_reported_cost_usd"),
+        estimated_cost_usd=cost.estimated_cost_usd,
+        provider_reported_cost_usd=cost.provider_reported_cost_usd,
+        cost_source=cost.cost_source,
+        pricing_table_id=cost.pricing_table_id,
         total_tokens=_non_negative_metric(runtime_worker_metrics, "total_tokens", "token_count"),
         input_tokens=_non_negative_metric(runtime_worker_metrics, "input_tokens"),
         output_tokens=_non_negative_metric(runtime_worker_metrics, "output_tokens"),

@@ -11,7 +11,9 @@ from missionforge.benchmark import (
     BenchmarkStatus,
     BenchmarkSummary,
     BenchmarkTask,
+    BenchmarkPricingTable,
     MissionForgeRuntimeOnlyBenchmarkRunner,
+    ModelTokenPrice,
     RUNTIME_ONLY_RESULT_SCHEMA_VERSION,
     RuntimeOnlyConfig,
 )
@@ -54,7 +56,9 @@ class RuntimeOnlyBenchmarkRunnerTests(unittest.TestCase):
             self.assertEqual(record.summary.cache_read_tokens, 7)
             self.assertEqual(record.summary.cache_write_tokens, 3)
             self.assertEqual(record.summary.tool_call_count, 2)
+            self.assertEqual(record.summary.estimated_cost_usd, 0.42)
             self.assertEqual(record.summary.provider_reported_cost_usd, 0.42)
+            self.assertEqual(record.summary.cost_source, "provider_reported")
             self.assertEqual(
                 record.summary.artifact_refs,
                 [
@@ -112,6 +116,29 @@ class RuntimeOnlyBenchmarkRunnerTests(unittest.TestCase):
             review_packet = json.loads((root / record.review_packet_ref).read_text(encoding="utf-8"))
             self.assertEqual(review_packet["repair_count"], 1)
 
+    def test_runtime_only_pricing_table_cost_projection_uses_worker_model(self) -> None:
+        task = sample_task()
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            mission_ir_ref = "benchmarks/tasks/task-001/mission_ir.json"
+            _write_json(root / mission_ir_ref, sample_mission_payload())
+
+            record = MissionForgeRuntimeOnlyBenchmarkRunner(
+                RuntimeOnlyConfig(max_attempts=1, pricing_table=_pricing_table()),
+                worker=_AllOutputsWorker(model="pi-test-model"),
+            ).run_trial(
+                benchmark_run_id="bench-001",
+                task=task,
+                mission_ir_ref=mission_ir_ref,
+                seed=1,
+                workspace=root,
+            )
+
+            self.assertEqual(record.summary.cost_source, "pricing_table")
+            self.assertEqual(record.summary.pricing_table_id, "pi-test-2026-05-30")
+            self.assertEqual(record.summary.provider_reported_cost_usd, 0.42)
+            self.assertAlmostEqual(record.summary.estimated_cost_usd, 0.0003367)
+
     def test_runtime_only_bypasses_user_text_and_frontdesk_flow(self) -> None:
         task = sample_task(initial_user_text_ref="benchmarks/tasks/task-001/nonexistent_user_text.txt")
         with TemporaryDirectory() as tmpdir:
@@ -164,6 +191,9 @@ class RuntimeOnlyBenchmarkRunnerTests(unittest.TestCase):
 
 
 class _AllOutputsWorker:
+    def __init__(self, *, model: str | None = None) -> None:
+        self.model = model
+
     def run(self, work_unit, *, workspace=".", evidence_store=None):
         produced = []
         for output_ref in work_unit.expected_outputs:
@@ -192,6 +222,8 @@ class _AllOutputsWorker:
                 "tool_latency_ms_by_name": {"write": 7},
             },
         )
+        if self.model:
+            report.metrics["model"] = self.model
         return WorkerAdapterResult(
             execution_report=report,
             worker_result=WorkerResult(
@@ -253,6 +285,22 @@ def sample_task(*, initial_user_text_ref: str = "benchmarks/tasks/task-001/user_
             max_user_turns=0,
         ),
         acceptance_refs=["benchmarks/tasks/task-001/acceptance/hidden_checks.json"],
+    )
+
+
+def _pricing_table() -> BenchmarkPricingTable:
+    return BenchmarkPricingTable(
+        pricing_table_id="pi-test-2026-05-30",
+        effective_date="2026-05-30",
+        model_prices={
+            "pi-test-model": ModelTokenPrice(
+                model="pi-test-model",
+                input_per_1m_tokens_usd=1.0,
+                output_per_1m_tokens_usd=10.0,
+                cache_read_per_1m_tokens_usd=0.1,
+                cache_write_per_1m_tokens_usd=2.0,
+            )
+        },
     )
 
 
