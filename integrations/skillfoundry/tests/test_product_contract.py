@@ -127,6 +127,27 @@ class ProductContractTests(unittest.TestCase):
         self.assertEqual(SkillProductContract.from_dict(contract.to_dict()), contract)
         self.assertTrue(contract.contract_hash.startswith("sha256:"))
 
+    def test_prompt_only_contract_ignores_extra_package_outputs(self) -> None:
+        payload = sample_request().to_dict()
+        payload["expected_outputs"] = [
+            "package/SKILL.md",
+            "package/skillfoundry.bundle.json",
+            "package/README.md",
+            "package/check-local.sh",
+        ]
+        request = SkillFoundryRequest.from_dict(payload)
+
+        contract = SkillProductContract.from_request(
+            request,
+            request_ref="product_contract/skillfoundry_request.json",
+        )
+
+        self.assertEqual(
+            contract.target_package_refs,
+            ["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+        )
+        self.assertNotIn("package/check-local.sh", contract.target_package_refs)
+
     def test_code_runtime_contract_round_trip_and_hash(self) -> None:
         request = code_runtime_request()
         contract = SkillProductContract.from_request(

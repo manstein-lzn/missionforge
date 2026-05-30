@@ -22,12 +22,21 @@ export interface BuildOutputOptions {
 export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<RuntimeOutput> {
   const producedArtifacts: string[] = [];
   const missingOutputs: string[] = [];
+  const produced = new Set<string>();
   for (const ref of options.input.contract.expected_outputs) {
     if (await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref))) {
       producedArtifacts.push(ref);
+      produced.add(ref);
     } else {
       missingOutputs.push(ref);
     }
+  }
+  for (const ref of options.changedRefs) {
+    if (produced.has(ref)) continue;
+    if (!options.input.contract.allowed_scope.includes(ref)) continue;
+    if (!(await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref)))) continue;
+    producedArtifacts.push(ref);
+    produced.add(ref);
   }
 
   const failures =

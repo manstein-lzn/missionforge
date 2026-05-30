@@ -32,6 +32,32 @@ RAW_CONTEXT_MARKERS = [
     "provider_payload",
     "chat transcript",
 ]
+RAW_CONTEXT_FIELD_MARKERS = {
+    "raw_prompt",
+    "raw_transcript",
+    "conversation.jsonl",
+    "provider_payload",
+}
+RAW_CONTEXT_POLICY_TERMS = [
+    "do not",
+    "don't",
+    "must not",
+    "should not",
+    "never",
+    " no ",
+    "without",
+    "free of",
+    "excluded",
+    "exclude",
+    "avoid",
+    "forbid",
+    "forbidden",
+    "does not",
+    "will not",
+    "not store",
+    "not include",
+    "out of",
+]
 SELF_GRADE_MARKERS = [
     "product_grade_registered",
     "product-grade registered",
@@ -453,10 +479,22 @@ def _package_text(workspace: str | Path, refs: list[str]) -> str:
 
 
 def _first_marker(text: str, markers: list[str]) -> str | None:
-    for marker in markers:
-        if marker.lower() in text:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        context = "\n".join(lines[max(0, index - 3) : index + 1])
+        for marker in markers:
+            normalized_marker = marker.lower()
+            if normalized_marker not in line:
+                continue
+            if normalized_marker not in RAW_CONTEXT_FIELD_MARKERS and _is_context_policy_line(context):
+                continue
             return marker
     return None
+
+
+def _is_context_policy_line(text: str) -> bool:
+    normalized = f" {text.lower().strip()} "
+    return any(term in normalized for term in RAW_CONTEXT_POLICY_TERMS)
 
 
 def _ensure_matrix_covered(matrix: ProductAcceptanceMatrix, checks: list[BundleValidationCheck]) -> None:

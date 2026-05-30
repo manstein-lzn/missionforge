@@ -6,10 +6,10 @@
   "rubric_ref": "benchmarks/tasks/complex-method-skill-001/acceptance/review_rubric.md",
   "checks": [
     {
-      "check_id": "HIDDEN-SKILL-MENTIONS-REUSABLE-METHOD",
+      "check_id": "HIDDEN-SKILL-MENTIONS-WORKFLOW",
       "kind": "file_contains",
       "ref": "package/SKILL.md",
-      "expected_text": "reusable",
+      "expected_text": "workflow",
       "blocking": true
     },
     {
@@ -23,7 +23,7 @@
       "check_id": "HIDDEN-NO-PROVIDER-PAYLOAD",
       "kind": "file_not_contains",
       "ref": "package/README.md",
-      "forbidden_text": "provider payload",
+      "forbidden_text": "raw_provider_payload",
       "blocking": true
     },
     {

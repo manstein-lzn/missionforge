@@ -1037,7 +1037,7 @@ def target_package_refs_for_profile(
 ) -> list[str]:
     safe_profile = _implemented_bundle_profile(profile, "bundle_profile")
     refs = list(PROFILE_REQUIRED_PACKAGE_REFS[safe_profile.value])
-    if request is not None:
+    if safe_profile == BundleProfile.CODE_RUNTIME and request is not None:
         for ref in request.expected_outputs:
             if ref.startswith("package/") and ref not in refs:
                 refs.append(validate_ref(ref, "skillfoundry_request.expected_outputs[]"))

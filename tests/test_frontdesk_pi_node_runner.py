@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -127,6 +128,75 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             self.assertTrue((Path(tempdir) / execution_ref).exists())
             self.assertIn("frontdesk/need_grilling_report.json", result.execution_record.output_hashes)
             self.assertIn("frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json", result.execution_record.input_hashes)
+
+    def test_need_griller_node_spec_contains_schema_and_conversation_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = FrontDeskPiNodeRunner().run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl", "frontdesk/workspace_facts.json"],
+                expected_outputs=["frontdesk/decision_tree.json", "frontdesk/need_grilling_report.json"],
+                optional_outputs=["frontdesk/core_need_brief.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+
+            spec = json.loads((Path(tempdir) / result.execution_record.node_spec_ref).read_text(encoding="utf-8"))
+            self.assertIn("guidance", spec)
+            guidance_text = json.dumps(spec["guidance"], sort_keys=True)
+            self.assertIn("missionforge.frontdesk_need_grilling_report.v1", guidance_text)
+            self.assertIn("decision_option_fields", guidance_text)
+            self.assertIn("readiness", guidance_text)
+            self.assertIn("core_need_ready", guidance_text)
+            self.assertIn("Use frontdesk/conversation.jsonl", guidance_text)
+            self.assertIn("Do not copy raw conversation text", guidance_text)
+
+    def test_solution_architect_node_spec_contains_field_type_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = FrontDeskPiNodeRunner().run_node(
+                node_name="solution_architect",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/core_need_brief.json", "frontdesk/semantic_lock.json"],
+                expected_outputs=[
+                    "frontdesk/solution_plan.json",
+                    "frontdesk/solution_plan.md",
+                    "frontdesk/plan_risk_register.json",
+                    "frontdesk/profile_recommendations.json",
+                    "frontdesk/mission_plan.json",
+                ],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+
+            spec = json.loads((Path(tempdir) / result.execution_record.node_spec_ref).read_text(encoding="utf-8"))
+            guidance_text = json.dumps(spec["guidance"], sort_keys=True)
+            self.assertIn("missionforge.frontdesk_solution_plan.v1", guidance_text)
+            self.assertIn("string_list_fields", guidance_text)
+            self.assertIn("must be arrays of strings, not arrays of objects", guidance_text)
+            self.assertIn("recommendation.requirements must be a JSON object", guidance_text)
+            self.assertIn("expected_artifacts must be an array of safe ref strings", guidance_text)
+
+    def test_intent_bundle_node_spec_mentions_product_profile_source_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = FrontDeskPiNodeRunner().run_node(
+                node_name="intent_bundle_author",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/product_inquiry_profile.json", "frontdesk/core_need_brief.json"],
+                expected_outputs=["frontdesk/intent_bundle_candidate.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+
+            spec = json.loads((Path(tempdir) / result.execution_record.node_spec_ref).read_text(encoding="utf-8"))
+            guidance_text = json.dumps(spec["guidance"], sort_keys=True)
+            self.assertIn("missionforge.frontdesk.intent_bundle.v1", guidance_text)
+            self.assertIn("ProductInquiryProfile.source_policy.allowed_source_refs", guidance_text)
+            self.assertIn("slot_values must contain exactly every ProductInquiryProfile slot_id", guidance_text)
+            self.assertIn("slot_value_type_rules", guidance_text)
+            self.assertIn("string_list, ref_list, and artifact_path_list values are arrays of strings", guidance_text)
+            self.assertIn("do not mark a slot missing solely because raw conversation refs are excluded", guidance_text)
+            self.assertIn("All confidence fields are strings", guidance_text)
+            self.assertIn("empty strings, not null", guidance_text)
 
     def test_require_ai_authored_rejects_missing_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

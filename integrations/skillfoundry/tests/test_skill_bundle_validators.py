@@ -95,6 +95,25 @@ class SkillBundleValidatorTests(unittest.TestCase):
             self.assertFalse(report.passed)
             self.assertIn("SF-PROMPT-NO-RAW-CONTEXT", [check.check_id for check in report.blocking_failures])
 
+    def test_raw_context_policy_language_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
+            write_valid_prompt_only_package(root)
+            write_text_ref(
+                root,
+                "package/README.md",
+                (
+                    "# Demo Skill\n\n"
+                    "Do not store raw conversation text, private transcripts, hidden prompts, "
+                    "provider payloads, credentials, or secrets in this package.\n"
+                ),
+            )
+
+            report = validate_skill_bundle(workspace=root, bundle_id="demo-skill")
+
+            self.assertTrue(report.passed)
+
     def test_self_product_grade_claim_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

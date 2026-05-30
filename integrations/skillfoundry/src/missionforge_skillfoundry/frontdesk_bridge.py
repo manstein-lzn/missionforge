@@ -16,7 +16,7 @@ from missionforge.product_integration import (
 
 from .compiler import SkillFoundryMissionCompiler
 from .frontdesk_context import SkillFoundryInquiryProfile
-from .product_contract import BundleProfile, SkillFoundryRequest
+from .product_contract import BundleProfile, PROMPT_ONLY_REQUIRED_PACKAGE_REFS, SkillFoundryRequest
 
 
 SKILLFOUNDRY_INTENT_BUNDLE_REF = "frontdesk/intent_bundle.json"
@@ -57,13 +57,7 @@ def build_skillfoundry_request(
     if bundle_profile is None:
         bundle_profile = default_profile
 
-    expected_outputs = _dedupe_refs(
-        [
-            *_slot_list(bundle, "required_package_outputs"),
-            *_slot_list(bundle, "runtime_assets_required"),
-            *_slot_list(bundle, "data_assets_required"),
-        ]
-    )
+    expected_outputs = _expected_outputs_for_profile(bundle, bundle_profile)
     request = SkillFoundryRequest(
         request_id=f"frontdesk-{require_non_empty_bundle_id}",
         bundle_id=require_non_empty_bundle_id,
@@ -218,6 +212,18 @@ def _dedupe_refs(refs: list[str]) -> list[str]:
             result.append(safe_ref)
             seen.add(safe_ref)
     return result
+
+
+def _expected_outputs_for_profile(bundle: FrontDeskIntentBundle, profile: BundleProfile) -> list[str]:
+    if profile == BundleProfile.PROMPT_ONLY:
+        return list(PROMPT_ONLY_REQUIRED_PACKAGE_REFS)
+    return _dedupe_refs(
+        [
+            *_slot_list(bundle, "required_package_outputs"),
+            *_slot_list(bundle, "runtime_assets_required"),
+            *_slot_list(bundle, "data_assets_required"),
+        ]
+    )
 
 
 def _product_source_refs(bundle: FrontDeskIntentBundle) -> list[str]:

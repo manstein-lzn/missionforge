@@ -35,7 +35,7 @@ from .product_contract import (
     SkillProductContract,
     manifest_for_profile,
 )
-from .validators import RAW_CONTEXT_MARKERS, SELF_GRADE_MARKERS
+from .validators import RAW_CONTEXT_FIELD_MARKERS, RAW_CONTEXT_MARKERS, RAW_CONTEXT_POLICY_TERMS, SELF_GRADE_MARKERS
 from .workspace import write_json_ref
 
 
@@ -1423,12 +1423,32 @@ def _forbidden_markers_validator(
     markers: list[str],
     check_id: str,
 ) -> dict[str, Any]:
+    marker_values = [marker.lower() for marker in markers]
+    field_marker_values = [marker.lower() for marker in markers if marker.lower() in RAW_CONTEXT_FIELD_MARKERS]
     script = (
-        "import pathlib, sys; "
+        "import pathlib\n"
         f"refs={refs!r}; "
-        f"markers={[marker.lower() for marker in markers]!r}; "
-        "text='\\n'.join(pathlib.Path(ref).read_text(encoding='utf-8').lower() for ref in refs if pathlib.Path(ref).exists()); "
-        "hits=[marker for marker in markers if marker in text]; "
+        f"markers={marker_values!r}; "
+        f"field_markers={field_marker_values!r}; "
+        f"policy_terms={RAW_CONTEXT_POLICY_TERMS!r}\n"
+        "def is_policy_context(lines, index):\n"
+        "    context='\\n'.join(lines[max(0, index-3):index+1]).lower()\n"
+        "    normalized=' '+context.strip()+' '\n"
+        "    return any(term in normalized for term in policy_terms)\n"
+        "hits=[]\n"
+        "for ref in refs:\n"
+        "    path=pathlib.Path(ref)\n"
+        "    if not path.exists():\n"
+        "        continue\n"
+        "    lines=path.read_text(encoding='utf-8').lower().splitlines()\n"
+        "    for index,line in enumerate(lines):\n"
+        "        for marker in markers:\n"
+        "            if marker not in line:\n"
+        "                continue\n"
+        "            if marker not in field_markers and is_policy_context(lines, index):\n"
+        "                continue\n"
+        "            hits.append(f'{marker}@{ref}:{index + 1}')\n"
+        "            break\n"
         "assert not hits, hits"
     )
     return {

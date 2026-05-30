@@ -4,7 +4,9 @@
   "task_family": "engineering_method_skill",
   "difficulty": "medium",
   "initial_user_text_ref": "benchmarks/tasks/complex-method-skill-001/user_statement.txt",
-  "allowed_source_refs": [],
+  "allowed_source_refs": [
+    "benchmarks/tasks/complex-method-skill-001/public_contract.md"
+  ],
   "expected_output_refs": [
     "package/SKILL.md",
     "package/skillfoundry.bundle.json",

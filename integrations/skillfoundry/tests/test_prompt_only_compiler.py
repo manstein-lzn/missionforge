@@ -213,6 +213,28 @@ class PromptOnlyCompilerTests(unittest.TestCase):
             self.assertEqual(verification.status.value, "failed")
             self.assertIn("V-prompt-no-raw-context", [item.validator_id for item in verification.validator_results if not item.passed])
 
+    def test_raw_context_policy_language_passes_missionforge_verifier(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            result = SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
+            mission = MissionIR.from_dict(json.loads((root / result.mission_ir_ref).read_text(encoding="utf-8")))
+            write_valid_prompt_only_package(root)
+            (root / "package/README.md").write_text(
+                (
+                    "# Demo Skill\n\n"
+                    "Do not store raw conversation text, private transcripts, hidden prompts, "
+                    "provider payloads, credentials, or secrets in this package.\n"
+                ),
+                encoding="utf-8",
+            )
+
+            verification = Verifier(workspace=root).verify(
+                VerificationSpec.from_dict({"validators": mission.verification["validators"]})
+            )
+
+            self.assertEqual(verification.status.value, "completed_verified")
+
     def test_invalid_schema_fails_missionforge_verifier(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

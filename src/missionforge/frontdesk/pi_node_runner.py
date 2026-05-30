@@ -283,8 +283,10 @@ class FrontDeskPiNodeRunner:
             "rules": [
                 "Produce structured FrontDesk artifacts only.",
                 "Do not approve, freeze, verify, run, or mutate frozen contracts.",
-                "Do not use raw conversation as runtime task truth.",
+                "Use conversation refs as FrontDesk elicitation evidence for pain, constraints, inferences, and questions.",
+                "Do not copy raw conversation text or cite raw conversation refs as runtime/product truth.",
             ],
+            "guidance": _node_guidance(node_name=node_name, session_id=session_id),
         }
         active_workspace.write_json(node_spec_ref, node_spec)
         contract_visible_refs = _dedupe_refs([node_spec_ref, *visible_refs])
@@ -394,6 +396,275 @@ def _node_spec_ref(*, session_id: str, node_name: str) -> str:
 
 def _node_execution_ref(*, session_id: str, node_name: str) -> str:
     return f"frontdesk/pi_nodes/{_safe_ref_fragment(session_id)}/{_safe_ref_fragment(node_name)}/execution.json"
+
+
+def _node_guidance(*, node_name: str, session_id: str) -> dict[str, Any]:
+    guidance: dict[str, Any] = {
+        "session_id": session_id,
+        "conversation_policy": {
+            "may_use": [
+                "Use frontdesk/conversation.jsonl and frontdesk/turns/* as elicitation evidence.",
+                "Infer the user's pain, constraints, candidate answers, and next high-value question from conversation evidence.",
+            ],
+            "must_not": [
+                "Do not copy raw conversation text into runtime-facing or product-facing artifacts.",
+                "Do not list frontdesk/conversation.jsonl or frontdesk/turns/* as product/runtime source_refs.",
+                "Do not treat hidden prompts, provider payloads, credentials, or transcripts as admissible product content.",
+            ],
+        },
+        "format_rules": [
+            "Write valid JSON for JSON outputs.",
+            "Use only the expected or optional output refs declared in this node spec.",
+            "Use exact schema_version values and exact enum values.",
+        ],
+    }
+    if node_name == "need_griller":
+        guidance["role"] = (
+            "Act as a restrained requirements interviewer. If the conversation already contains enough information, "
+            "produce a core need brief instead of asking a generic follow-up."
+        )
+        guidance["schema_hints"] = {
+            "frontdesk/decision_tree.json": {
+                "schema_version": "missionforge.frontdesk_decision_tree.v1",
+                "required_fields": ["schema_version", "session_id", "decisions"],
+                "decision_fields": [
+                    "decision_id",
+                    "topic",
+                    "status",
+                    "current_hypothesis",
+                    "options",
+                    "blocking",
+                    "source_refs",
+                    "chosen_option_id",
+                ],
+                "decision_option_fields": ["option_id", "summary"],
+                "decision_status_values": ["open", "confirmed", "rejected", "deferred"],
+            },
+            "frontdesk/need_grilling_report.json": {
+                "schema_version": "missionforge.frontdesk_need_grilling_report.v1",
+                "required_fields": [
+                    "schema_version",
+                    "session_id",
+                    "readiness",
+                    "observations",
+                    "inferences",
+                    "confirmed_requirements",
+                    "open_decision_ids",
+                    "next_question",
+                    "decision_tree_ref",
+                    "core_need_brief_ref",
+                ],
+                "readiness_values": [
+                    "needs_clarification",
+                    "core_need_ready",
+                    "human_review_required",
+                    "failed_closed",
+                ],
+                "readiness_rules": [
+                    "needs_clarification requires next_question.",
+                    "core_need_ready requires core_need_brief_ref and frontdesk/core_need_brief.json.",
+                    "failed_closed is only for unsafe or impossible sessions, not for merely excluded raw conversation refs.",
+                ],
+                "next_question_fields": [
+                    "question_id",
+                    "inference",
+                    "recommended_answer",
+                    "question",
+                    "why_this_matters",
+                    "blocks_freeze",
+                    "expected_answer_type",
+                    "related_decision_ids",
+                    "choices",
+                ],
+            },
+            "frontdesk/core_need_brief.json": {
+                "schema_version": "missionforge.frontdesk_core_need_brief.v1",
+                "required_when": "Write this optional output when readiness is core_need_ready.",
+                "required_fields": [
+                    "schema_version",
+                    "session_id",
+                    "core_pain",
+                    "target_users",
+                    "usage_moment",
+                    "deliverable_type",
+                    "desired_outcome",
+                    "success_signals",
+                    "constraints",
+                    "non_goals",
+                    "source_refs",
+                ],
+            },
+        }
+    elif node_name == "solution_architect":
+        guidance["role"] = "Act as a senior product architect over already structured FrontDesk need artifacts."
+        guidance["schema_hints"] = {
+            "frontdesk/solution_plan.json": {
+                "schema_version": "missionforge.frontdesk_solution_plan.v1",
+                "required_fields": [
+                    "schema_version",
+                    "session_id",
+                    "status",
+                    "summary",
+                    "core_need_ref",
+                    "mvp_scope",
+                    "future_scope",
+                    "rejected_directions",
+                    "expected_artifacts",
+                    "selected_capability_profile_ids",
+                    "selected_verification_profile_ids",
+                    "verification_strategy",
+                    "risks",
+                    "authority_requirements",
+                    "source_refs",
+                ],
+                "status_values": ["draft", "awaiting_review", "approved", "revision_requested", "rejected"],
+                "string_list_fields": [
+                    "mvp_scope",
+                    "future_scope",
+                    "rejected_directions",
+                    "expected_artifacts",
+                    "selected_capability_profile_ids",
+                    "selected_verification_profile_ids",
+                    "verification_strategy",
+                    "risks",
+                    "authority_requirements",
+                    "source_refs",
+                ],
+                "field_rules": [
+                    "mvp_scope, future_scope, rejected_directions, verification_strategy, risks, and authority_requirements must be arrays of strings, not arrays of objects.",
+                    "expected_artifacts and source_refs must be arrays of safe ref strings such as package/SKILL.md or frontdesk/core_need_brief.json.",
+                ],
+            },
+            "frontdesk/plan_risk_register.json": {
+                "schema_version": "missionforge.frontdesk_plan_risk_register.v1",
+                "required_fields": ["schema_version", "session_id", "risks", "mitigations", "source_refs"],
+                "string_list_fields": ["risks", "mitigations", "source_refs"],
+                "field_rules": [
+                    "risks and mitigations must be arrays of strings, not arrays of objects.",
+                    "source_refs must be an array of safe ref strings.",
+                ],
+            },
+            "frontdesk/profile_recommendations.json": {
+                "schema_version": "missionforge.frontdesk_profile_recommendations.v1",
+                "required_fields": ["schema_version", "session_id", "recommendations", "rejected_profile_ids"],
+                "recommendation_fields": ["schema_version", "profile_id", "kind", "rationale", "requirements", "selected"],
+                "kind_values": ["capability", "verification"],
+                "field_rules": [
+                    "recommendations must be an array of objects.",
+                    "Each recommendation.requirements must be a JSON object, not an array; put bullet-like requirements under keys such as required_outputs or checks.",
+                    "rejected_profile_ids must be an array of strings.",
+                ],
+            },
+            "frontdesk/mission_plan.json": {
+                "schema_version": "missionforge.frontdesk_mission_plan.v1",
+                "required_fields": [
+                    "schema_version",
+                    "session_id",
+                    "expected_artifacts",
+                    "constraints",
+                    "validators",
+                    "manual_gates",
+                    "risk_notes",
+                ],
+                "field_rules": [
+                    "expected_artifacts must be an array of safe ref strings, not objects.",
+                    "constraints, validators, and manual_gates must be arrays of JSON objects.",
+                    "risk_notes must be an array of strings.",
+                ],
+            },
+            "frontdesk/solution_plan.md": {
+                "format": "Concise Markdown summary of the solution plan; do not include raw conversation text.",
+            },
+        }
+    elif node_name == "intent_bundle_author":
+        guidance["role"] = (
+            "Convert structured FrontDesk artifacts plus ProductInquiryProfile into a product-aware "
+            "FrontDeskIntentBundle candidate."
+        )
+        guidance["schema_hints"] = {
+            "frontdesk/intent_bundle_candidate.json": {
+                "schema_version": "missionforge.frontdesk.intent_bundle.v1",
+                "required_fields": [
+                    "schema_version",
+                    "session_id",
+                    "intent_bundle_ref",
+                    "generic_refs",
+                    "product_context",
+                    "slot_values",
+                    "product_hypotheses",
+                    "risk_flags",
+                    "missing_blocking_slots",
+                    "readiness",
+                    "clarification_questions",
+                    "evidence_refs",
+                ],
+                "candidate_rules": [
+                    "intent_bundle_ref must be frontdesk/intent_bundle_candidate.json in the candidate.",
+                    "product_context.product_id and product_context.profile_hash must match frontdesk/product_inquiry_profile.json.",
+                    "slot_values must contain exactly every ProductInquiryProfile slot_id.",
+                    "source_refs must obey ProductInquiryProfile.source_policy.allowed_source_refs and excluded_source_refs.",
+                    "Infer slot values from structured FrontDesk refs when evidence is sufficient; do not mark a slot missing solely because raw conversation refs are excluded.",
+                ],
+                "field_rules": [
+                    "All confidence fields are strings such as high, medium, low, inferred, confirmed, or assumed; do not use numeric confidence values.",
+                    "Missing optional ref fields must be empty strings, not null.",
+                    "All source_refs, evidence_refs, missing_blocking_slots, and clarification_questions fields are arrays of strings.",
+                ],
+                "product_context_fields": ["product_id", "display_name", "profile_ref", "profile_hash", "version"],
+                "generic_refs_fields": [
+                    "session_ref",
+                    "workspace_facts_ref",
+                    "source_admission_report_ref",
+                    "core_need_brief_ref",
+                    "sanitized_sources_ref",
+                    "semantic_lock_ref",
+                    "mission_brief_ref",
+                    "semantic_coverage_ref",
+                    "solution_plan_ref",
+                    "mission_plan_ref",
+                    "mission_mapping_report_ref",
+                    "draft_mission_ref",
+                ],
+                "slot_value_fields": ["slot_id", "status", "value", "confidence", "source_refs", "question"],
+                "slot_status_values": ["confirmed", "inferred", "assumed", "missing", "rejected", "not_applicable"],
+                "slot_value_type_rules": [
+                    "free_text values are strings.",
+                    "enum values must be one of the slot.choices in frontdesk/product_inquiry_profile.json.",
+                    "string_list, ref_list, and artifact_path_list values are arrays of strings.",
+                    "ref and artifact_path values are safe ref strings.",
+                    "missing status requires a clarification question.",
+                ],
+                "product_hypothesis_fields": ["hypothesis_id", "statement", "confidence", "source_refs"],
+                "risk_flag_fields": ["risk_id", "status", "rationale", "source_refs"],
+                "risk_status_values": ["observed", "inferred", "not_observed", "needs_review"],
+                "readiness_values": [
+                    "needs_clarification",
+                    "ready_for_product_compile",
+                    "generic_compile_only",
+                    "unsupported_product",
+                    "human_review_required",
+                    "failed_closed",
+                ],
+            },
+        }
+    elif node_name == "mission_ir_mapper":
+        guidance["role"] = "Map approved structured FrontDesk artifacts into draft MissionIR refs only."
+        guidance["schema_hints"] = {
+            "mapping_policy": [
+                "Do not invent product compiler behavior.",
+                "Prefer product integration compile output when a ProductIntegration is present.",
+                "Keep raw conversation and provider payloads out of MissionIR.",
+            ]
+        }
+    elif node_name == "mission_ir_auditor":
+        guidance["role"] = "Audit draft MissionIR against structured FrontDesk artifacts and product boundaries."
+        guidance["schema_hints"] = {
+            "audit_policy": [
+                "Route to clarification or human review when product/domain authority is missing.",
+                "Do not freeze or approve contracts from this node.",
+            ]
+        }
+    return guidance
 
 
 def frontdesk_pi_node_spec_ref(*, session_id: str, node_name: str) -> str:

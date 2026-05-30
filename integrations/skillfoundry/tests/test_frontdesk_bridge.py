@@ -13,6 +13,7 @@ from missionforge.frontdesk import (
 from missionforge.product_integration import ProductClarificationRequest
 from missionforge_skillfoundry import BundleProfile, SkillFoundryRequest
 from missionforge_skillfoundry.frontdesk_bridge import build_skillfoundry_request
+from missionforge_skillfoundry.product_contract import PROMPT_ONLY_REQUIRED_PACKAGE_REFS
 
 
 class SkillFoundryFrontDeskBridgeTests(unittest.TestCase):
@@ -22,9 +23,21 @@ class SkillFoundryFrontDeskBridgeTests(unittest.TestCase):
         self.assertIsInstance(request, SkillFoundryRequest)
         self.assertEqual(request.bundle_id, "release-review")
         self.assertEqual(request.desired_bundle_profile, BundleProfile.PROMPT_ONLY)
+        self.assertEqual(request.expected_outputs, PROMPT_ONLY_REQUIRED_PACKAGE_REFS)
         self.assertIn("frontdesk/intent_bundle.json", request.source_refs)
         self.assertNotIn("frontdesk/conversation.jsonl", request.source_refs)
         self.assertNotIn("frontdesk/session.json", request.source_refs)
+
+    def test_prompt_only_bundle_ignores_extra_ai_suggested_package_outputs(self) -> None:
+        request = build_skillfoundry_request(
+            _bundle(outputs=["package/SKILL.md", "package/check-local.sh"]),
+            bundle_id="release-review",
+        )
+
+        self.assertIsInstance(request, SkillFoundryRequest)
+        self.assertEqual(request.desired_bundle_profile, BundleProfile.PROMPT_ONLY)
+        self.assertEqual(request.expected_outputs, PROMPT_ONLY_REQUIRED_PACKAGE_REFS)
+        self.assertNotIn("package/check-local.sh", request.expected_outputs)
 
     def test_code_runtime_slots_compile_to_code_runtime_profile(self) -> None:
         request = build_skillfoundry_request(

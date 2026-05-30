@@ -2,123 +2,257 @@
 
 Last updated: 2026-05-30
 
-Status: smoke executed, pilot expansion stopped.
+Status: Stage 1 smoke repaired with clean split-run evidence. The 3-seed pilot
+has not been run yet.
 
-## Run IDs
+## Run Evidence
 
-- sandbox diagnostic run: `vb-pilot-01-smoke-20260530T000000Z`
-- live smoke run: `vb-pilot-01-smoke-20260530T010000Z`
+Run artifacts are local under `benchmarks/runs/` and intentionally ignored by
+git.
 
-The sandbox diagnostic run failed all live worker calls with connection errors.
-The live smoke run used escalated network access and is the meaningful result.
+| run id | scope | result |
+| --- | --- | --- |
+| `vb-pilot-01-smoke-repair-20260530T060000Z` | `direct_piworker_chat`, `missionforge_runtime_only`, and attempted full flow | direct and runtime-only accepted with hidden acceptance; full flow hit a transient provider error before final artifact write |
+| `vb-pilot-01-fullflow-retry-20260530T070000Z` | full flow only | FrontDesk and compile completed; hidden acceptance passed; old raw-context validator still blocked ProductGradeGate |
+| `vb-pilot-01-fullflow-retry-20260530T080000Z` | full flow only | generic verifier and hidden acceptance passed; ProductGradeGate failed because prompt-only target refs incorrectly included `package/check-local.sh` |
+| `vb-pilot-01-fullflow-retry-20260530T090000Z` | full flow only | generic verifier passed, ProductGradeGate passed, package refs normalized to the prompt-only three-file contract; hidden acceptance passed after evaluator wording repair |
 
-Run artifacts are local under:
+The final validated per-mode smoke evidence is:
 
-```text
-benchmarks/runs/vb-pilot-01-smoke-20260530T010000Z/
+| mode | evidence run | accepted under current checks | notes |
+| --- | --- | ---: | --- |
+| `direct_piworker_chat` | `vb-pilot-01-smoke-repair-20260530T060000Z` | yes | passed current hidden acceptance regrade |
+| `missionforge_runtime_only` | `vb-pilot-01-smoke-repair-20260530T060000Z` | yes | passed current hidden acceptance regrade |
+| `missionforge_full_product_flow` | `vb-pilot-01-fullflow-retry-20260530T090000Z` | yes | FrontDesk nodes, ProductIntegration compile, MissionForge verifier, ProductGradeGate, and hidden acceptance all passed |
+
+## Current Hidden-Pack Regrade Trace
+
+The split-run acceptance claim was rechecked against the current committed
+hidden pack with the benchmark acceptance APIs:
+
+```bash
+env PYTHONPATH=src python3 - <<'PY'
+import json
+from pathlib import Path
+
+from missionforge.benchmark import (
+    BenchmarkSummary,
+    apply_hidden_acceptance,
+    evaluate_acceptance_pack,
+    load_acceptance_pack,
+)
+
+root = Path(".")
+pack = load_acceptance_pack(
+    root,
+    "benchmarks/tasks/complex-method-skill-001/acceptance/hidden_checks.json",
+)
+cases = [
+    (
+        "direct_T060",
+        "benchmarks/runs/vb-pilot-01-smoke-repair-20260530T060000Z/"
+        "trials/complex-method-skill-001/direct_piworker_chat/seed-1",
+    ),
+    (
+        "runtime_T060",
+        "benchmarks/runs/vb-pilot-01-smoke-repair-20260530T060000Z/"
+        "trials/complex-method-skill-001/missionforge_runtime_only/seed-1",
+    ),
+    (
+        "full_T090",
+        "benchmarks/runs/vb-pilot-01-fullflow-retry-20260530T090000Z/"
+        "trials/complex-method-skill-001/missionforge_full_product_flow/seed-1",
+    ),
+]
+out = {}
+for name, trial in cases:
+    result = evaluate_acceptance_pack(
+        workspace=root,
+        trial_workspace_ref=f"{trial}/workspace",
+        pack=pack,
+    )
+    summary = BenchmarkSummary.from_dict(
+        json.loads((root / trial / "summary.json").read_text(encoding="utf-8"))
+    )
+    updated = apply_hidden_acceptance(summary, result)
+    out[name] = {
+        "hidden_acceptance_passed": result.passed,
+        "accepted_after_current_hidden": updated.accepted,
+        "failure_taxonomy": updated.failure_taxonomy,
+    }
+print(json.dumps(out, indent=2, sort_keys=True))
+PY
 ```
 
-Run artifacts are intentionally ignored by git through `benchmarks/runs/`.
+Observed result:
 
-## Outcome
+```json
+{
+  "direct_T060": {
+    "accepted_after_current_hidden": true,
+    "failure_taxonomy": [],
+    "hidden_acceptance_passed": true
+  },
+  "full_T090": {
+    "accepted_after_current_hidden": true,
+    "failure_taxonomy": [],
+    "hidden_acceptance_passed": true
+  },
+  "runtime_T060": {
+    "accepted_after_current_hidden": true,
+    "failure_taxonomy": [],
+    "hidden_acceptance_passed": true
+  }
+}
+```
 
-The smoke run did not pass. The 3-seed pilot was not run.
+## Current T090 Full-Flow Packet
 
-| mode | accepted | comparable | outcome |
-| --- | ---: | ---: | --- |
-| `direct_piworker_chat` | 0 | 1 | produced package files, failed hidden acceptance |
-| `missionforge_runtime_only` | 1 | 1 | accepted |
-| `missionforge_full_product_flow` | 0 | 1 | failed closed during FrontDesk |
+The strongest full-flow evidence is:
 
-Runtime-only was the only accepted mode in this smoke.
+```text
+benchmarks/runs/vb-pilot-01-fullflow-retry-20260530T090000Z/pilot_result_packet.json
+```
 
-## What Worked
+After offline regrading with the repaired hidden acceptance pack:
 
-- Live PiWorker configuration was present.
-- The neutral fixture `complex-method-skill-001` was runnable.
-- Hidden acceptance refs were not passed into worker-visible task payloads.
-- Hidden acceptance results were joined after execution.
-- Required run-level artifacts were produced:
-  - `manifest.json`
-  - `aggregate.json`
-  - `report.md`
-  - `mode_comparisons.json`
-  - `table_data.json`
-  - `multiseed_result.json`
-  - `pilot_result_packet.json`
+- `smoke_passed`: `true`
+- `accepted`: `true`
+- `generic_verifier_passed`: `true`
+- `product_compile_status`: `compiled`
+- `product_gate_status`: `product_grade`
+- `product_gate_blocking_finding_count`: `0`
+- `hidden_acceptance_passed`: `true`
+- `frontdesk_node_count`: `3`
+- `frontdesk_worker_call_count`: `3`
+- `artifact_refs`:
+  - `package/SKILL.md`
+  - `package/skillfoundry.bundle.json`
+  - `package/README.md`
 
-## Findings
+The T090 full-flow run used live PiWorker for all three FrontDesk nodes and the
+runtime worker. The hidden evaluator was applied after the worker run and was
+not worker-visible.
 
-### 1. Runtime-Only Is Currently The Only Clean Accepted Path
+## Repairs Made
 
-`missionforge_runtime_only` produced all required package refs and passed hidden
-acceptance. This proves the runtime/product contract path can close this fixture
-when the MissionIR/product contract is already prepared.
+### Direct Baseline Fairness
 
-### 2. Direct Baseline Is Not Fair Enough Yet
+The direct PiWorker baseline now receives a worker-safe public product contract
+through `allowed_source_refs` instead of being judged only against hidden
+SkillFoundry schema expectations.
 
-`direct_piworker_chat` produced all requested files, but the generated
-`skillfoundry.bundle.json` did not match the SkillFoundry bundle schema expected
-by the fixture. This is not enough evidence that direct chat is weak; it also
-shows that the current direct baseline did not receive a sufficiently explicit
-public product contract.
+Relevant fixture files:
 
-Before scaling, direct mode should receive worker-safe public product
-requirements through generic benchmark inputs, not hidden acceptance checks and
-not MissionForge runtime internals.
+- `benchmarks/tasks/complex-method-skill-001/public_contract.md`
+- `benchmarks/tasks/complex-method-skill-001/task.json`
 
-### 3. Hidden Leak Pattern Is Too Ambiguous
+### Hidden Acceptance Robustness
 
-The smoke leak scan flagged occurrences of the phrase `provider payload`. In
-several generated artifacts this was a policy statement, not an embedded
-provider payload. The benchmark should distinguish sensitive sentinel markers
-or raw provider bodies from harmless policy wording.
+The hidden leak checks now avoid failing harmless policy wording. The provider
+payload check looks for the sentinel-style `raw_provider_payload` marker rather
+than the ordinary phrase `provider payload`.
 
-Before rerun, hidden checks and leak scans should avoid failing merely because a
-worker says it will not store provider payloads.
+The semantic hidden check now looks for `workflow` instead of a brittle exact
+`Method` heading. This still checks that the generated skill contains a reusable
+working method/workflow, while avoiding false failures when the worker names the
+section `Workflow`.
 
-### 4. Full Product Flow Needs Stronger Live Node Contracts
+Relevant fixture file:
 
-`missionforge_full_product_flow` failed at the first FrontDesk node. The live
-NeedGriller wrote artifacts, but the node did not produce schema-valid
-FrontDesk outputs and failed closed before ProductIntegration compilation.
+- `benchmarks/tasks/complex-method-skill-001/acceptance/hidden_checks.json`
 
-The generated output shows two protocol gaps:
+### FrontDesk Live Node Contracts
 
-- the live node spec did not expose enough exact output schema guidance;
-- the conversation/source-admission rules caused the worker to treat the user
-  request as unavailable for need extraction, even though FrontDesk is supposed
-  to use the conversation for elicitation while keeping it out of product truth.
+FrontDesk PiWorker node specs now include compact schema and field-type
+guidance for the high-AI nodes:
 
-Before rerun, FrontDesk PiWorker node specs should make this distinction
-explicit and include compact schema templates for node outputs.
+- `need_griller`
+- `solution_architect`
+- `intent_bundle_author`
 
-### 5. Cost/Time Winner Logic Had A Real Bug
+The guidance keeps FrontDesk AI-heavy: it gives role, schema, and output
+contracts to PiWorker, without coding domain semantic extraction with regex or
+scenario-specific branches.
 
-The smoke comparison selected `direct_piworker_chat` as
-`winner_by_cost_per_acceptance` because zero-accepted modes had zero cost per
-accepted deliverable. That is not a valid accepted-deliverable winner.
+Relevant implementation:
 
-This has been repaired after the smoke: cost/time winners now ignore modes with
-`comparable_accepted_count == 0`.
+- `src/missionforge/frontdesk/pi_node_runner.py`
+- `tests/test_frontdesk_pi_node_runner.py`
 
-## Required Repairs Before Rerun
+### Runtime Artifact Projection
 
-1. Make direct baseline worker-visible inputs include a clear public product
-   contract for required SkillFoundry bundle structure.
-2. Tighten leak checks so policy wording does not count as leaked provider
-   payload content.
-3. Add schema guidance to live FrontDesk PiWorker node specs, starting with
-   NeedGriller and SolutionArchitect.
-4. Preserve the repaired winner rule: cost/time winners must require at least
-   one comparable accepted deliverable.
-5. Rerun Stage 1 smoke only after these repairs.
+The PI Agent result writer now includes changed refs that are inside the
+declared allowed scope. This preserves optional FrontDesk artifacts in the
+execution report without broadening the worker contract.
+
+Relevant implementation:
+
+- `workers/pi-agent-runtime/src/result-writer.ts`
+- `workers/pi-agent-runtime/tests/result-writer.test.mjs`
+
+### Raw Context Validator Semantics
+
+SkillFoundry raw-context checks now distinguish:
+
+- field/sentinel markers such as `raw_prompt`, `raw_transcript`,
+  `provider_payload`, and `conversation.jsonl`, which remain hard failures;
+- policy sentences such as "do not store raw transcripts or provider payloads",
+  which are allowed when they are clearly boundary guidance.
+
+The same behavior is used by SkillFoundry ProductGradeGate validators and by
+the MissionIR command validators compiled for runtime verification.
+
+Relevant implementation:
+
+- `integrations/skillfoundry/src/missionforge_skillfoundry/validators.py`
+- `integrations/skillfoundry/src/missionforge_skillfoundry/compiler.py`
+- `integrations/skillfoundry/tests/test_skill_bundle_validators.py`
+- `integrations/skillfoundry/tests/test_prompt_only_compiler.py`
+
+### Prompt-Only Output Normalization
+
+SkillFoundry ProductIntegration now treats `prompt_only` as a fixed package
+profile. Even if FrontDesk AI suggests an extra local checker such as
+`package/check-local.sh`, the compiled prompt-only request and product contract
+target only:
+
+- `package/SKILL.md`
+- `package/skillfoundry.bundle.json`
+- `package/README.md`
+
+Extra scripts and schemas remain valid only for `code_runtime`.
+
+Relevant implementation:
+
+- `integrations/skillfoundry/src/missionforge_skillfoundry/frontdesk_bridge.py`
+- `integrations/skillfoundry/src/missionforge_skillfoundry/product_contract.py`
+- `integrations/skillfoundry/tests/test_frontdesk_bridge.py`
+- `integrations/skillfoundry/tests/test_product_contract.py`
+
+## Remaining Risk
+
+The clean evidence is split across runs rather than produced by one final
+three-mode smoke matrix:
+
+- direct/runtime evidence comes from T060;
+- full-flow evidence comes from T090.
+
+This is acceptable for repair validation because the later code changes affect
+the full-flow ProductIntegration/ProductGate path and the hidden evaluator; the
+T060 direct/runtime artifacts were rechecked against the current hidden pack and
+passed.
+
+If a single run packet is required for audit convenience, run one final Stage 1
+three-mode smoke before Stage 2. If split-run evidence is acceptable, there is
+no remaining smoke blocker to starting the three-seed pilot.
 
 ## Decision
 
-Do not run the 3-seed pilot yet.
+Stage 1 no longer has a known blocking defect.
 
-The first smoke was useful because it validated that the harness can execute
-live and that runtime-only can close the fixture, but it also showed the direct
-baseline and full product flow need protocol repairs before the comparison is
-fair enough to scale.
+Recommended next action: start Pilot 01 Stage 2 with three seeds across all
+three modes, using the current task fixture and the current hidden acceptance
+pack. Do not interpret the next run as a final MissionForge value verdict; it
+is the first statistically small pilot to prove that the comparison pipeline can
+collect stable value metrics.

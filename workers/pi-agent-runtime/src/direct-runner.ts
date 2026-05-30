@@ -27,6 +27,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
 
   try {
     const userText = await readFile(resolveWorkspaceRef(workspaceRoot, input.initial_user_text_ref), "utf-8");
+    const allowedSources = await readAllowedSourceRefs(input, workspaceRoot);
     if (provider.mode === "faux") {
       const faux = registerFauxProvider({
         api: "missionforge-direct-faux",
@@ -84,7 +85,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
         throw new Error("direct piworker benchmark cancelled at a safe point");
       }
     });
-    await agent.prompt(buildDirectUserPrompt(input, userText));
+    await agent.prompt(buildDirectUserPrompt(input, userText, allowedSources));
     if (agent.state.errorMessage) {
       failures.push(agent.state.errorMessage);
     }
@@ -145,6 +146,11 @@ export function buildDirectSystemPrompt(input: DirectRuntimeInput): string {
   return lines.join("\n");
 }
 
+export interface DirectAllowedSource {
+  ref: string;
+  content: string;
+}
+
 export function buildDirectFailureOutput(
   input: DirectRuntimeInput,
   failure: string,
@@ -190,16 +196,33 @@ export async function stripUnreplayableResponsesReasoning(messages: any[]): Prom
   });
 }
 
-function buildDirectUserPrompt(input: DirectRuntimeInput, userText: string): string {
-  return [
+export function buildDirectUserPrompt(
+  input: DirectRuntimeInput,
+  userText: string,
+  allowedSources: DirectAllowedSource[] = [],
+): string {
+  const lines = [
     "User request:",
     userText.trim(),
     "",
+  ];
+  if (allowedSources.length) {
+    lines.push(
+      "Public source refs to inspect before writing:",
+      "These refs are worker-visible public task and product requirements. They are not hidden acceptance checks.",
+      "",
+    );
+    for (const source of allowedSources) {
+      lines.push(`### ${source.ref}`, source.content.trim() || "(empty)", "");
+    }
+  }
+  lines.push(
     "Output paths to write relative to the current workspace:",
     ...input.expected_output_refs.map((ref) => `- ${ref}`),
     "",
     "Use tools freely inside the current workspace, then stop.",
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 function extractFinalText(messages: readonly unknown[]): string | undefined {
@@ -224,6 +247,15 @@ async function existingExpectedOutputs(root: string, expectedRefs: string[]): Pr
     }
   }
   return result;
+}
+
+async function readAllowedSourceRefs(input: DirectRuntimeInput, workspaceRoot: string): Promise<DirectAllowedSource[]> {
+  const sources: DirectAllowedSource[] = [];
+  for (const ref of input.allowed_source_refs) {
+    const content = await readFile(resolveWorkspaceRef(workspaceRoot, ref), "utf-8");
+    sources.push({ ref, content });
+  }
+  return sources;
 }
 
 async function fileExists(path: string): Promise<boolean> {

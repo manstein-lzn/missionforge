@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { parseDirectRuntimeInput } from "../dist/direct-contract.js";
-import { buildDirectSystemPrompt, runDirectPiWorkerBenchmark } from "../dist/direct-runner.js";
+import { buildDirectSystemPrompt, buildDirectUserPrompt, runDirectPiWorkerBenchmark } from "../dist/direct-runner.js";
 import { readJson, withWorkspace } from "./helpers.mjs";
 
 test("direct faux runner writes comparable safe artifacts without WorkUnit prompt semantics", async () => {
@@ -61,6 +61,26 @@ test("direct faux runner writes comparable safe artifacts without WorkUnit promp
     assert.equal(publicArtifacts.includes("raw-user-secret-phrase"), false);
     assert.equal(publicArtifacts.includes("Please solve this private direct baseline task"), false);
   });
+});
+
+test("direct prompt exposes public allowed source refs without MissionForge internals", () => {
+  const input = sampleDirectInput({
+    allowed_source_refs: ["benchmarks/tasks/task-001/public_contract.md"],
+  });
+  const parsed = parseDirectRuntimeInput(input);
+  const userPrompt = buildDirectUserPrompt(parsed, "Build the package.", [
+    {
+      ref: "benchmarks/tasks/task-001/public_contract.md",
+      content: "Manifest schema_version must be skillfoundry.bundle.v1.",
+    },
+  ]);
+
+  assert.equal(userPrompt.includes("Public source refs to inspect before writing"), true);
+  assert.equal(userPrompt.includes("benchmarks/tasks/task-001/public_contract.md"), true);
+  assert.equal(userPrompt.includes("skillfoundry.bundle.v1"), true);
+  assert.equal(userPrompt.includes("WorkUnitContract"), false);
+  assert.equal(userPrompt.includes("MissionIR"), false);
+  assert.equal(userPrompt.includes("FrontDesk"), false);
 });
 
 function sampleDirectInput(overrides = {}) {
