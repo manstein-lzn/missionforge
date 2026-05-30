@@ -70,7 +70,8 @@ class SemanticCoverageChecker:
             success_signals=list(core_need.success_signals),
             target_users=list(core_need.target_users),
             non_goals=list(core_need.non_goals),
-            open_questions=[],
+            assumptions=list(core_need.assumptions),
+            open_questions=[question.question for question in core_need.open_questions],
         )
         sanitized_sources = SanitizedSourceSet(
             session_id=session.session_id,
@@ -113,7 +114,7 @@ def _semantic_lock(session_id: str, core_need: CoreNeedBrief, domain: DomainLang
         summary=core_need.desired_outcome,
         requirement_clauses=_unique_non_empty(clauses),
         source_refs=[CORE_NEED_BRIEF_REF],
-        assumptions=[],
+        assumptions=list(core_need.assumptions),
         non_goals=non_goals,
         risks=list(domain.risk_terms),
     )
@@ -134,6 +135,8 @@ def _coverage_report(
             *semantic_lock.risks,
             mission_brief.goal,
             *mission_brief.success_signals,
+            *mission_brief.assumptions,
+            *mission_brief.open_questions,
             *core_need.constraints,
         ]
     ).lower()

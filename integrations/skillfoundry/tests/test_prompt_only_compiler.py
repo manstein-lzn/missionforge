@@ -235,6 +235,31 @@ class PromptOnlyCompilerTests(unittest.TestCase):
 
             self.assertEqual(verification.status.value, "completed_verified")
 
+    def test_raw_context_inspection_policy_language_passes_missionforge_verifier(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            result = SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
+            mission = MissionIR.from_dict(json.loads((root / result.mission_ir_ref).read_text(encoding="utf-8")))
+            write_valid_prompt_only_package(root)
+            (root / "package/README.md").write_text(
+                (
+                    "# Demo Skill\n\n"
+                    "## Local Checks\n\n"
+                    "- Inspect package text for raw context, credentials, provider payloads, "
+                    "hidden prompts, and unsupported network requirements.\n"
+                    "- Package content has been checked for raw context leakage, credentials, "
+                    "provider payloads, and unsupported network assumptions.\n"
+                ),
+                encoding="utf-8",
+            )
+
+            verification = Verifier(workspace=root).verify(
+                VerificationSpec.from_dict({"validators": mission.verification["validators"]})
+            )
+
+            self.assertEqual(verification.status.value, "completed_verified")
+
     def test_invalid_schema_fails_missionforge_verifier(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

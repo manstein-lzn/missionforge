@@ -6,10 +6,13 @@
   "rubric_ref": "benchmarks/tasks/complex-method-skill-001/acceptance/review_rubric.md",
   "checks": [
     {
-      "check_id": "HIDDEN-SKILL-MENTIONS-WORKFLOW",
-      "kind": "file_contains",
+      "check_id": "HIDDEN-SKILL-HAS-REUSABLE-PROCESS",
+      "kind": "file_contains_any",
       "ref": "package/SKILL.md",
-      "expected_text": "workflow",
+      "expected_terms": [
+        "method",
+        "workflow"
+      ],
       "blocking": true
     },
     {

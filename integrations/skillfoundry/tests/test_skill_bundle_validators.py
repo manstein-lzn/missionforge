@@ -114,6 +114,51 @@ class SkillBundleValidatorTests(unittest.TestCase):
 
             self.assertTrue(report.passed)
 
+    def test_raw_context_non_trigger_policy_language_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
+            write_valid_prompt_only_package(root)
+            write_text_ref(
+                root,
+                "package/SKILL.md",
+                (
+                    "# Demo Skill\n\n"
+                    "## Non-Trigger Conditions\n\n"
+                    "Do not activate this skill for:\n\n"
+                    "- Tiny factual answers.\n"
+                    "- Work that requires a domain specialist.\n"
+                    "- Requests to collect credentials, hidden prompts, provider payloads, "
+                    "private transcripts, or unrelated local secrets.\n"
+                ),
+            )
+
+            report = validate_skill_bundle(workspace=root, bundle_id="demo-skill")
+
+            self.assertTrue(report.passed)
+
+    def test_raw_context_inspection_policy_language_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            SkillFoundryMissionCompiler().compile_request(sample_request(), workspace=root)
+            write_valid_prompt_only_package(root)
+            write_text_ref(
+                root,
+                "package/README.md",
+                (
+                    "# Demo Skill\n\n"
+                    "## Local Checks\n\n"
+                    "- Inspect package text for raw context, credentials, provider payloads, "
+                    "hidden prompts, and unsupported network requirements.\n"
+                    "- Package content has been checked for raw context leakage, credentials, "
+                    "provider payloads, and unsupported network assumptions.\n"
+                ),
+            )
+
+            report = validate_skill_bundle(workspace=root, bundle_id="demo-skill")
+
+            self.assertTrue(report.passed)
+
     def test_self_product_grade_claim_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

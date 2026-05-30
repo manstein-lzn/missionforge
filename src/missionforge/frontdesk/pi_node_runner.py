@@ -286,7 +286,12 @@ class FrontDeskPiNodeRunner:
                 "Use conversation refs as FrontDesk elicitation evidence for pain, constraints, inferences, and questions.",
                 "Do not copy raw conversation text or cite raw conversation refs as runtime/product truth.",
             ],
-            "guidance": _node_guidance(node_name=node_name, session_id=session_id),
+            "guidance": _node_guidance(
+                node_name=node_name,
+                session_id=session_id,
+                expected_outputs=expected_outputs,
+                optional_outputs=optional_outputs or [],
+            ),
         }
         active_workspace.write_json(node_spec_ref, node_spec)
         contract_visible_refs = _dedupe_refs([node_spec_ref, *visible_refs])
@@ -398,9 +403,22 @@ def _node_execution_ref(*, session_id: str, node_name: str) -> str:
     return f"frontdesk/pi_nodes/{_safe_ref_fragment(session_id)}/{_safe_ref_fragment(node_name)}/execution.json"
 
 
-def _node_guidance(*, node_name: str, session_id: str) -> dict[str, Any]:
+def _node_guidance(
+    *,
+    node_name: str,
+    session_id: str,
+    expected_outputs: list[str] | None = None,
+    optional_outputs: list[str] | None = None,
+) -> dict[str, Any]:
+    expected_output_set = set(expected_outputs or [])
+    optional_output_set = set(optional_outputs or [])
+    core_need_required = "frontdesk/core_need_brief.json" in expected_output_set
     guidance: dict[str, Any] = {
         "session_id": session_id,
+        "execution_policy": {
+            "core_need_brief_required": core_need_required,
+            "core_need_brief_optional": "frontdesk/core_need_brief.json" in optional_output_set,
+        },
         "conversation_policy": {
             "may_use": [
                 "Use frontdesk/conversation.jsonl and frontdesk/turns/* as elicitation evidence.",
@@ -464,6 +482,8 @@ def _node_guidance(*, node_name: str, session_id: str) -> dict[str, Any]:
                     "needs_clarification requires next_question.",
                     "core_need_ready requires core_need_brief_ref and frontdesk/core_need_brief.json.",
                     "failed_closed is only for unsafe or impossible sessions, not for merely excluded raw conversation refs.",
+                    "When execution_policy.core_need_brief_required is true, treat the run as a no-user-loop handoff: choose core_need_ready whenever the evidence can support a safe assumption-backed brief.",
+                    "In a no-user-loop handoff, do not block only because extra personalization would improve quality; record assumptions and non-blocking unknowns in frontdesk/core_need_brief.json instead.",
                 ],
                 "next_question_fields": [
                     "question_id",
@@ -475,6 +495,16 @@ def _node_guidance(*, node_name: str, session_id: str) -> dict[str, Any]:
                     "expected_answer_type",
                     "related_decision_ids",
                     "choices",
+                ],
+                "next_question_expected_answer_type_values": [
+                    "choice_or_free_text",
+                    "ranked_choices_or_free_text",
+                    "free_text",
+                    "enum",
+                    "boolean",
+                    "number",
+                    "file",
+                    "example",
                 ],
             },
             "frontdesk/core_need_brief.json": {
@@ -493,6 +523,12 @@ def _node_guidance(*, node_name: str, session_id: str) -> dict[str, Any]:
                     "non_goals",
                     "source_refs",
                 ],
+                "optional_fields": ["assumptions", "open_questions"],
+                "open_question_fields": ["question_id", "question", "impact"],
+                "open_question_policy": (
+                    "Only include non-blocking refinement questions here. Blocking questions must use "
+                    "need_grilling_report.next_question with readiness needs_clarification."
+                ),
             },
         }
     elif node_name == "solution_architect":

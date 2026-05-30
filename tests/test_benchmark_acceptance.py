@@ -98,6 +98,37 @@ class BenchmarkAcceptanceTests(unittest.TestCase):
             self.assertFalse(updated.hidden_acceptance_passed)
             self.assertIn("hidden_acceptance_failed", updated.failure_taxonomy)
 
+    def test_file_contains_any_is_case_insensitive_and_hides_expected_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            trial_workspace_ref = "benchmarks/runs/bench-001/trials/task-001/direct_piworker_chat/seed-1/workspace"
+            trial_workspace = root / trial_workspace_ref
+            (trial_workspace / "package").mkdir(parents=True)
+            (trial_workspace / "package/SKILL.md").write_text(
+                "# Skill\n\n## Method Overview\n\nUse a staged engineering process.\n",
+                encoding="utf-8",
+            )
+            pack = AcceptancePack(
+                pack_id="hidden",
+                task_id="task-001",
+                visibility=AcceptanceVisibility.HIDDEN,
+                checks=[
+                    AcceptanceCheck(
+                        check_id="has-process",
+                        kind=AcceptanceCheckKind.FILE_CONTAINS_ANY,
+                        ref="package/SKILL.md",
+                        expected_terms=["workflow", "method"],
+                    )
+                ],
+            )
+
+            result = evaluate_acceptance_pack(workspace=root, trial_workspace_ref=trial_workspace_ref, pack=pack)
+
+            self.assertTrue(result.passed)
+            payload = json.dumps(result.to_dict(), sort_keys=True).lower()
+            self.assertNotIn("workflow", payload)
+            self.assertNotIn("method", payload)
+
     def test_loads_committed_complex_method_skill_fixture(self) -> None:
         root = Path(".")
         pack = load_acceptance_pack(

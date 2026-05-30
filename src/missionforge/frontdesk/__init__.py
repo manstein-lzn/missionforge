@@ -72,6 +72,7 @@ from .semantic_coverage import SemanticCoverageChecker, SemanticCoverageResult
 from .solution_architect import SolutionArchitect, SolutionArchitectureResult
 from .spec_grill_schema import (
     CoreNeedBrief,
+    CoreNeedOpenQuestion,
     DecisionNode,
     DecisionOption,
     DecisionStatus,
@@ -117,6 +118,7 @@ __all__ = [
     "ConversationRole",
     "ConversationTurn",
     "CoreNeedBrief",
+    "CoreNeedOpenQuestion",
     "DecisionNode",
     "DecisionOption",
     "DecisionStatus",

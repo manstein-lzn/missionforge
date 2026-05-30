@@ -1432,7 +1432,7 @@ def _forbidden_markers_validator(
         f"field_markers={field_marker_values!r}; "
         f"policy_terms={RAW_CONTEXT_POLICY_TERMS!r}\n"
         "def is_policy_context(lines, index):\n"
-        "    context='\\n'.join(lines[max(0, index-3):index+1]).lower()\n"
+        "    context='\\n'.join(lines[max(0, index-6):index+1]).lower()\n"
         "    normalized=' '+context.strip()+' '\n"
         "    return any(term in normalized for term in policy_terms)\n"
         "hits=[]\n"

@@ -37,6 +37,7 @@ class AcceptanceCheckKind(StrEnum):
 
     FILE_EXISTS = "file_exists"
     FILE_CONTAINS = "file_contains"
+    FILE_CONTAINS_ANY = "file_contains_any"
     FILE_NOT_CONTAINS = "file_not_contains"
     JSON_FIELD_EQUALS = "json_field_equals"
 
@@ -49,6 +50,7 @@ class AcceptanceCheck:
     kind: AcceptanceCheckKind
     ref: str
     expected_text: str = ""
+    expected_terms: list[str] = field(default_factory=list)
     forbidden_text: str = ""
     json_field: str = ""
     expected_value: Any = None
@@ -64,6 +66,7 @@ class AcceptanceCheck:
                 "kind",
                 "ref",
                 "expected_text",
+                "expected_terms",
                 "forbidden_text",
                 "json_field",
                 "expected_value",
@@ -75,6 +78,7 @@ class AcceptanceCheck:
             kind=require_enum(data.get("kind"), AcceptanceCheckKind, "acceptance_check.kind"),
             ref=validate_ref(data.get("ref"), "acceptance_check.ref"),
             expected_text=str(data.get("expected_text", "")),
+            expected_terms=require_str_list(data.get("expected_terms", []), "acceptance_check.expected_terms"),
             forbidden_text=str(data.get("forbidden_text", "")),
             json_field=str(data.get("json_field", "")),
             expected_value=ensure_json_value(data.get("expected_value"), "acceptance_check.expected_value")
@@ -91,6 +95,11 @@ class AcceptanceCheck:
         validate_ref(self.ref, "acceptance_check.ref")
         if self.kind == AcceptanceCheckKind.FILE_CONTAINS and not self.expected_text:
             raise ContractValidationError("file_contains acceptance check requires expected_text")
+        if self.kind == AcceptanceCheckKind.FILE_CONTAINS_ANY:
+            if not self.expected_terms:
+                raise ContractValidationError("file_contains_any acceptance check requires expected_terms")
+            for term in self.expected_terms:
+                require_non_empty_str(term, "acceptance_check.expected_terms[]")
         if self.kind == AcceptanceCheckKind.FILE_NOT_CONTAINS and not self.forbidden_text:
             raise ContractValidationError("file_not_contains acceptance check requires forbidden_text")
         if self.kind == AcceptanceCheckKind.JSON_FIELD_EQUALS and not self.json_field:
@@ -107,6 +116,8 @@ class AcceptanceCheck:
         }
         if self.expected_text:
             payload["expected_text"] = self.expected_text
+        if self.expected_terms:
+            payload["expected_terms"] = list(self.expected_terms)
         if self.forbidden_text:
             payload["forbidden_text"] = self.forbidden_text
         if self.json_field:
@@ -357,6 +368,10 @@ def _evaluate_check(*, root: Path, trial_root: Path, trial_workspace_ref: str, c
         text = target.read_text(encoding="utf-8") if exists else ""
         passed = check.expected_text in text
         message = "expected content present" if passed else "expected content missing"
+    elif check.kind == AcceptanceCheckKind.FILE_CONTAINS_ANY:
+        text = target.read_text(encoding="utf-8").lower() if exists else ""
+        passed = any(term.lower() in text for term in check.expected_terms)
+        message = "expected token group present" if passed else "expected token group missing"
     elif check.kind == AcceptanceCheckKind.FILE_NOT_CONTAINS:
         text = target.read_text(encoding="utf-8") if exists else ""
         passed = exists and check.forbidden_text not in text

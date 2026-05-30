@@ -294,6 +294,7 @@ class MissionBrief:
     success_signals: list[str]
     target_users: list[str] = field(default_factory=list)
     non_goals: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
     schema_version: str = MISSION_BRIEF_SCHEMA_VERSION
 
@@ -310,6 +311,7 @@ class MissionBrief:
                 "success_signals",
                 "target_users",
                 "non_goals",
+                "assumptions",
                 "open_questions",
             },
         )
@@ -320,6 +322,7 @@ class MissionBrief:
             success_signals=require_str_list(data.get("success_signals"), "mission_brief.success_signals"),
             target_users=require_str_list(data.get("target_users", []), "mission_brief.target_users"),
             non_goals=require_str_list(data.get("non_goals", []), "mission_brief.non_goals"),
+            assumptions=require_str_list(data.get("assumptions", []), "mission_brief.assumptions"),
             open_questions=require_str_list(data.get("open_questions", []), "mission_brief.open_questions"),
             schema_version=require_non_empty_str(data.get("schema_version", MISSION_BRIEF_SCHEMA_VERSION), "mission_brief.schema_version"),
         )
@@ -334,6 +337,7 @@ class MissionBrief:
         require_str_list(self.success_signals, "mission_brief.success_signals")
         require_str_list(self.target_users, "mission_brief.target_users")
         require_str_list(self.non_goals, "mission_brief.non_goals")
+        require_str_list(self.assumptions, "mission_brief.assumptions")
         require_str_list(self.open_questions, "mission_brief.open_questions")
 
     def to_dict(self) -> dict[str, Any]:
@@ -346,6 +350,7 @@ class MissionBrief:
             "success_signals": list(self.success_signals),
             "target_users": list(self.target_users),
             "non_goals": list(self.non_goals),
+            "assumptions": list(self.assumptions),
             "open_questions": list(self.open_questions),
         }
 

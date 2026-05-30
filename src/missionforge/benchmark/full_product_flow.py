@@ -146,10 +146,13 @@ class FullProductFlowConfig:
 
     max_attempts: int = 1
     pi_agent_config: Any | None = None
+    frontdesk_no_user_loop: bool = True
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         require_int_at_least(self.max_attempts, "full_product_flow_config.max_attempts", 1)
+        if not isinstance(self.frontdesk_no_user_loop, bool):
+            raise ContractValidationError("full_product_flow_config.frontdesk_no_user_loop must be boolean")
         ensure_json_value(require_mapping(self.metadata, "full_product_flow_config.metadata"), "full_product_flow_config.metadata")
 
 
@@ -233,7 +236,7 @@ class MissionForgeFullProductFlowBenchmarkRunner:
             session = frontdesk.start(user_text, session_id=session_id)
             session_ref = session.session_ref
             stage = "frontdesk_grill"
-            frontdesk.grill(session.session_ref)
+            frontdesk.grill(session.session_ref, require_core_need=self.config.frontdesk_no_user_loop)
             stage = "frontdesk_cover_semantics"
             frontdesk.cover_semantics(session.session_ref)
             stage = "frontdesk_plan_solution"

@@ -25,6 +25,7 @@ from .freeze import ContractManifest, ExpandedMission, FrozenMissionContract, ex
 from .frontdesk import (
     AuthoringApproval,
     CoreNeedBrief,
+    CoreNeedOpenQuestion,
     DecisionTree,
     FrontDesk,
     FrontDeskAuthoringSession,
@@ -129,6 +130,7 @@ __all__ = [
     "ContractManifest",
     "ContractValidationError",
     "CoreNeedBrief",
+    "CoreNeedOpenQuestion",
     "DecisionLedgerEntry",
     "DecisionTree",
     "DeterministicProposalProvider",

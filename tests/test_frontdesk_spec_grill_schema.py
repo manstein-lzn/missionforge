@@ -16,6 +16,7 @@ from missionforge import (
 )
 from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.frontdesk.spec_grill_schema import (
+    CoreNeedOpenQuestion,
     DecisionNode,
     DecisionOption,
     DecisionStatus,
@@ -92,6 +93,14 @@ class FrontDeskSpecGrillSchemaTests(unittest.TestCase):
             deliverable_type="artifact",
             desired_outcome="A reviewed MissionIR contract.",
             success_signals=["Mapping report covers every requirement."],
+            assumptions=["A first pass can proceed with local evidence."],
+            open_questions=[
+                CoreNeedOpenQuestion(
+                    question_id="Q-refine-method",
+                    question="Which method details should be preserved in a later pass?",
+                    impact="Improves fidelity without blocking the first contract.",
+                )
+            ],
             source_refs=["frontdesk/semantic_lock.json"],
         )
         self.assertEqual(CoreNeedBrief.from_dict(brief.to_dict()), brief)
@@ -102,7 +111,7 @@ class FrontDeskSpecGrillSchemaTests(unittest.TestCase):
             recommended_answer="Keep Python orchestration and isolate only proven performance-sensitive core code.",
             question="Is the main concern performance, packaging, or preventing task-specific core edits?",
             why_this_matters="The answer changes the first mission shape.",
-            expected_answer_type=QuestionAnswerType.CHOICE_OR_FREE_TEXT,
+            expected_answer_type=QuestionAnswerType.RANKED_CHOICES_OR_FREE_TEXT,
             related_decision_ids=["D-001"],
         )
         report = NeedGrillingReport(

@@ -171,7 +171,7 @@ class FrontDesk:
         self.workspace.write_json(updated.session_ref, updated.to_dict())
         return result
 
-    def grill(self, session_ref: str) -> NeedGrillResult:
+    def grill(self, session_ref: str, *, require_core_need: bool = False) -> NeedGrillResult:
         session = self.load_session(session_ref)
         worker = self._worker_or_fail(session, "need grilling")
         if not self.workspace.exists(WORKSPACE_FACTS_REF):
@@ -185,12 +185,17 @@ class FrontDesk:
         ]
         if self.workspace.exists(PRODUCT_INQUIRY_PROFILE_REF):
             visible_refs.append(PRODUCT_INQUIRY_PROFILE_REF)
+        expected_outputs = [DECISION_TREE_REF, NEED_GRILLING_REPORT_REF]
+        optional_outputs = [CORE_NEED_BRIEF_REF]
+        if require_core_need:
+            expected_outputs.append(CORE_NEED_BRIEF_REF)
+            optional_outputs = []
         self.pi_node_runner.run_node(
             node_name="need_griller",
             session_id=session.session_id,
             visible_refs=visible_refs,
-            expected_outputs=[DECISION_TREE_REF, NEED_GRILLING_REPORT_REF],
-            optional_outputs=[CORE_NEED_BRIEF_REF],
+            expected_outputs=expected_outputs,
+            optional_outputs=optional_outputs,
             worker=worker,
             workspace=self.workspace.workspace,
         )

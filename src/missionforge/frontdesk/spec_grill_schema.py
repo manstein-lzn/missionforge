@@ -58,6 +58,7 @@ class QuestionAnswerType(StrEnum):
     """Expected answer shape for a grilling question."""
 
     CHOICE_OR_FREE_TEXT = "choice_or_free_text"
+    RANKED_CHOICES_OR_FREE_TEXT = "ranked_choices_or_free_text"
     FREE_TEXT = "free_text"
     ENUM = "enum"
     BOOLEAN = "boolean"
@@ -567,6 +568,38 @@ class DecisionTree:
 
 
 @dataclass(frozen=True)
+class CoreNeedOpenQuestion:
+    """Non-blocking refinement question carried by a ready core need brief."""
+
+    question_id: str
+    question: str
+    impact: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "CoreNeedOpenQuestion":
+        data = _strict_mapping(payload, "core_need_open_question", {"question_id", "question", "impact"})
+        item = cls(
+            question_id=require_non_empty_str(data.get("question_id"), "core_need_open_question.question_id"),
+            question=require_non_empty_str(data.get("question"), "core_need_open_question.question"),
+            impact=str(data.get("impact", "")),
+        )
+        item.validate()
+        return item
+
+    def validate(self) -> None:
+        require_non_empty_str(self.question_id, "core_need_open_question.question_id")
+        require_non_empty_str(self.question, "core_need_open_question.question")
+        assert_refs_only_payload(self.to_dict(), "core_need_open_question")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "question_id": self.question_id,
+            "question": self.question,
+            "impact": self.impact,
+        }
+
+
+@dataclass(frozen=True)
 class CoreNeedBrief:
     """Structured summary of the true user need."""
 
@@ -579,6 +612,8 @@ class CoreNeedBrief:
     success_signals: list[str]
     constraints: list[str] = field(default_factory=list)
     non_goals: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    open_questions: list[CoreNeedOpenQuestion] = field(default_factory=list)
     source_refs: list[str] = field(default_factory=list)
     schema_version: str = CORE_NEED_BRIEF_SCHEMA_VERSION
 
@@ -598,6 +633,8 @@ class CoreNeedBrief:
                 "success_signals",
                 "constraints",
                 "non_goals",
+                "assumptions",
+                "open_questions",
                 "source_refs",
             },
         )
@@ -611,6 +648,12 @@ class CoreNeedBrief:
             success_signals=require_str_list(data.get("success_signals"), "core_need_brief.success_signals"),
             constraints=require_str_list(data.get("constraints", []), "core_need_brief.constraints"),
             non_goals=require_str_list(data.get("non_goals", []), "core_need_brief.non_goals"),
+            assumptions=require_str_list(data.get("assumptions", []), "core_need_brief.assumptions"),
+            open_questions=_item_list(
+                data.get("open_questions", []),
+                "core_need_brief.open_questions",
+                CoreNeedOpenQuestion.from_dict,
+            ),
             source_refs=require_str_list(data.get("source_refs", []), "core_need_brief.source_refs"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", CORE_NEED_BRIEF_SCHEMA_VERSION),
@@ -631,6 +674,9 @@ class CoreNeedBrief:
         require_str_list(self.success_signals, "core_need_brief.success_signals")
         require_str_list(self.constraints, "core_need_brief.constraints")
         require_str_list(self.non_goals, "core_need_brief.non_goals")
+        require_str_list(self.assumptions, "core_need_brief.assumptions")
+        for question in self.open_questions:
+            question.validate()
         _validate_ref_list(self.source_refs, "core_need_brief.source_refs")
         assert_refs_only_payload(self.to_dict_without_validation(), "core_need_brief")
 
@@ -646,6 +692,8 @@ class CoreNeedBrief:
             "success_signals": list(self.success_signals),
             "constraints": list(self.constraints),
             "non_goals": list(self.non_goals),
+            "assumptions": list(self.assumptions),
+            "open_questions": [question.to_dict() for question in self.open_questions],
             "source_refs": list(self.source_refs),
         }
 
@@ -1497,6 +1545,7 @@ def _item_list(value: Any, field_name: str, factory: Callable[[Mapping[str, Any]
 
 __all__ = [
     "CoreNeedBrief",
+    "CoreNeedOpenQuestion",
     "DecisionNode",
     "DecisionOption",
     "DecisionStatus",

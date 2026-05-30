@@ -6,7 +6,7 @@ import unittest
 from missionforge import FrontDesk
 from missionforge.frontdesk.scout import WorkspaceScout
 from missionforge.frontdesk.semantic_coverage import SemanticCoverageChecker
-from missionforge.frontdesk.spec_grill_schema import CoreNeedBrief, DomainLanguage
+from missionforge.frontdesk.spec_grill_schema import CoreNeedBrief, CoreNeedOpenQuestion, DomainLanguage
 from missionforge.frontdesk.state import CORE_NEED_BRIEF_REF, DOMAIN_LANGUAGE_REF
 
 
@@ -31,6 +31,14 @@ class FrontDeskSemanticCoverageTests(unittest.TestCase):
                     success_signals=["docs/output.md exists."],
                     constraints=["Use Rust only if needed for performance.", "Preserve privacy boundaries."],
                     non_goals=["Do not leak raw conversation into runtime truth."],
+                    assumptions=["The local docs path is the correct output root."],
+                    open_questions=[
+                        CoreNeedOpenQuestion(
+                            question_id="Q-tone",
+                            question="Should the documentation use a terse or tutorial tone?",
+                            impact="Improves polish without changing the first deliverable.",
+                        )
+                    ],
                     source_refs=["frontdesk/session.json"],
                 ).to_dict(),
             )
@@ -52,6 +60,8 @@ class FrontDeskSemanticCoverageTests(unittest.TestCase):
             self.assertIn("Rust", covered_signals)
             self.assertIn("privacy", covered_signals)
             self.assertIn("Rust", " ".join(result.semantic_lock.requirement_clauses))
+            self.assertIn("The local docs path", " ".join(result.semantic_lock.assumptions))
+            self.assertIn("terse or tutorial", " ".join(result.mission_brief.open_questions))
             self.assertIn("privacy", " ".join(result.semantic_lock.risks))
             self.assertEqual(result.sanitized_sources.excluded_source_refs, ["frontdesk/conversation.jsonl"])
             self.assertTrue(frontdesk.workspace.exists("frontdesk/semantic_coverage.json"))

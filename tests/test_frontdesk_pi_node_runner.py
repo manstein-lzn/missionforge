@@ -148,8 +148,31 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             self.assertIn("decision_option_fields", guidance_text)
             self.assertIn("readiness", guidance_text)
             self.assertIn("core_need_ready", guidance_text)
+            self.assertIn("ranked_choices_or_free_text", guidance_text)
+            self.assertIn("open_question_fields", guidance_text)
             self.assertIn("Use frontdesk/conversation.jsonl", guidance_text)
             self.assertIn("Do not copy raw conversation text", guidance_text)
+
+    def test_need_griller_node_spec_marks_no_user_loop_when_core_need_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = FrontDeskPiNodeRunner().run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl", "frontdesk/workspace_facts.json"],
+                expected_outputs=[
+                    "frontdesk/decision_tree.json",
+                    "frontdesk/need_grilling_report.json",
+                    "frontdesk/core_need_brief.json",
+                ],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+
+            spec = json.loads((Path(tempdir) / result.execution_record.node_spec_ref).read_text(encoding="utf-8"))
+            self.assertTrue(spec["guidance"]["execution_policy"]["core_need_brief_required"])
+            guidance_text = json.dumps(spec["guidance"], sort_keys=True)
+            self.assertIn("no-user-loop handoff", guidance_text)
+            self.assertIn("assumption-backed brief", guidance_text)
 
     def test_solution_architect_node_spec_contains_field_type_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

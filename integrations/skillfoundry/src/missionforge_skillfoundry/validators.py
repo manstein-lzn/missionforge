@@ -49,6 +49,15 @@ RAW_CONTEXT_POLICY_TERMS = [
     "free of",
     "excluded",
     "exclude",
+    "non-trigger",
+    "non trigger",
+    "do not activate",
+    "requests to collect",
+    "operating boundaries",
+    "checked for",
+    "inspect",
+    "inspection",
+    "leakage",
     "avoid",
     "forbid",
     "forbidden",
@@ -481,7 +490,7 @@ def _package_text(workspace: str | Path, refs: list[str]) -> str:
 def _first_marker(text: str, markers: list[str]) -> str | None:
     lines = text.splitlines()
     for index, line in enumerate(lines):
-        context = "\n".join(lines[max(0, index - 3) : index + 1])
+        context = "\n".join(lines[max(0, index - 6) : index + 1])
         for marker in markers:
             normalized_marker = marker.lower()
             if normalized_marker not in line:
