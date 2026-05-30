@@ -4,6 +4,10 @@ Last updated: 2026-05-30
 
 Status: planning standard for value-validation development.
 
+Execution follow-on: after Pilot 01 and the benchmark cost-projection patch,
+use `docs/MISSIONFORGE_VALUE_BENCHMARK_COMPLETION_RUNBOOK.md` as the current
+step-by-step runbook for producing the complete value benchmark report.
+
 ## Purpose
 
 MissionForge is valuable only if it improves accepted deliverable outcomes over
