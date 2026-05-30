@@ -4,6 +4,9 @@ import tempfile
 import unittest
 
 from missionforge import FrontDesk
+from missionforge.frontdesk.mission_mapper import MissionIRMapper
+from missionforge.frontdesk.schema import ApprovalAuthority
+from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 class FrontDeskMappingAuditorTests(unittest.TestCase):
@@ -14,7 +17,13 @@ class FrontDeskMappingAuditorTests(unittest.TestCase):
                 "Build docs/output.md. Success means docs/output.md exists.",
                 session_id="fd-audit-gap",
             )
-            frontdesk.draft(session.session_ref)
+            seed_llm_authored_frontdesk_artifacts(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["docs/output.md"],
+            )
+            frontdesk.review_plan(session.session_ref, reviewed_by="user", authority=ApprovalAuthority.USER)
+            MissionIRMapper().map(session=frontdesk.load_session(session.session_ref), workspace=frontdesk.workspace)
             report = frontdesk.workspace.read_json("frontdesk/mission_mapping_report.json")
             report["requirement_mappings"][0]["status"] = "unmapped"
             report["requirement_mappings"][0]["mission_paths"] = []

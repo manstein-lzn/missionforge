@@ -20,8 +20,9 @@ class FrontDeskScoutTests(unittest.TestCase):
 
             self.assertIn("generic_local_verification", result.profile_catalog_snapshot.verification_profile_ids)
             self.assertIn("Which verification profiles are available?", result.workspace_facts.questions_answered_by_workspace)
-            self.assertIn("Rust", result.domain_language.implementation_terms)
-            self.assertIn("privacy", result.domain_language.risk_terms)
+            self.assertEqual(result.domain_language.terms, [])
+            self.assertEqual(result.domain_language.implementation_terms, [])
+            self.assertEqual(result.domain_language.risk_terms, [])
             self.assertIn("frontdesk/conversation.jsonl", result.source_admission_report.excluded_source_refs)
             self.assertTrue(frontdesk.workspace.exists("frontdesk/workspace_facts.json"))
             self.assertTrue(frontdesk.workspace.exists("frontdesk/profile_catalog_snapshot.json"))

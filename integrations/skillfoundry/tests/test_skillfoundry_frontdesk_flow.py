@@ -6,10 +6,13 @@ import tempfile
 import unittest
 
 from missionforge import FrontDesk, MissionIR, MissionRuntime
+from missionforge.frontdesk.mission_mapper import MissionIRMapper
+from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.runner import MissionResult
 from missionforge_skillfoundry import BundleProfile, SkillFoundryMissionCompiler, SkillFoundryRequest
 from missionforge_skillfoundry.runtime import run_skillfoundry_bundle_build
 from missionforge_skillfoundry.workspace import read_json_ref
+from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 CORE_ROOT = Path("src/missionforge")
@@ -30,10 +33,11 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
                 "Use sanitized source refs only and verify package/SKILL.md, "
                 "package/skillfoundry.bundle.json, and package/README.md.",
             )
-            frontdesk.draft(session.session_ref)
-            frontdesk.audit(session.session_ref)
-            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
-            freeze_result = frontdesk.freeze(session.session_ref)
+            freeze_result = _freeze_seeded_frontdesk(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+            )
 
             request = _request_from_frontdesk(root, freeze_result.mission_ir_ref)
             result = SkillFoundryMissionCompiler().compile_request(request, workspace=root)
@@ -64,10 +68,11 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
                 "Build a prompt-only SkillFoundry skill package with package/SKILL.md.",
                 session_id="sf-runtime-frontdesk",
             )
-            frontdesk.draft(session.session_ref)
-            frontdesk.audit(session.session_ref)
-            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
-            freeze_result = frontdesk.freeze(session.session_ref)
+            freeze_result = _freeze_seeded_frontdesk(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+            )
             request = _request_from_frontdesk(root, freeze_result.mission_ir_ref, bundle_id="sf-runtime-skill")
 
             report = run_skillfoundry_bundle_build(
@@ -92,10 +97,17 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
                 session.session_ref,
                 "The package must include package/scripts/skill_runtime.py and package/schemas/runtime.schema.json.",
             )
-            frontdesk.draft(session.session_ref)
-            frontdesk.audit(session.session_ref)
-            frontdesk.approve(session.session_ref, approved_by="skillfoundry-dogfood")
-            freeze_result = frontdesk.freeze(session.session_ref)
+            freeze_result = _freeze_seeded_frontdesk(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=[
+                    "package/SKILL.md",
+                    "package/skillfoundry.bundle.json",
+                    "package/README.md",
+                    "package/scripts/skill_runtime.py",
+                    "package/schemas/runtime.schema.json",
+                ],
+            )
 
             request = _request_from_frontdesk(
                 root,
@@ -132,6 +144,19 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
                         violations.append(f"{path}: from {module} import ...")
 
         self.assertEqual(violations, [])
+
+
+def _freeze_seeded_frontdesk(frontdesk: FrontDesk, session_ref: str, *, expected_artifacts: list[str]):
+    seed_llm_authored_frontdesk_artifacts(
+        frontdesk,
+        session_ref,
+        expected_artifacts=expected_artifacts,
+    )
+    frontdesk.review_plan(session_ref, reviewed_by="skillfoundry-dogfood", authority=ApprovalAuthority.USER)
+    MissionIRMapper().map(session=frontdesk.load_session(session_ref), workspace=frontdesk.workspace)
+    frontdesk.audit(session_ref)
+    frontdesk.approve(session_ref, approved_by="skillfoundry-dogfood")
+    return frontdesk.freeze(session_ref)
 
 
 def _request_from_frontdesk(

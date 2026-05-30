@@ -696,11 +696,23 @@ def _command_parser() -> argparse.ArgumentParser:
     fd_answer.add_argument("--session", required=True, help="FrontDesk session ref.")
     fd_answer.add_argument("--text", required=True, help="User answer text.")
     fd_answer.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
-    for name in ("inspect", "scout", "grill", "cover-semantics", "plan", "map", "draft", "audit", "freeze", "run"):
+    for name in ("inspect", "scout", "grill", "cover-semantics", "plan", "map", "draft", "intent", "audit", "freeze", "run"):
         fd_command = frontdesk_subparsers.add_parser(name, help=f"FrontDesk {name}.")
         fd_command.add_argument("--workspace", default=".", help="Workspace root.")
         fd_command.add_argument("--session", required=True, help="FrontDesk session ref.")
         fd_command.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    fd_compile_product = frontdesk_subparsers.add_parser(
+        "compile-product",
+        help="Compile a FrontDesk intent bundle through a product integration reference.",
+    )
+    fd_compile_product.add_argument("--workspace", default=".", help="Workspace root.")
+    fd_compile_product.add_argument("--session", required=True, help="FrontDesk session ref.")
+    fd_compile_product.add_argument(
+        "--integration-ref",
+        required=True,
+        help="Opaque integration ref. Core supports only 'generic'; product packages provide their own CLI.",
+    )
+    fd_compile_product.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
     fd_review_plan = frontdesk_subparsers.add_parser("review-plan", help="Review a FrontDesk solution plan.")
     fd_review_plan.add_argument("--workspace", default=".", help="Workspace root.")
     fd_review_plan.add_argument("--session", required=True, help="FrontDesk session ref.")

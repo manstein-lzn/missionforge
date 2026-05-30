@@ -46,6 +46,13 @@ The FrontDesk engine remains product-neutral. Product identity enters through
 data or integration-provided contracts, not through product branches in
 `src/missionforge/frontdesk`.
 
+The engine is not allowed to replace LLM reasoning with deterministic
+heuristics. Conversation recording, source admission, workspace scouting, and
+schema validation may run offline. Need grilling, solution architecture,
+product slot filling, and MissionIR/intent mapping require LLM-authored
+FrontDesk artifacts. If those artifacts are absent, service entrypoints fail
+closed instead of producing a low-confidence deterministic draft.
+
 ## Refined Architecture
 
 ```text
@@ -88,7 +95,7 @@ Recommended schema:
 
 ```json
 {
-  "schema_version": "missionforge.product_inquiry_profile.v1",
+  "schema_version": "missionforge.frontdesk.product_inquiry_profile.v1",
   "product_id": "skillfoundry",
   "version": "1.0",
   "display_name": "SkillFoundry",
@@ -209,6 +216,13 @@ they identify information ProductGate will need later.
 `FrontDeskIntentBundle` is the formal FrontDesk output for product-aware
 authoring. It aggregates current FrontDesk artifacts and product slot state
 without becoming a product contract or MissionIR.
+
+Building an intent bundle is an assembly step over LLM-authored FrontDesk
+artifacts. It may preserve explicit refs and validate slot readiness
+deterministically, but it must not auto-infer product meaning from raw
+conversation or generic artifact names. Product slot values must come from
+explicit LLM/PiWorker-authored artifacts, explicit profile defaults, or later
+clarification answers.
 
 Recommended artifact:
 
@@ -489,10 +503,11 @@ product gate reports.
 The existing FrontDesk `MissionIRMapper` should be treated as a generic fallback
 compiler, not as the permanent FrontDesk responsibility.
 
-Short-term compatibility:
+Short-term compatibility after the LLM boundary:
 
 ```text
-FrontDesk.draft()
+LLM-authored FrontDesk artifacts
+  -> FrontDesk.draft()
   -> build generic FrontDeskIntentBundle internally
   -> GenericProductIntegration
   -> draft_mission.json
@@ -512,7 +527,10 @@ ProductIntegration.compile_intent()
 - no product branches in `src/missionforge/runtime`;
 - no product-specific adapters under `src/missionforge/adapters`;
 - no expression language in the first ProductInquiryProfile implementation;
-- no live LLM requirement for default tests;
+- no deterministic authoring fallback when the LLM/PiWorker authoring node is
+  unavailable;
+- no live LLM requirement for default tests; use scripted clients or prewritten
+  LLM artifact fixtures instead;
 - no ProductGate result before runtime/verifier evidence exists;
 - no MissionIR mutation by FrontDesk after freeze.
 

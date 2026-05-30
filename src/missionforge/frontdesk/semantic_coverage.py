@@ -66,7 +66,7 @@ class SemanticCoverageChecker:
         mission_brief = MissionBrief(
             session_id=session.session_id,
             goal=core_need.desired_outcome,
-            deliverable_type=_deliverable_type(core_need.success_signals),
+            deliverable_type=core_need.deliverable_type,
             success_signals=list(core_need.success_signals),
             target_users=list(core_need.target_users),
             non_goals=list(core_need.non_goals),
@@ -108,8 +108,6 @@ def _semantic_lock(session_id: str, core_need: CoreNeedBrief, domain: DomainLang
         *domain.risk_terms,
     ]
     non_goals = list(core_need.non_goals)
-    if "privacy" in domain.risk_terms and "Do not leak raw or private material into runtime truth." not in non_goals:
-        non_goals.append("Do not leak raw or private material into runtime truth.")
     return MissionSemanticLock(
         session_id=session_id,
         summary=core_need.desired_outcome,
@@ -165,13 +163,6 @@ def _coverage_report(
         coverage_items=items,
         unmapped_signals=unmapped,
     )
-
-
-def _deliverable_type(success_signals: list[str]) -> str:
-    joined = " ".join(success_signals).lower()
-    if "readme" in joined or "docs/" in joined or ".md" in joined:
-        return "documentation_change"
-    return "artifact"
 
 
 def _unique_non_empty(values: list[str]) -> list[str]:

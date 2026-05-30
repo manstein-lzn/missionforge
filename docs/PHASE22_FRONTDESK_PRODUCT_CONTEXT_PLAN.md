@@ -2,7 +2,22 @@
 
 Last updated: 2026-05-30
 
-Status: `planned`
+Status: `implemented`
+
+Implementation note:
+
+Phase 22 is implemented in the current codebase. The core contracts live in
+`src/missionforge/frontdesk/inquiry_profile.py`,
+`src/missionforge/frontdesk/intent_bundle.py`,
+`src/missionforge/product_integration.py`, and
+`src/missionforge/product_gate.py`. FrontDesk now writes
+`frontdesk/intent_bundle.json`, keeps `draft()` compatibility through
+`GenericProductIntegration`, exposes `build_intent_bundle()` and
+`compile_product()`, and adds CLI `intent` / `compile-product` commands. The
+SkillFoundry reference bridge lives under
+`integrations/skillfoundry/src/missionforge_skillfoundry/` and compiles
+FrontDesk intent bundles into SkillFoundry requests, product contracts,
+MissionIR, frozen contracts, and product gate spec refs without core imports.
 
 ## Purpose
 
@@ -40,7 +55,11 @@ After this phase, a product integration such as SkillFoundry should be able to:
 9. Verifier owns MissionIR closure.
 10. ProductGate owns product readiness, not generic verifier completion.
 11. PiWorker remains the only LLM worker direction.
-12. Default tests stay deterministic and offline.
+12. Default tests stay deterministic and offline by using scripted clients or
+    prewritten LLM artifact fixtures, not deterministic authoring fallback.
+13. No LLM means no authoring: FrontDesk must fail closed before need
+    grilling, solution architecture, MissionIR mapping, or intent bundle
+    authoring if the LLM/PiWorker-authored artifacts are absent.
 
 ## Target End State
 
@@ -56,8 +75,9 @@ ProductIntegration.inquiry_profile()
   -> ProductIntegration.product_gate()
 ```
 
-The current FrontDesk `draft()` path remains compatible by routing through a
-generic fallback integration.
+The current FrontDesk `draft()` path remains compatible only after LLM-authored
+FrontDesk artifacts exist. It must not fabricate those artifacts through
+deterministic fallback.
 
 ## New Public Concepts
 
@@ -281,13 +301,15 @@ It should:
 - load existing spec-grill artifacts;
 - include generic refs;
 - include product context id/profile ref/hash when present;
-- fill slot values from confirmed decisions or deterministic extraction where
-  possible;
+- fill slot values from LLM-authored FrontDesk artifacts and explicit
+  product-context defaults;
 - mark unknown blocking slots as missing;
 - write `frontdesk/intent_bundle.json`.
 
-The first implementation may use deterministic slot extraction only. LLM-backed
-slot extraction stays opt-in through PiWorker nodes later.
+Deterministic code may preserve explicit refs and validate shape, but it must
+not perform product meaning extraction from raw conversation, artifact names, or
+generic FrontDesk summaries. If LLM/PiWorker-authored slot values or explicit
+profile defaults are absent, blocking product slots remain missing.
 
 ### Tests
 
@@ -431,7 +453,8 @@ Test cases:
 
 ### Goal
 
-Expose product-context-aware FrontDesk while preserving current generic usage.
+Expose product-context-aware FrontDesk while preserving product-neutral service
+entrypoints. Generic usage must still respect the LLM authoring boundary.
 
 ### API
 
@@ -448,10 +471,12 @@ Compatibility:
 FrontDesk.draft(session_ref)
 ```
 
-should continue to work by using a generic fallback integration:
+should continue to work only when the required LLM-authored FrontDesk artifacts
+already exist:
 
 ```text
-FrontDesk.draft()
+LLM-authored FrontDesk artifacts
+  -> FrontDesk.draft()
   -> build_intent_bundle()
   -> GenericProductIntegration
   -> draft_mission.json
@@ -654,7 +679,7 @@ Required wording:
 | FrontDesk emits intent bundle | `tests/test_frontdesk_intent_bundle.py` |
 | Product integration can compile or request clarification | `tests/test_product_integration_contracts.py` |
 | Product gate protocol is generic | `tests/test_product_gate_contracts.py` |
-| Existing generic FrontDesk still works | existing FrontDesk service/CLI/e2e tests |
+| Generic FrontDesk fails closed without LLM artifacts | FrontDesk service/CLI tests |
 | SkillFoundry bridge is formal | SkillFoundry frontdesk context/bridge tests |
 | Core remains product-neutral | product boundary/import tests |
 | Full project validates | `./scripts/validate.sh` and integration validation |
@@ -677,14 +702,14 @@ Current behavior:
 
 ```text
 FrontDesk.draft()
-  -> MissionIRMapper
-  -> draft_mission.json
+  -> fail closed unless LLM-authored FrontDesk artifacts already exist
 ```
 
 Target behavior:
 
 ```text
-FrontDesk.draft()
+LLM-authored FrontDesk artifacts
+  -> FrontDesk.draft()
   -> build_intent_bundle()
   -> GenericProductIntegration
   -> draft_mission.json
@@ -699,7 +724,8 @@ FrontDesk.build_intent_bundle(product_context=...)
 ```
 
 Do not remove current CLI commands in this phase. Add product-context-aware
-commands and keep old commands as generic fallback.
+commands, but keep old commands behind the same LLM-authored artifact boundary
+instead of deterministic authoring fallback.
 
 ## Done Definition
 
@@ -708,7 +734,8 @@ This phase is done when:
 - `ProductInquiryProfile`, `FrontDeskIntentBundle`, `ProductIntegration`, and
   `ProductGate` contracts exist and are tested;
 - FrontDesk can emit `frontdesk/intent_bundle.json`;
-- generic `draft()` compatibility remains green;
+- generic `draft()` and CLI authoring fail closed without LLM-authored
+  FrontDesk artifacts;
 - SkillFoundry has a formal FrontDesk context and bridge outside core;
 - missing product slots route to clarification rather than shallow MissionIR;
 - product-gate criteria remain outside MissionForge core;

@@ -570,6 +570,7 @@ def _compile_prompt_only_mission(request: SkillFoundryRequest, product_contract:
     request.validate()
     product_contract.validate()
     validators = _prompt_only_validators(request, product_contract)
+    inputs = _product_mission_inputs(request, product_contract)
     return MissionIR(
         schema_version="missionforge.mission_ir.v1",
         mission_id=f"skillfoundry-{request.bundle_id}",
@@ -581,12 +582,7 @@ def _compile_prompt_only_mission(request: SkillFoundryRequest, product_contract:
                 "SkillFoundry ProductGradeGate passes before product-grade registry.",
             ],
         ),
-        inputs={
-            "request_ref": product_contract.request_ref,
-            "product_contract_ref": "product_contract/skill_product_contract.json",
-            "acceptance_matrix_ref": product_contract.matrix_ref,
-            "admitted_source_refs": list(request.source_refs),
-        },
+        inputs=inputs,
         outputs={
             "required_artifacts": list(product_contract.target_package_refs),
             "allowed_write_scopes": list(product_contract.allowed_write_scopes),
@@ -649,6 +645,29 @@ def _compile_product_mission(request: SkillFoundryRequest, product_contract: Ski
     raise ContractValidationError(f"unsupported SkillFoundry bundle profile: {product_contract.bundle_profile.value}")
 
 
+def _product_mission_inputs(
+    request: SkillFoundryRequest,
+    product_contract: SkillProductContract,
+) -> dict[str, Any]:
+    inputs: dict[str, Any] = {
+        "request_ref": product_contract.request_ref,
+        "product_contract_ref": "product_contract/skill_product_contract.json",
+        "acceptance_matrix_ref": product_contract.matrix_ref,
+        "admitted_source_refs": list(request.source_refs),
+    }
+    frontdesk_intent_ref = _frontdesk_intent_bundle_ref(request)
+    if frontdesk_intent_ref:
+        inputs["frontdesk_intent_bundle_ref"] = frontdesk_intent_ref
+    return inputs
+
+
+def _frontdesk_intent_bundle_ref(request: SkillFoundryRequest) -> str:
+    for ref in request.source_refs:
+        if ref == "frontdesk/intent_bundle.json" or ref.endswith("/frontdesk/intent_bundle.json"):
+            return ref
+    return ""
+
+
 def _compile_code_runtime_mission(request: SkillFoundryRequest, product_contract: SkillProductContract) -> MissionIR:
     request.validate()
     product_contract.validate()
@@ -658,6 +677,7 @@ def _compile_code_runtime_mission(request: SkillFoundryRequest, product_contract
         target_package_refs=product_contract.target_package_refs,
     )
     validators = _code_runtime_validators(request, product_contract, manifest)
+    inputs = _product_mission_inputs(request, product_contract)
     return MissionIR(
         schema_version="missionforge.mission_ir.v1",
         mission_id=f"skillfoundry-{request.bundle_id}",
@@ -670,12 +690,7 @@ def _compile_code_runtime_mission(request: SkillFoundryRequest, product_contract
                 "SkillFoundry ProductGradeGate passes before product-grade registry.",
             ],
         ),
-        inputs={
-            "request_ref": product_contract.request_ref,
-            "product_contract_ref": "product_contract/skill_product_contract.json",
-            "acceptance_matrix_ref": product_contract.matrix_ref,
-            "admitted_source_refs": list(request.source_refs),
-        },
+        inputs=inputs,
         outputs={
             "required_artifacts": list(product_contract.target_package_refs),
             "allowed_write_scopes": list(product_contract.allowed_write_scopes),

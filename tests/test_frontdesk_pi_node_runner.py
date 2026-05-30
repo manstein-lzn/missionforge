@@ -11,6 +11,8 @@ from missionforge.workers import WorkerAdapterResult
 
 
 class _ScriptedPiWorker:
+    adapter_family = "piworker"
+
     def __init__(self, *, produced_refs: list[str] | None = None, unsafe_metrics: bool = False) -> None:
         self.produced_refs = produced_refs
         self.unsafe_metrics = unsafe_metrics
@@ -96,6 +98,15 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
                 expected_outputs=["frontdesk/need_grilling_report.json"],
             )
 
+        with self.assertRaisesRegex(ContractValidationError, "PiWorker-compatible"):
+            FrontDeskPiNodeRunner().run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl"],
+                expected_outputs=["frontdesk/need_grilling_report.json"],
+                worker=object(),
+            )
+
     def test_run_node_invokes_adapter_and_records_execution_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             worker = _ScriptedPiWorker()
@@ -114,6 +125,123 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             execution_ref = "frontdesk/pi_nodes/fd-pi/need_griller/execution.json"
             self.assertEqual(result.execution_record.node_execution_ref, execution_ref)
             self.assertTrue((Path(tempdir) / execution_ref).exists())
+            self.assertIn("frontdesk/need_grilling_report.json", result.execution_record.output_hashes)
+            self.assertIn("frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json", result.execution_record.input_hashes)
+
+    def test_require_ai_authored_rejects_missing_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            output = Path(tempdir) / "frontdesk/need_grilling_report.json"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("{}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContractValidationError, "missing PiWorker execution provenance"):
+                FrontDeskPiNodeRunner().require_ai_authored(
+                    workspace=tempdir,
+                    ref="frontdesk/need_grilling_report.json",
+                    node_name="need_griller",
+                    session_id="fd-pi",
+                )
+
+    def test_require_ai_authored_rejects_tampered_output_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            runner = FrontDeskPiNodeRunner()
+            runner.run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl"],
+                expected_outputs=["frontdesk/need_grilling_report.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+            (Path(tempdir) / "frontdesk/need_grilling_report.json").write_text(
+                "{\"changed\": true}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ContractValidationError, "output hash"):
+                runner.require_ai_authored(
+                    workspace=tempdir,
+                    ref="frontdesk/need_grilling_report.json",
+                    node_name="need_griller",
+                    session_id="fd-pi",
+                )
+
+    def test_require_ai_authored_rejects_stale_visible_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            visible = Path(tempdir) / "frontdesk/conversation.jsonl"
+            visible.parent.mkdir(parents=True, exist_ok=True)
+            visible.write_text("{\"turn_id\":\"turn-001\"}\n", encoding="utf-8")
+            runner = FrontDeskPiNodeRunner()
+            runner.run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl"],
+                expected_outputs=["frontdesk/need_grilling_report.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+            visible.write_text("{\"turn_id\":\"turn-001\"}\n{\"turn_id\":\"turn-002\"}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ContractValidationError, "visible input hash is stale"):
+                runner.require_ai_authored(
+                    workspace=tempdir,
+                    ref="frontdesk/need_grilling_report.json",
+                    node_name="need_griller",
+                    session_id="fd-pi",
+                )
+
+    def test_require_ai_authored_checks_product_profile_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            runner = FrontDeskPiNodeRunner()
+            profile_hash = "sha256:" + ("a" * 64)
+            runner.run_node(
+                node_name="intent_bundle_author",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/product_inquiry_profile.json"],
+                expected_outputs=["frontdesk/intent_bundle_candidate.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+                product_profile_hash=profile_hash,
+            )
+            runner.require_ai_authored(
+                workspace=tempdir,
+                ref="frontdesk/intent_bundle_candidate.json",
+                node_name="intent_bundle_author",
+                session_id="fd-pi",
+                product_profile_hash=profile_hash,
+            )
+
+            with self.assertRaisesRegex(ContractValidationError, "product profile hash is stale"):
+                runner.require_ai_authored(
+                    workspace=tempdir,
+                    ref="frontdesk/intent_bundle_candidate.json",
+                    node_name="intent_bundle_author",
+                    session_id="fd-pi",
+                    product_profile_hash="sha256:" + ("b" * 64),
+                )
+
+    def test_optional_outputs_may_be_produced_without_being_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            worker = _ScriptedPiWorker(
+                produced_refs=[
+                    "frontdesk/need_grilling_report.json",
+                    "frontdesk/core_need_brief.json",
+                ]
+            )
+            result = FrontDeskPiNodeRunner().run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl"],
+                expected_outputs=["frontdesk/need_grilling_report.json"],
+                optional_outputs=["frontdesk/core_need_brief.json"],
+                worker=worker,
+                workspace=tempdir,
+            )
+
+            self.assertEqual(
+                result.execution_record.produced_refs,
+                ["frontdesk/need_grilling_report.json", "frontdesk/core_need_brief.json"],
+            )
 
     def test_run_node_rejects_unsafe_worker_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

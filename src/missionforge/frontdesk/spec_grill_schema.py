@@ -574,6 +574,7 @@ class CoreNeedBrief:
     core_pain: str
     target_users: list[str]
     usage_moment: str
+    deliverable_type: str
     desired_outcome: str
     success_signals: list[str]
     constraints: list[str] = field(default_factory=list)
@@ -592,6 +593,7 @@ class CoreNeedBrief:
                 "core_pain",
                 "target_users",
                 "usage_moment",
+                "deliverable_type",
                 "desired_outcome",
                 "success_signals",
                 "constraints",
@@ -604,6 +606,7 @@ class CoreNeedBrief:
             core_pain=require_non_empty_str(data.get("core_pain"), "core_need_brief.core_pain"),
             target_users=require_str_list(data.get("target_users"), "core_need_brief.target_users"),
             usage_moment=require_non_empty_str(data.get("usage_moment"), "core_need_brief.usage_moment"),
+            deliverable_type=require_non_empty_str(data.get("deliverable_type"), "core_need_brief.deliverable_type"),
             desired_outcome=require_non_empty_str(data.get("desired_outcome"), "core_need_brief.desired_outcome"),
             success_signals=require_str_list(data.get("success_signals"), "core_need_brief.success_signals"),
             constraints=require_str_list(data.get("constraints", []), "core_need_brief.constraints"),
@@ -623,6 +626,7 @@ class CoreNeedBrief:
         require_non_empty_str(self.core_pain, "core_need_brief.core_pain")
         require_str_list(self.target_users, "core_need_brief.target_users")
         require_non_empty_str(self.usage_moment, "core_need_brief.usage_moment")
+        require_non_empty_str(self.deliverable_type, "core_need_brief.deliverable_type")
         require_non_empty_str(self.desired_outcome, "core_need_brief.desired_outcome")
         require_str_list(self.success_signals, "core_need_brief.success_signals")
         require_str_list(self.constraints, "core_need_brief.constraints")
@@ -637,6 +641,7 @@ class CoreNeedBrief:
             "core_pain": self.core_pain,
             "target_users": list(self.target_users),
             "usage_moment": self.usage_moment,
+            "deliverable_type": self.deliverable_type,
             "desired_outcome": self.desired_outcome,
             "success_signals": list(self.success_signals),
             "constraints": list(self.constraints),

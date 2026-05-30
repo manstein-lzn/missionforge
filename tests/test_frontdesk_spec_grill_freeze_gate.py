@@ -4,6 +4,9 @@ import tempfile
 import unittest
 
 from missionforge import ContractValidationError, FrontDesk
+from missionforge.frontdesk.mission_mapper import MissionIRMapper
+from missionforge.frontdesk.schema import ApprovalAuthority
+from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 class FrontDeskSpecGrillFreezeGateTests(unittest.TestCase):
@@ -38,7 +41,7 @@ class FrontDeskSpecGrillFreezeGateTests(unittest.TestCase):
                 session_id="fd-freeze",
             )
 
-            session = frontdesk.draft(session.session_ref)
+            _seed_mapped_flow(frontdesk, session.session_ref)
             audit = frontdesk.audit(session.session_ref)
             approval = frontdesk.approve(session.session_ref, approved_by="user")
             result = frontdesk.freeze(session.session_ref)
@@ -57,7 +60,7 @@ class FrontDeskSpecGrillFreezeGateTests(unittest.TestCase):
                 "Build docs/output.md. Success means docs/output.md exists.",
                 session_id="fd-freeze-stale",
             )
-            session = frontdesk.draft(session.session_ref)
+            _seed_mapped_flow(frontdesk, session.session_ref)
             frontdesk.audit(session.session_ref)
             frontdesk.approve(session.session_ref, approved_by="user")
             mission_brief = frontdesk.workspace.read_json("frontdesk/mission_brief.json")
@@ -77,7 +80,7 @@ class FrontDeskSpecGrillFreezeGateTests(unittest.TestCase):
                 "Build docs/output.md. Success means docs/output.md exists.",
                 session_id="fd-freeze-plan-stale",
             )
-            session = frontdesk.draft(session.session_ref)
+            _seed_mapped_flow(frontdesk, session.session_ref)
             frontdesk.audit(session.session_ref)
             frontdesk.approve(session.session_ref, approved_by="user")
             solution_plan = frontdesk.workspace.read_json("frontdesk/solution_plan.json")
@@ -89,6 +92,16 @@ class FrontDeskSpecGrillFreezeGateTests(unittest.TestCase):
 
             gate_result = frontdesk.workspace.read_json("frontdesk/freeze_gate_result.json")
             self.assertIn("plan_review_hash", gate_result["failed_checks"])
+
+
+def _seed_mapped_flow(frontdesk: FrontDesk, session_ref: str) -> None:
+    seed_llm_authored_frontdesk_artifacts(
+        frontdesk,
+        session_ref,
+        expected_artifacts=["docs/output.md"],
+    )
+    frontdesk.review_plan(session_ref, reviewed_by="user", authority=ApprovalAuthority.USER)
+    MissionIRMapper().map(session=frontdesk.load_session(session_ref), workspace=frontdesk.workspace)
 
 
 if __name__ == "__main__":

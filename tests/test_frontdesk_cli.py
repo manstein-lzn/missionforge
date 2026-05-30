@@ -9,7 +9,7 @@ from missionforge.adapters.cli import MissionCLI, MissionCommandResult
 
 
 class FrontDeskCLITests(unittest.TestCase):
-    def test_frontdesk_command_happy_path_to_freeze(self) -> None:
+    def test_frontdesk_draft_fails_closed_without_llm_node(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             cli = MissionCLI()
             start = cli.run_command(
@@ -25,26 +25,15 @@ class FrontDeskCLITests(unittest.TestCase):
                 ]
             )
             draft = cli.run_command(["frontdesk", "draft", "--workspace", tempdir, "--session", "frontdesk/session.json"])
-            audit = cli.run_command(["frontdesk", "audit", "--workspace", tempdir, "--session", "frontdesk/session.json"])
-            approve = cli.run_command(
-                [
-                    "frontdesk",
-                    "approve",
-                    "--workspace",
-                    tempdir,
-                    "--session",
-                    "frontdesk/session.json",
-                    "--approved-by",
-                    "user",
-                ]
-            )
-            freeze = cli.run_command(["frontdesk", "freeze", "--workspace", tempdir, "--session", "frontdesk/session.json"])
 
-            for result in (start, draft, audit, approve, freeze):
-                self.assertEqual(MissionCommandResult.from_dict(result.to_dict()), result)
-                self.assertEqual(result.command, "frontdesk")
-                self.assertEqual(result.exit_code, 0)
-            self.assertTrue((Path(tempdir) / freeze.data["compile_result"]["mission_ir_ref"]).exists())
+            self.assertEqual(MissionCommandResult.from_dict(start.to_dict()), start)
+            self.assertEqual(start.command, "frontdesk")
+            self.assertEqual(start.exit_code, 0)
+            self.assertEqual(draft.exit_code, 2)
+            self.assertIn("requires an explicit LLM/PiWorker node", draft.error.message if draft.error else "")
+            session = json.loads((Path(tempdir) / "frontdesk/session.json").read_text(encoding="utf-8"))
+            self.assertEqual(session["status"], "failed_closed")
+            self.assertEqual(session["next_action"], "configure_frontdesk_llm")
 
     def test_freeze_fails_before_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -61,7 +50,6 @@ class FrontDeskCLITests(unittest.TestCase):
                     "fd-cli",
                 ]
             )
-            cli.run_command(["frontdesk", "draft", "--workspace", tempdir, "--session", "frontdesk/session.json"])
 
             result = cli.run_command(["frontdesk", "freeze", "--workspace", tempdir, "--session", "frontdesk/session.json"])
 
@@ -91,7 +79,7 @@ class FrontDeskCLITests(unittest.TestCase):
             self.assertIn("missing_artifacts", payload)
             self.assertIn("freeze_ready", payload)
 
-    def test_explicit_spec_grill_commands(self) -> None:
+    def test_explicit_spec_grill_stops_at_llm_node_without_llm(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             cli = MissionCLI()
             cli.run_command(
@@ -107,29 +95,13 @@ class FrontDeskCLITests(unittest.TestCase):
                 ]
             )
 
-            commands = [
-                ["frontdesk", "scout", "--workspace", tempdir, "--session", "frontdesk/session.json"],
-                ["frontdesk", "grill", "--workspace", tempdir, "--session", "frontdesk/session.json"],
-                ["frontdesk", "cover-semantics", "--workspace", tempdir, "--session", "frontdesk/session.json"],
-                ["frontdesk", "plan", "--workspace", tempdir, "--session", "frontdesk/session.json"],
-                [
-                    "frontdesk",
-                    "review-plan",
-                    "--workspace",
-                    tempdir,
-                    "--session",
-                    "frontdesk/session.json",
-                    "--reviewed-by",
-                    "user",
-                ],
-                ["frontdesk", "map", "--workspace", tempdir, "--session", "frontdesk/session.json"],
-            ]
+            scout = cli.run_command(["frontdesk", "scout", "--workspace", tempdir, "--session", "frontdesk/session.json"])
+            grill = cli.run_command(["frontdesk", "grill", "--workspace", tempdir, "--session", "frontdesk/session.json"])
 
-            for command in commands:
-                result = cli.run_command(command)
-                self.assertEqual(result.exit_code, 0, result.error.message if result.error else "")
-
-            self.assertTrue((Path(tempdir) / "frontdesk/mission_mapping_report.json").exists())
+            self.assertEqual(scout.exit_code, 0, scout.error.message if scout.error else "")
+            self.assertEqual(grill.exit_code, 2)
+            self.assertIn("requires an explicit LLM/PiWorker node", grill.error.message if grill.error else "")
+            self.assertFalse((Path(tempdir) / "frontdesk/mission_mapping_report.json").exists())
 
     def test_inspect_reports_latest_question_and_freeze_readiness(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -151,8 +123,10 @@ class FrontDeskCLITests(unittest.TestCase):
 
             self.assertEqual(inspect.data["freeze_ready"], False)
             self.assertIn("frontdesk/draft_mission.json", inspect.data["missing_artifacts"])
-            self.assertIn("performance", inspect.data["latest_question"]["question"])
+            self.assertIsNone(inspect.data["latest_question"])
             self.assertEqual(inspect.data["plan_review_status"], "missing")
+            self.assertEqual(inspect.data["status"], "failed_closed")
+            self.assertEqual(inspect.data["next_action"], "configure_frontdesk_llm")
 
     def test_invalid_session_ref_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -162,6 +136,40 @@ class FrontDeskCLITests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 2)
             self.assertEqual(result.error.code if result.error else "", "invalid_input")
+
+    def test_intent_and_generic_compile_product_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            cli = MissionCLI()
+            cli.run_command(
+                [
+                    "frontdesk",
+                    "start",
+                    "--workspace",
+                    tempdir,
+                    "--text",
+                    "Build docs/output.md. Success means docs/output.md exists.",
+                    "--session-id",
+                    "fd-cli-intent",
+                ]
+            )
+            intent = cli.run_command(["frontdesk", "intent", "--workspace", tempdir, "--session", "frontdesk/session.json"])
+            compiled = cli.run_command(
+                [
+                    "frontdesk",
+                    "compile-product",
+                    "--workspace",
+                    tempdir,
+                    "--session",
+                    "frontdesk/session.json",
+                    "--integration-ref",
+                    "generic",
+                ]
+            )
+
+            self.assertEqual(intent.exit_code, 2)
+            self.assertEqual(compiled.exit_code, 2)
+            self.assertIn("requires an explicit LLM/PiWorker node", intent.error.message if intent.error else "")
+            self.assertIn("requires an explicit LLM/PiWorker node", compiled.error.message if compiled.error else "")
 
 
 if __name__ == "__main__":

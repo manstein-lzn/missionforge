@@ -279,6 +279,7 @@ class PiAgentRuntimeAdapter:
     """Invoke the dedicated PI Agent runtime and normalize refs-only evidence."""
 
     adapter_id = "pi_agent_runtime"
+    adapter_family = "piworker"
 
     def __init__(
         self,

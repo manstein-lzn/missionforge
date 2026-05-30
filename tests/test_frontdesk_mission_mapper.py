@@ -4,7 +4,9 @@ import tempfile
 import unittest
 
 from missionforge import FrontDesk, MissionIR
+from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
+from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 class FrontDeskMissionMapperTests(unittest.TestCase):
@@ -15,13 +17,15 @@ class FrontDeskMissionMapperTests(unittest.TestCase):
                 "Build docs/output.md. Success means docs/output.md exists and privacy remains protected.",
                 session_id="fd-map",
             )
-            frontdesk.scout(session.session_ref)
-            frontdesk.grill(session.session_ref)
-            frontdesk.cover_semantics(session.session_ref)
-            frontdesk.plan_solution(session.session_ref)
+            seed_llm_authored_frontdesk_artifacts(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["docs/output.md"],
+                constraints=["privacy remains protected"],
+            )
             frontdesk.review_plan(session.session_ref, reviewed_by="user", authority=ApprovalAuthority.USER)
 
-            result = frontdesk.map_mission(session.session_ref)
+            result = MissionIRMapper().map(session=frontdesk.load_session(session.session_ref), workspace=frontdesk.workspace)
 
             self.assertEqual(result.mission_plan.expected_artifacts, ["docs/output.md"])
             self.assertFalse(result.mapping_report.has_blocking_gaps)

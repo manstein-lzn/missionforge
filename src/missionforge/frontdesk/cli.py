@@ -8,6 +8,7 @@ from typing import Any
 
 from ..contracts import ContractValidationError
 from .schema import ApprovalAuthority
+from .generic_integration import GenericProductIntegration
 from .service import FrontDesk
 from .spec_grill_schema import PlanReviewDecision
 
@@ -55,6 +56,7 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
         session = frontdesk.draft(args.session)
         return {"session": session.to_dict()}, [
             session.session_ref,
+            "frontdesk/intent_bundle.json",
             session.semantic_lock_ref,
             session.mission_brief_ref,
             session.profile_recommendations_ref,
@@ -63,6 +65,25 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
             "frontdesk/solution_plan.json",
             "frontdesk/plan_review.json",
             "frontdesk/mission_mapping_report.json",
+        ]
+    if action == "intent":
+        bundle = frontdesk.build_intent_bundle(args.session)
+        return {
+            "intent_bundle_ref": bundle.intent_bundle_ref,
+            "readiness": bundle.readiness.value,
+            "product_id": bundle.product_context.product_id,
+            "missing_product_slots": list(bundle.missing_blocking_slots),
+        }, [bundle.intent_bundle_ref, *bundle.evidence_refs]
+    if action == "compile-product":
+        if args.integration_ref != "generic":
+            raise ContractValidationError(
+                "core FrontDesk CLI cannot import product integrations; use a product CLI entrypoint or --integration-ref generic"
+            )
+        result = frontdesk.compile_product(args.session, GenericProductIntegration())
+        return {"product_compile_result": result.to_dict()}, [
+            result.intent_bundle_ref,
+            result.mission_ir_ref,
+            *result.evidence_refs,
         ]
     if action == "audit":
         audit = frontdesk.audit(args.session)

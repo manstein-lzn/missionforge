@@ -34,6 +34,9 @@ PLAN_RISK_REGISTER_REF = "frontdesk/plan_risk_register.json"
 PLAN_REVIEW_REF = "frontdesk/plan_review.json"
 MISSION_MAPPING_REPORT_REF = "frontdesk/mission_mapping_report.json"
 FREEZE_GATE_RESULT_REF = "frontdesk/freeze_gate_result.json"
+PRODUCT_INQUIRY_PROFILE_REF = "frontdesk/product_inquiry_profile.json"
+INTENT_BUNDLE_CANDIDATE_REF = "frontdesk/intent_bundle_candidate.json"
+INTENT_BUNDLE_REF = "frontdesk/intent_bundle.json"
 
 
 ALLOWED_TRANSITIONS: dict[FrontDeskStatus, set[FrontDeskStatus]] = {
@@ -93,6 +96,8 @@ class FrontDeskAuthoringSession:
     profile_recommendations_ref: str = PROFILE_RECOMMENDATIONS_REF
     mission_plan_ref: str = MISSION_PLAN_REF
     draft_mission_ref: str = DRAFT_MISSION_REF
+    product_inquiry_profile_ref: str = PRODUCT_INQUIRY_PROFILE_REF
+    intent_bundle_ref: str = INTENT_BUNDLE_REF
     mission_audit_ref: str = MISSION_AUDIT_REF
     authoring_approval_ref: str = AUTHORING_APPROVAL_REF
     freeze_manifest_ref: str = FREEZE_MANIFEST_REF
@@ -124,6 +129,8 @@ class FrontDeskAuthoringSession:
             "profile_recommendations_ref",
             "mission_plan_ref",
             "draft_mission_ref",
+            "product_inquiry_profile_ref",
+            "intent_bundle_ref",
             "mission_audit_ref",
             "authoring_approval_ref",
             "freeze_manifest_ref",
@@ -168,6 +175,14 @@ class FrontDeskAuthoringSession:
                 data.get("draft_mission_ref", DRAFT_MISSION_REF),
                 "frontdesk_session.draft_mission_ref",
             ),
+            product_inquiry_profile_ref=validate_ref(
+                data.get("product_inquiry_profile_ref", PRODUCT_INQUIRY_PROFILE_REF),
+                "frontdesk_session.product_inquiry_profile_ref",
+            ),
+            intent_bundle_ref=validate_ref(
+                data.get("intent_bundle_ref", INTENT_BUNDLE_REF),
+                "frontdesk_session.intent_bundle_ref",
+            ),
             mission_audit_ref=validate_ref(
                 data.get("mission_audit_ref", MISSION_AUDIT_REF),
                 "frontdesk_session.mission_audit_ref",
@@ -208,6 +223,8 @@ class FrontDeskAuthoringSession:
             profile_recommendations_ref=self.profile_recommendations_ref,
             mission_plan_ref=self.mission_plan_ref,
             draft_mission_ref=self.draft_mission_ref,
+            product_inquiry_profile_ref=self.product_inquiry_profile_ref,
+            intent_bundle_ref=self.intent_bundle_ref,
             mission_audit_ref=self.mission_audit_ref,
             authoring_approval_ref=self.authoring_approval_ref,
             freeze_manifest_ref=self.freeze_manifest_ref,
@@ -233,6 +250,8 @@ class FrontDeskAuthoringSession:
             profile_recommendations_ref=self.profile_recommendations_ref,
             mission_plan_ref=self.mission_plan_ref,
             draft_mission_ref=self.draft_mission_ref,
+            product_inquiry_profile_ref=self.product_inquiry_profile_ref,
+            intent_bundle_ref=self.intent_bundle_ref,
             mission_audit_ref=self.mission_audit_ref,
             authoring_approval_ref=self.authoring_approval_ref,
             freeze_manifest_ref=self.freeze_manifest_ref,
@@ -261,6 +280,8 @@ class FrontDeskAuthoringSession:
             "profile_recommendations_ref",
             "mission_plan_ref",
             "draft_mission_ref",
+            "product_inquiry_profile_ref",
+            "intent_bundle_ref",
             "mission_audit_ref",
             "authoring_approval_ref",
             "freeze_manifest_ref",
@@ -294,6 +315,8 @@ class FrontDeskAuthoringSession:
             "profile_recommendations_ref": self.profile_recommendations_ref,
             "mission_plan_ref": self.mission_plan_ref,
             "draft_mission_ref": self.draft_mission_ref,
+            "product_inquiry_profile_ref": self.product_inquiry_profile_ref,
+            "intent_bundle_ref": self.intent_bundle_ref,
             "mission_audit_ref": self.mission_audit_ref,
             "authoring_approval_ref": self.authoring_approval_ref,
             "freeze_manifest_ref": self.freeze_manifest_ref,

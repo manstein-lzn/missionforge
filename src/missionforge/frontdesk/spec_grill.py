@@ -1,28 +1,27 @@
-"""Spec-grill orchestration helpers."""
+"""Spec-grill LLM node templates and orchestration boundary."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from ..profiles import ProfileRegistry
-from .mission_mapper import MissionIRMapper, MissionMappingResult
-from .need_griller import NeedGrillResult, NeedGriller
+from ..contracts import ContractValidationError
+from .mission_mapper import MissionMappingResult
+from .need_griller import NeedGrillResult, need_griller_node_template
 from .scout import ScoutResult, WorkspaceScout
-from .schema import ApprovalAuthority
-from .semantic_coverage import SemanticCoverageChecker, SemanticCoverageResult
-from .solution_architect import SolutionArchitect, SolutionArchitectureResult
-from .spec_grill_schema import PlanReviewDecision, PlanReviewRecord
-from .state import PLAN_REVIEW_REF, SOLUTION_PLAN_REF, FrontDeskAuthoringSession
+from .semantic_coverage import SemanticCoverageResult
+from .solution_architect import SolutionArchitectureResult, solution_architect_node_template
+from .spec_grill_schema import PlanReviewRecord
+from .state import FrontDeskAuthoringSession
 from .workspace import FrontDeskWorkspace
 
 
 @dataclass(frozen=True)
 class SpecGrillDraftResult:
-    """Result of running the deterministic spec-grill path to draft MissionIR."""
+    """Refs-first result shell for a FrontDesk spec-grill authoring run."""
 
     scout: ScoutResult
-    grill: NeedGrillResult
+    grill: NeedGrillResult | None = None
     semantic_coverage: SemanticCoverageResult | None = None
     solution: SolutionArchitectureResult | None = None
     plan_review: PlanReviewRecord | None = None
@@ -35,7 +34,7 @@ class SpecGrillDraftResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "scout": self.scout.to_dict(),
-            "grill": self.grill.to_dict(),
+            "grill": self.grill.to_dict() if self.grill else None,
             "semantic_coverage": self.semantic_coverage.to_dict() if self.semantic_coverage else None,
             "solution": self.solution.to_dict() if self.solution else None,
             "plan_review": self.plan_review.to_dict() if self.plan_review else None,
@@ -44,10 +43,29 @@ class SpecGrillDraftResult:
         }
 
 
-class SpecGrillPipeline:
-    """Small deterministic pipeline used by FrontDesk service and tests."""
+def spec_grill_node_templates(session_id: str) -> list[dict[str, Any]]:
+    """Return static AI node role/output templates for FrontDesk authoring."""
 
-    def __init__(self, *, registry: ProfileRegistry | None = None) -> None:
+    return [
+        need_griller_node_template(session_id),
+        solution_architect_node_template(session_id),
+        {
+            "node": "frontdesk.mission_ir_mapper",
+            "session_id": session_id,
+            "role": "Map approved FrontDesk artifacts into MissionIR or an intent bundle using structured refs only.",
+            "rules": [
+                "Do not use raw conversation as runtime truth.",
+                "Do not approve, freeze, run, or verify the mission.",
+                "Do not invent product compiler behavior.",
+            ],
+        },
+    ]
+
+
+class SpecGrillPipeline:
+    """Service boundary for future LLM/PiWorker-backed FrontDesk orchestration."""
+
+    def __init__(self, *, registry: object | None = None) -> None:
         self.registry = registry
 
     def run_to_draft(
@@ -57,53 +75,11 @@ class SpecGrillPipeline:
         workspace: FrontDeskWorkspace,
         auto_policy_review: bool = True,
     ) -> SpecGrillDraftResult:
-        scout = WorkspaceScout(registry=self.registry).scout(session=session, workspace=workspace)
-        grill = NeedGriller().grill(session=session, workspace=workspace)
-        if grill.report.readiness.value != "core_need_ready":
-            return SpecGrillDraftResult(scout=scout, grill=grill)
-        coverage = SemanticCoverageChecker().cover(session=session, workspace=workspace)
-        solution = SolutionArchitect(registry=self.registry).plan(session=session, workspace=workspace)
-        plan_review = None
-        mapping = None
-        if auto_policy_review:
-            plan_review = write_policy_plan_review(
-                session=session,
-                workspace=workspace,
-                reviewed_by="frontdesk.policy",
-                notes=["Policy review for deterministic offline FrontDesk draft."],
-            )
-            mapping = MissionIRMapper().map(session=session, workspace=workspace)
-        return SpecGrillDraftResult(
-            scout=scout,
-            grill=grill,
-            semantic_coverage=coverage,
-            solution=solution,
-            plan_review=plan_review,
-            mapping=mapping,
+        session.validate()
+        WorkspaceScout().scout(session=session, workspace=workspace)
+        raise ContractValidationError(
+            "SpecGrillPipeline requires LLM/PiWorker-authored node outputs; deterministic orchestration has been removed"
         )
 
 
-def write_policy_plan_review(
-    *,
-    session: FrontDeskAuthoringSession,
-    workspace: FrontDeskWorkspace,
-    reviewed_by: str,
-    notes: list[str] | None = None,
-) -> PlanReviewRecord:
-    from .spec_grill_schema import MissionSolutionPlan
-
-    solution_plan = MissionSolutionPlan.from_dict(workspace.read_json(SOLUTION_PLAN_REF))
-    review = PlanReviewRecord(
-        session_id=session.session_id,
-        decision=PlanReviewDecision.APPROVE,
-        reviewed_plan_ref=SOLUTION_PLAN_REF,
-        reviewed_plan_hash=solution_plan.plan_hash,
-        reviewed_by=reviewed_by,
-        authority=ApprovalAuthority.POLICY,
-        review_notes=list(notes or []),
-    )
-    workspace.write_json(PLAN_REVIEW_REF, review.to_dict())
-    return review
-
-
-__all__ = ["SpecGrillDraftResult", "SpecGrillPipeline", "write_policy_plan_review"]
+__all__ = ["SpecGrillDraftResult", "SpecGrillPipeline", "spec_grill_node_templates"]

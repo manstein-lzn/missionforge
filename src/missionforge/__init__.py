@@ -32,10 +32,13 @@ from .frontdesk import (
     FrontDeskFreezeManifest,
     FrontDeskFreezeGate,
     FrontDeskFreezeGateResult,
+    FrontDeskIntentBundle,
     FrontDeskMissionCompiler,
     FrontDeskState,
     FrontDeskStatus,
     FrontDeskWorkspace,
+    IntentBundleReadiness,
+    IntentGenericRefs,
     MissionIRMappingReport,
     MissionAuthoringAudit,
     MissionBrief,
@@ -45,6 +48,8 @@ from .frontdesk import (
     MissionSolutionPlan,
     NeedGrillingReport,
     PlanReviewRecord,
+    ProductContextSnapshot,
+    ProductInquiryProfile,
     ProfileRecommendation,
     ProfileRecommendationSet,
     RuntimeFeedbackAction,
@@ -71,6 +76,15 @@ from .json_store import JsonArtifactStore, JsonEventLogStore, JsonRunStore, Json
 from .metric_store import MetricStore
 from .metrics import MetricEvent, MetricProjection, MetricTrustLevel, project_metric_events
 from .profiles import CapabilityProfile, ProfileExpansion, ProfilePack, ProfileRegistry, VerificationProfile
+from .product_gate import ProductGateFinding, ProductGateResult, ProductGateSeverity, ProductGateSpec, ProductGateStatus
+from .product_integration import (
+    ProductArtifactRefs,
+    ProductClarificationQuestion,
+    ProductClarificationRequest,
+    ProductCompileResult,
+    ProductCompileStatus,
+    ProductIntegration,
+)
 from .revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
 from .revision_store import MissionRevisionStore, apply_mission_revision
 from .review import ReviewPacket, ReviewerDecision
@@ -133,6 +147,7 @@ __all__ = [
     "FrontDeskFreezeManifest",
     "FrontDeskFreezeGate",
     "FrontDeskFreezeGateResult",
+    "FrontDeskIntentBundle",
     "FrontDeskMissionCompiler",
     "FrontDeskState",
     "FrontDeskStatus",
@@ -141,6 +156,8 @@ __all__ = [
     "ExpandedMission",
     "FrozenMissionContract",
     "InMemoryEvidenceStore",
+    "IntentBundleReadiness",
+    "IntentGenericRefs",
     "JsonArtifactStore",
     "JsonEventLogStore",
     "JsonRunStore",
@@ -186,6 +203,19 @@ __all__ = [
     "ProfileRecommendation",
     "ProfileRecommendationSet",
     "PlanReviewRecord",
+    "ProductArtifactRefs",
+    "ProductClarificationQuestion",
+    "ProductClarificationRequest",
+    "ProductCompileResult",
+    "ProductCompileStatus",
+    "ProductContextSnapshot",
+    "ProductGateFinding",
+    "ProductGateResult",
+    "ProductGateSeverity",
+    "ProductGateSpec",
+    "ProductGateStatus",
+    "ProductInquiryProfile",
+    "ProductIntegration",
     "ProfileRegistry",
     "Ref",
     "RepairStrategyProposal",

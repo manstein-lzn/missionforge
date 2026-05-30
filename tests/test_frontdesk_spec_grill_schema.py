@@ -89,6 +89,7 @@ class FrontDeskSpecGrillSchemaTests(unittest.TestCase):
             core_pain="The mission intent is lost during long-running AI work.",
             target_users=["missionforge_user"],
             usage_moment="Before runtime starts.",
+            deliverable_type="artifact",
             desired_outcome="A reviewed MissionIR contract.",
             success_signals=["Mapping report covers every requirement."],
             source_refs=["frontdesk/semantic_lock.json"],

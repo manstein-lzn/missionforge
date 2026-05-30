@@ -314,6 +314,7 @@ class FauxPiWorkerAdapter:
     """Deterministic harness-compatible faux PiWorker adapter."""
 
     adapter_id = "faux_piworker"
+    adapter_family = "piworker"
 
     def __init__(self, *, request_contract_adjustment: bool = False) -> None:
         self.request_contract_adjustment = request_contract_adjustment

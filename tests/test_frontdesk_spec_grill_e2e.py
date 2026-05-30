@@ -4,6 +4,9 @@ import tempfile
 import unittest
 
 from missionforge import FrontDesk, MissionIR
+from missionforge.frontdesk.mission_mapper import MissionIRMapper
+from missionforge.frontdesk.schema import ApprovalAuthority
+from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 class FrontDeskSpecGrillE2ETests(unittest.TestCase):
@@ -15,11 +18,18 @@ class FrontDeskSpecGrillE2ETests(unittest.TestCase):
                 session_id="fd-e2e",
             )
 
-            draft_session = frontdesk.draft(session.session_ref)
-            audit = frontdesk.audit(draft_session.session_ref)
-            approval = frontdesk.approve(draft_session.session_ref, approved_by="user")
-            compile_result = frontdesk.freeze(draft_session.session_ref)
-            inspect = frontdesk.inspect(draft_session.session_ref)
+            seed_llm_authored_frontdesk_artifacts(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["docs/output.md"],
+                constraints=["privacy remains protected"],
+            )
+            frontdesk.review_plan(session.session_ref, reviewed_by="user", authority=ApprovalAuthority.USER)
+            MissionIRMapper().map(session=frontdesk.load_session(session.session_ref), workspace=frontdesk.workspace)
+            audit = frontdesk.audit(session.session_ref)
+            approval = frontdesk.approve(session.session_ref, approved_by="user")
+            compile_result = frontdesk.freeze(session.session_ref)
+            inspect = frontdesk.inspect(session.session_ref)
 
             mission = MissionIR.from_dict(frontdesk.workspace.read_json(compile_result.mission_ir_ref))
             self.assertEqual(audit.decision.value, "approve")

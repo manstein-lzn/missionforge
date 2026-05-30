@@ -9,6 +9,8 @@ from .compiler import (
     compile_skillfoundry_bundle,
 )
 from .dogfood import SkillFoundryDogfoodReport, run_skillfoundry_live_dogfood
+from .frontdesk_bridge import SkillFoundryFrontDeskIntegration, build_skillfoundry_request, compile_frontdesk_intent
+from .frontdesk_context import SkillFoundryInquiryProfile
 from .product_contract import (
     BUNDLE_MANIFEST_SCHEMA_VERSION,
     ACCEPTANCE_COVERAGE_REPORT_REF,
@@ -60,6 +62,8 @@ __all__ = [
     "SkillBundleManifest",
     "SkillFoundryCompileResult",
     "SkillFoundryDogfoodReport",
+    "SkillFoundryFrontDeskIntegration",
+    "SkillFoundryInquiryProfile",
     "SkillFoundryMissionCompiler",
     "SkillFoundryProductReport",
     "SkillFoundryRegistry",
@@ -69,8 +73,10 @@ __all__ = [
     "SkillPackageTarget",
     "acceptance_summary_for_profile",
     "allowed_write_scopes_for_profile",
+    "build_skillfoundry_request",
     "capability_surface_for_profile",
     "compile_skillfoundry_bundle",
+    "compile_frontdesk_intent",
     "evaluate_product_grade",
     "manifest_for_profile",
     "register_skill_bundle",

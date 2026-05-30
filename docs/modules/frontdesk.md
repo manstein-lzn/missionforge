@@ -8,9 +8,17 @@ surface.
 It turns natural-language intent, user answers, host-provided facts, optional
 product-scoped inquiry metadata, and governed artifact refs into a reviewable
 `FrontDeskIntentBundle`. Product integrations or the generic fallback compiler
-then turn that bundle into MissionIR. This keeps FrontDesk usable without
-requiring users to hand-write MissionIR while preventing MissionForge core from
-learning product-specific backend rules.
+then turn that bundle into MissionIR. This keeps users from hand-writing
+MissionIR while preventing MissionForge core from learning product-specific
+backend rules.
+
+FrontDesk authoring intelligence is mandatory. The service layer may collect
+conversation turns, inspect refs, and scout workspace/profile metadata without
+a live authoring worker. It must fail closed before need grilling, solution
+architecture, MissionIR mapping, or intent bundle authoring when no LLM/PiWorker
+node has produced the required FrontDesk artifacts. Deterministic code may
+preserve explicit evidence and validate schemas; it must not pretend to
+understand user needs.
 
 FrontDesk is a product-grade authoring surface, not a runtime shortcut and not
 an MVP shell.
@@ -18,7 +26,9 @@ an MVP shell.
 The active requirements-discovery behavior is specified in
 `docs/FRONTDESK_SPEC_GRILL_DESIGN.md`. The refined product-context boundary is
 specified in `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md`, with the
-development plan in `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`.
+development plan in `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The
+planned live PiWorker authoring path is specified in
+`docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md`.
 
 ```text
 user intent + source refs
@@ -51,6 +61,11 @@ FrontDesk owns the pre-runtime authoring workflow:
 - user or policy approval records;
 - freeze manifest and handoff refs;
 - optional operator commands for authoring, inspection, freezing, and running.
+
+`start`, `answer`, `inspect`, and metadata `scout` are not intelligence nodes
+and can run offline. `grill`, `draft`, `plan`, `map`, and intent bundle
+authoring require LLM-authored artifacts and fail closed with
+`configure_frontdesk_llm` when those artifacts are absent.
 
 FrontDesk is generic. It helps discover intent for software work,
 documentation work, data work, research work, operational tasks, and external
@@ -127,6 +142,10 @@ Deterministic MissionForge code must own:
 - revision authority after freeze.
 
 LLM output is never accepted as task truth by itself.
+
+The inverse is also required: deterministic code is never accepted as
+user-need understanding by itself. If the LLM-backed authoring node is
+unavailable, the workflow stops instead of fabricating a low-confidence draft.
 
 ## Relationship To Profiles
 
@@ -336,7 +355,7 @@ The API should expose refs and structured state, not raw provider payloads.
 
 ## LLM Provider Strategy
 
-FrontDesk requires LLM intelligence for high-quality authoring. It should use
+FrontDesk requires LLM intelligence for authoring. It should use
 MissionForge's existing PiWorker-first direction without creating a second
 production worker.
 
@@ -344,11 +363,15 @@ Acceptable implementation paths:
 
 - use PiWorker as an internal authoring assistant through a bounded FrontDesk
   work unit;
-- use a narrow LLM adapter that returns structured FrontDesk draft artifacts;
-- use deterministic scripted clients in default tests.
+- use a PiWorker-compatible adapter-family marker for production
+  configuration, not a second provider abstraction;
+- use deterministic scripted clients or prewritten LLM artifact fixtures in
+  tests only when they include the same content-bound execution provenance as
+  a PiWorker run.
 
-The default test suite must remain offline and deterministic. Live FrontDesk
-dogfood should be explicit opt-in.
+The default test suite must remain offline and deterministic, but service-level
+tests must not exercise a product path that silently falls back to
+deterministic understanding. Live FrontDesk dogfood should be explicit opt-in.
 
 ## Runtime And Revision Interaction
 
@@ -452,11 +475,12 @@ FrontDesk implementation should include tests for:
 
 ## Current Status
 
-Status: implemented product module.
+Status: implemented product module with product context and intent-bundle first
+slice.
 
-Product context and intent-bundle boundaries are planned next. The current
+Product context and intent-bundle boundaries are now implemented. The current
 implementation still maps FrontDesk artifacts directly to MissionIR for generic
-compatibility. Future work should reinterpret that direct mapping as
+compatibility, but that path is explicitly represented as
 `GenericProductIntegration`, not as the permanent FrontDesk responsibility.
 
 The current implementation includes:
@@ -467,29 +491,39 @@ The current implementation includes:
   core need briefs, grilling reports, semantic coverage reports, solution
   plans, plan reviews, mapping reports, and freeze gate results;
 - deterministic workspace/profile scouting before user questioning;
-- active NeedGriller behavior that treats implementation requests as
-  hypotheses and asks one targeted question by default;
-- semantic coverage checks that preserve meaningful signals such as Rust,
-  privacy, schema, health, local, performance, and long-running constraints;
+- LLM node templates for NeedGriller and SolutionArchitect that fail closed
+  unless PiWorker-authored artifacts exist;
+- semantic coverage checks over explicit AI-authored domain language and
+  semantic-lock clauses, not raw conversation guessing;
 - solution planning with known profile recommendations and explicit plan
   review;
 - generic fallback MissionIR mapping with requirement coverage reports;
+- `ProductInquiryProfile` contracts for authoring-time product metadata;
+- `FrontDeskIntentBundle` contracts and `frontdesk/intent_bundle.json` output;
+- `ProductIntegration`, `ProductCompileResult`, and generic `ProductGate`
+  result contracts;
+- `FrontDesk.build_intent_bundle()` and `FrontDesk.compile_product()` service
+  APIs;
+- CLI commands for `frontdesk intent` and `frontdesk compile-product`;
 - deterministic generic MissionIR compiler and freeze gate;
-- deterministic service facade;
-- full spec-grill `draft()` convenience path with policy plan review for
-  offline tests;
+- fail-closed service facade for authoring operations when no LLM/PiWorker
+  authoring node has produced the required artifacts;
+- spec-grill `draft()` command that now stops at the LLM boundary instead of
+  using deterministic authoring fallback;
 - LLM-assisted elicitor, planner, and auditor boundaries with scripted tests;
 - CLI commands for start, answer, inspect, scout, grill, cover-semantics, plan,
-  review-plan, map, draft, audit, approve, freeze, and run;
+  review-plan, map, draft, intent, compile-product, audit, approve, freeze,
+  and run;
 - opt-in PiWorker node runner that builds bounded contracts, requires explicit
   adapter injection, validates exact expected refs, and records execution
   provenance without adding another worker abstraction;
 - runtime feedback recommendations for repair, resume, revision, redesign,
   profile or validator extension, human review, and stop;
-- SkillFoundry dogfood that consumes FrontDesk-generated refs from
-  `integrations/skillfoundry` without adding core runtime branches.
+- SkillFoundry dogfood and formal SkillFoundry FrontDesk bridge that consume
+  FrontDesk-generated refs from `integrations/skillfoundry` without adding core
+  runtime branches.
 
-Verified on 2026-05-29 with:
+Verified on 2026-05-30 with:
 
 ```bash
 PYTHONPATH=src python3 -m unittest \
@@ -523,13 +557,13 @@ tests/test_frontdesk_pi_node_runner.py
 # Ran 81 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 329 tests: OK (skipped=2)
+# Ran 359 tests: OK (skipped=2)
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
-# Ran 78 tests: OK (skipped=1)
+# Ran 84 tests: OK (skipped=1)
 
 git diff --check
 # passed

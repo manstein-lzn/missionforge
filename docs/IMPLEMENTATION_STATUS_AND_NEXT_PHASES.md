@@ -29,16 +29,22 @@ authoritative design documents remain:
 - `docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`
 - `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md`
 - `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`
+- `docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md`
 - `docs/FRONTDESK_SPEC_GRILL_DESIGN.md`
 - `docs/FRONTDESK_SPEC_GRILL_IMPLEMENTATION_PLAN.md`
 - `docs/modules/*.md`
 
 Update note:
 
-Phase 17-21 first slices have now been implemented. This document remains the
-status and rationale record; `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md` is
-the concise development reference for the landed boundaries and follow-on
-rules.
+Phase 17-22 first slices have now been implemented. Phase 23 is the next
+planned FrontDesk implementation phase for wiring real PiWorker-backed AI
+authoring without reintroducing deterministic requirement extraction. This
+document remains the
+status and rationale record; `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md` and
+`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md` are the concise development
+references for the landed boundaries, while
+`docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md` is the concise
+development reference for the next live FrontDesk AI path.
 
 ## Executive Position
 
@@ -108,9 +114,9 @@ Core rules:
 | Phase 19 metric dict sunset | Implemented first slice | Operator diagnosis reads typed metric projection rather than loose route keys |
 | Phase 20 profile extension kit | Implemented first slice | `ProfilePack` supports external data-first profile packs |
 | Phase 21 run audit | Implemented first slice | `MissionRunAudit` provides refs-only stale/missing ref diagnostics |
-| FrontDesk authoring | Implemented product module with spec-grill first slice | Natural-language authoring now scouts workspace/profile facts, actively grills unclear needs, checks semantic coverage, produces solution plans and plan review records, maps requirements to MissionIR for generic fallback, audits mapping, freezes deterministically, supports CLI handoff, runtime feedback, PiWorker node contracts, and SkillFoundry dogfood. The next boundary is `FrontDeskIntentBundle` plus Product Integration compilation. |
+| FrontDesk authoring | Implemented product module with spec-grill and intent-bundle slices | FrontDesk records conversation, scouts workspace/profile facts, validates semantic/intent artifacts, emits `FrontDeskIntentBundle`, supports Product Integration compilation, and now fails closed before need grilling, solution architecture, MissionIR mapping, or intent bundle authoring when LLM/PiWorker-authored artifacts are absent. |
 | Product boundary | Implemented and tested | SkillFoundry is external under `integrations/skillfoundry/` |
-| Product context boundary | Planned Phase 22 | ProductInquiryProfile, FrontDeskIntentBundle, ProductIntegration protocol, and generic ProductGate result contracts are documented next. |
+| Product context boundary | Implemented Phase 22 first slice | `ProductInquiryProfile`, `FrontDeskIntentBundle`, `ProductIntegration`, `ProductCompileResult`, and generic `ProductGate` contracts are implemented and tested. SkillFoundry provides the reference external bridge. |
 | Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review/frontdesk, not yet a complete visual operator product |
 
 ## Verification Snapshot
@@ -119,15 +125,15 @@ The current working tree was validated with:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 329 tests: OK (skipped=2)
+# Ran 359 tests: OK (skipped=2)
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # Node runtime: 5 tests passed
-# Python: Ran 329 tests: OK (skipped=2)
+# Python: Ran 359 tests: OK (skipped=2)
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
-# Ran 78 tests: OK (skipped=1)
+# Ran 84 tests: OK (skipped=1)
 
 PYTHONPATH=src python3 -m unittest \
   tests/test_frontdesk_schema.py \
@@ -183,17 +189,17 @@ Approximate current maturity against the long-term vision:
 | Mission revision | Medium | Conservative durable revision works; richer contract evolution is future work |
 | Store abstraction | Medium | Main durable writes route through `JsonWorkspaceStore`; legacy state read helpers still preserve layout compatibility |
 | Arbitrary long-running complex tasks | Medium | Core primitives, profile packs, run audit, and stale-ref diagnosis exist; replay and richer revision remain future work |
-| Product-aware FrontDesk | Medium-low | Generic spec-grill works, but product-specific questioning and final MissionIR compilation still need ProductInquiryProfile and FrontDeskIntentBundle. |
+| Product-aware FrontDesk | Medium | FrontDesk emits intent bundles from LLM-authored artifacts, ProductInquiryProfile drives product slots, SkillFoundry proves the external bridge, and service entrypoints fail closed without LLM artifacts. Future work should wire live PiWorker-backed authoring nodes and richer product CLI ergonomics without adding product branches to core. |
 
 ## Important Current Gaps
 
-### 0. FrontDesk Still Compiles Generic MissionIR Directly
+### 0. FrontDesk Product Context Is Implemented As A First Slice
 
-The current FrontDesk spec-grill slice can produce `frontdesk/draft_mission.json`
-directly. That should now be interpreted as generic fallback behavior, not as
-the long-term product-aware boundary.
-
-The next architecture step is Phase 22:
+FrontDesk can still assemble intent bundles and product compile results from
+existing FrontDesk artifacts, but it no longer fabricates those artifacts
+through deterministic service fallback. Generic draft behavior must sit behind
+the same LLM/PiWorker-authored artifact boundary as product-aware flows.
+The product-aware boundary is:
 
 ```text
 FrontDesk + ProductInquiryProfile
@@ -204,10 +210,13 @@ FrontDesk + ProductInquiryProfile
   -> ProductGateSpec
 ```
 
-This is necessary because MissionIR is structurally generic but semantically
-domain-shaped. A generic FrontDesk engine cannot know SkillFoundry, finance
-research, or future customer product requirements unless a product integration
-provides inquiry metadata and a compiler.
+SkillFoundry proves the external Product Integration path. The remaining gap is
+quality, not architecture: product-specific slot authoring is not yet wired to
+live PiWorker. The first slice can preserve explicit profile defaults and
+report missing slots, but it must not extract slot meaning from raw
+conversation in deterministic Python. Future PiWorker-assisted slot authoring
+must still be bounded by the same schemas, refs, clarification routes, and
+product-neutral core boundary.
 
 ### 1. Store Interface Is Not Fully Wired
 
@@ -285,11 +294,11 @@ design; richer task semantics should live in external packs and integrations.
 
 ### 7. FrontDesk Spec-Grill Is Implemented As A First Product Slice
 
-FrontDesk now has the active spec-grill first slice implemented. The default
-`draft()` path no longer uses the shallow deterministic draft. It runs the
-offline deterministic spec-grill convenience path: scout, grill, semantic
-coverage, solution planning, policy plan review, MissionIR mapping, audit,
-approval, and deterministic freeze readiness.
+FrontDesk now has the spec-grill schema and product-context first slices
+implemented, but the service facade no longer runs an offline deterministic
+authoring path. It may scout metadata offline; when need grilling, solution
+planning, MissionIR mapping, or intent bundle authoring needs LLM-authored
+artifacts and they are absent, it fails closed with `configure_frontdesk_llm`.
 
 The next FrontDesk architecture work should follow
 `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md` and
@@ -303,8 +312,8 @@ Follow-on hardening after the boundary work:
 - richer live PiWorker-backed node execution beyond the current contract
   helper;
 - additional product dogfood scenarios outside core;
-- stronger semantic signal extraction beyond the deterministic keyword first
-  slice;
+- stronger PiWorker-authored semantic extraction beyond the current
+  fail-closed contract shell;
 - optional visual/operator UX on top of the refs-first CLI/API.
 
 ## Phase 17-21 First-Slice Targets

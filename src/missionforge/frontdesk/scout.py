@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..contracts import ContractValidationError, require_non_empty_str, validate_ref
 from ..profiles import ProfileRegistry
 from .schema import SanitizedSourceSet
 from .spec_grill_schema import (
@@ -17,7 +16,6 @@ from .spec_grill_schema import (
     WorkspaceFacts,
 )
 from .state import (
-    CONVERSATION_REF,
     DOMAIN_LANGUAGE_REF,
     PROFILE_CATALOG_SNAPSHOT_REF,
     SANITIZED_SOURCES_REF,
@@ -74,8 +72,7 @@ class WorkspaceScout:
             capability_profile_ids=self.registry.capability_profile_ids(),
             verification_profile_ids=self.registry.verification_profile_ids(),
         )
-        text = _conversation_text(workspace, session.conversation_ref)
-        domain_language = _domain_language(session.session_id, text)
+        domain_language = DomainLanguage(session_id=session.session_id)
         source_report = _source_admission(session, workspace)
         facts = WorkspaceFacts(
             session_id=session.session_id,
@@ -114,67 +111,6 @@ class WorkspaceScout:
         )
 
 
-def _conversation_text(workspace: FrontDeskWorkspace, conversation_ref: str) -> str:
-    try:
-        turns = workspace.read_jsonl(validate_ref(conversation_ref, "frontdesk_scout.conversation_ref"))
-    except FileNotFoundError:
-        return ""
-    values: list[str] = []
-    for turn in turns:
-        content_ref = turn.get("content_ref")
-        if isinstance(content_ref, str):
-            try:
-                values.append(workspace.store.read_text(validate_ref(content_ref, "frontdesk_scout.content_ref")))
-            except FileNotFoundError:
-                continue
-    return " ".join(values)
-
-
-def _domain_language(session_id: str, text: str) -> DomainLanguage:
-    lowered = text.lower()
-    terms = _matched_terms(
-        lowered,
-        {
-            "rust": "Rust",
-            "schema": "schema",
-            "health": "health",
-            "privacy": "privacy",
-            "long-running": "long-running",
-            "long running": "long-running",
-            "performance": "performance",
-            "local": "local",
-            "do not expose": "do not expose internals",
-        },
-    )
-    implementation_terms = _matched_terms(
-        lowered,
-        {
-            "rust": "Rust",
-            "python": "Python",
-            "native": "native module",
-            "package": "packaging",
-        },
-    )
-    risk_terms = _matched_terms(
-        lowered,
-        {
-            "privacy": "privacy",
-            "secret": "secret",
-            "credential": "credential",
-            "api key": "api key",
-            "do not expose": "do not expose internals",
-        },
-    )
-    source_refs = [CONVERSATION_REF] if text else []
-    return DomainLanguage(
-        session_id=require_non_empty_str(session_id, "domain_language.session_id"),
-        terms=terms,
-        implementation_terms=implementation_terms,
-        risk_terms=risk_terms,
-        source_refs=source_refs,
-    )
-
-
 def _source_admission(session: FrontDeskAuthoringSession, workspace: FrontDeskWorkspace) -> SourceAdmissionReport:
     admitted_refs: list[str] = []
     excluded_refs = [session.conversation_ref]
@@ -190,15 +126,6 @@ def _source_admission(session: FrontDeskAuthoringSession, workspace: FrontDeskWo
         excluded_source_refs=excluded_refs,
         reasons=reasons,
     )
-
-
-def _matched_terms(text: str, mapping: dict[str, str]) -> list[str]:
-    result: list[str] = []
-    for needle, label in mapping.items():
-        if needle in text and label not in result:
-            result.append(label)
-    return result
-
 
 def scout_frontdesk_session(
     *,
