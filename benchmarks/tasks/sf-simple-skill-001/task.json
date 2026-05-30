@@ -1,0 +1,26 @@
+{
+  "schema_version": "missionforge.benchmark_task.v1",
+  "task_id": "sf-simple-skill-001",
+  "task_family": "skillfoundry",
+  "difficulty": "simple",
+  "initial_user_text_ref": "benchmarks/tasks/sf-simple-skill-001/user_statement.txt",
+  "allowed_source_refs": [
+    "benchmarks/tasks/sf-simple-skill-001/public_contract.md"
+  ],
+  "expected_output_refs": [
+    "package/SKILL.md",
+    "package/skillfoundry.bundle.json",
+    "package/README.md"
+  ],
+  "budget": {
+    "schema_version": "missionforge.benchmark_budget.v1",
+    "max_wall_minutes": 30,
+    "max_total_tokens": 120000,
+    "max_cost_usd": 5.0,
+    "max_user_turns": 4
+  },
+  "acceptance_refs": [
+    "benchmarks/tasks/sf-simple-skill-001/acceptance/public_checks.json",
+    "benchmarks/tasks/sf-simple-skill-001/acceptance/hidden_checks.json"
+  ]
+}

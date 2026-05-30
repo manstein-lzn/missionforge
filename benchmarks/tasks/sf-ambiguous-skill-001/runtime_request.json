@@ -1,0 +1,39 @@
+{
+  "schema_version": "missionforge_skillfoundry.request.v1",
+  "request_id": "runtime-sf-ambiguous-skill-001",
+  "bundle_id": "sf-ambiguous-skill-001",
+  "desired_capability": "Create a prompt-only local Codex skill that actively clarifies ambiguous user needs, distinguishes inference from confirmed requirements, and produces an implementation brief with risks and acceptance criteria.",
+  "target_user": "local Codex user with vague engineering requests",
+  "triggers": [
+    "When the user cannot clearly state the real problem at the start.",
+    "When multiple rounds of clarification are usually needed before implementation."
+  ],
+  "non_triggers": [
+    "When the user already provides a complete technical specification."
+  ],
+  "expected_outputs": [
+    "package/SKILL.md",
+    "package/skillfoundry.bundle.json",
+    "package/README.md"
+  ],
+  "must": [
+    "Separate confirmed requirements from inferred needs.",
+    "Include risks, open decisions, and acceptance criteria.",
+    "Write all generated files under package/."
+  ],
+  "must_not": [
+    "Do not include raw chat logs, provider payloads, credentials, or secrets."
+  ],
+  "privacy_boundaries": [
+    "No raw conversation text.",
+    "No provider payload bodies.",
+    "No credentials or secrets."
+  ],
+  "distribution_boundaries": [
+    "Local distribution only."
+  ],
+  "source_refs": [
+    "benchmarks/tasks/sf-ambiguous-skill-001/public_contract.md"
+  ],
+  "desired_bundle_profile": "prompt_only"
+}

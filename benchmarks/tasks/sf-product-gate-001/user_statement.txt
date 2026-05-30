@@ -1,0 +1,1 @@
+I want a local skill package, but I care more about product-grade boundaries than a nice-looking writeup. The skill should tell a worker how to produce artifacts that can survive a strict product gate: explicit package refs, local distribution, no runtime assets for prompt-only mode, and no hidden private material in outputs.

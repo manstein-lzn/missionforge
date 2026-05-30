@@ -1,0 +1,37 @@
+{
+  "schema_version": "missionforge_skillfoundry.request.v1",
+  "request_id": "runtime-sf-simple-skill-001",
+  "bundle_id": "sf-simple-skill-001",
+  "desired_capability": "Create a prompt-only local Codex skill that helps a user turn a rough engineering request into an implementation plan, acceptance checklist, and review summary.",
+  "target_user": "local Codex user doing engineering planning",
+  "triggers": [
+    "When a rough engineering request needs a repeatable planning checklist."
+  ],
+  "non_triggers": [
+    "When the user only needs a one-line code edit."
+  ],
+  "expected_outputs": [
+    "package/SKILL.md",
+    "package/skillfoundry.bundle.json",
+    "package/README.md"
+  ],
+  "must": [
+    "Write all generated files under package/.",
+    "Keep the package inspectable offline."
+  ],
+  "must_not": [
+    "Do not include raw conversation text, provider payloads, credentials, or secrets."
+  ],
+  "privacy_boundaries": [
+    "No raw conversation text.",
+    "No provider payload bodies.",
+    "No credentials or secrets."
+  ],
+  "distribution_boundaries": [
+    "Local distribution only."
+  ],
+  "source_refs": [
+    "benchmarks/tasks/sf-simple-skill-001/public_contract.md"
+  ],
+  "desired_bundle_profile": "prompt_only"
+}

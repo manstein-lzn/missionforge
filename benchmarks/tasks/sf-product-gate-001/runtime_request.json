@@ -1,0 +1,38 @@
+{
+  "schema_version": "missionforge_skillfoundry.request.v1",
+  "request_id": "runtime-sf-product-gate-001",
+  "bundle_id": "sf-product-gate-001",
+  "desired_capability": "Create a prompt-only local Codex skill that guides workers to produce SkillFoundry packages that pass strict product gates with explicit refs, local distribution, and no private material leakage.",
+  "target_user": "local Codex user packaging reusable skills",
+  "triggers": [
+    "When a skill package must survive product-grade validation."
+  ],
+  "non_triggers": [
+    "When a quick draft without product boundaries is acceptable."
+  ],
+  "expected_outputs": [
+    "package/SKILL.md",
+    "package/skillfoundry.bundle.json",
+    "package/README.md"
+  ],
+  "must": [
+    "Emphasize product-grade validation and local verification.",
+    "Keep prompt-only mode free of runtime assets and data assets.",
+    "Write all generated files under package/."
+  ],
+  "must_not": [
+    "Do not include raw conversation text, provider payloads, credentials, or secrets."
+  ],
+  "privacy_boundaries": [
+    "No raw conversation text.",
+    "No provider payload bodies.",
+    "No credentials or secrets."
+  ],
+  "distribution_boundaries": [
+    "Local distribution only."
+  ],
+  "source_refs": [
+    "benchmarks/tasks/sf-product-gate-001/public_contract.md"
+  ],
+  "desired_bundle_profile": "prompt_only"
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "missionforge.benchmark_acceptance_pack.v1",
+  "pack_id": "sf-product-gate-001-public",
+  "task_id": "sf-product-gate-001",
+  "visibility": "public",
+  "rubric_ref": "benchmarks/tasks/sf-product-gate-001/acceptance/review_rubric.md",
+  "checks": [
+    {
+      "check_id": "PUBLIC-SKILL-MD-EXISTS",
+      "kind": "file_exists",
+      "ref": "package/SKILL.md",
+      "blocking": true
+    },
+    {
+      "check_id": "PUBLIC-MANIFEST-EXISTS",
+      "kind": "file_exists",
+      "ref": "package/skillfoundry.bundle.json",
+      "blocking": true
+    },
+    {
+      "check_id": "PUBLIC-README-EXISTS",
+      "kind": "file_exists",
+      "ref": "package/README.md",
+      "blocking": true
+    }
+  ]
+}

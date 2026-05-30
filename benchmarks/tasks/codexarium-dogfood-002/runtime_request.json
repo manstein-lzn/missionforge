@@ -1,0 +1,42 @@
+{
+  "schema_version": "missionforge_skillfoundry.request.v1",
+  "request_id": "runtime-codexarium-dogfood-002",
+  "bundle_id": "codexarium-dogfood-002",
+  "desired_capability": "Create a prompt-only local Codex skill that guides product-boundary design for local AI systems: keep domain customization in product integration or profiles, protect core behavior from task-specific patches, and evaluate when a high-performance implementation such as Rust is justified.",
+  "target_user": "local Codex user designing extensible AI tooling",
+  "triggers": [
+    "When the user worries that domain-specific code is polluting a generic platform.",
+    "When performance-sensitive core logic may need a stronger implementation boundary."
+  ],
+  "non_triggers": [
+    "When the user only needs to optimize one local script.",
+    "When private source code details are required to answer."
+  ],
+  "expected_outputs": [
+    "package/SKILL.md",
+    "package/skillfoundry.bundle.json",
+    "package/README.md"
+  ],
+  "must": [
+    "Separate core platform behavior from product-specific integration.",
+    "Discuss profile/product integration boundaries.",
+    "Discuss high-performance implementation tradeoffs without forcing a rewrite.",
+    "Write all generated files under package/."
+  ],
+  "must_not": [
+    "Do not include project-private facts, raw conversation text, provider payloads, credentials, or secrets."
+  ],
+  "privacy_boundaries": [
+    "No project-private facts.",
+    "No raw conversation text.",
+    "No provider payload bodies.",
+    "No credentials or secrets."
+  ],
+  "distribution_boundaries": [
+    "Local distribution only."
+  ],
+  "source_refs": [
+    "benchmarks/tasks/codexarium-dogfood-002/public_contract.md"
+  ],
+  "desired_bundle_profile": "prompt_only"
+}
