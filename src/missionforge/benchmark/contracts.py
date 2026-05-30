@@ -202,6 +202,15 @@ class BenchmarkSummary:
     generic_verifier_passed: bool = False
     hidden_acceptance_passed: bool = False
     product_gate_status: str = ""
+    frontdesk_node_count: int = 0
+    frontdesk_worker_call_count: int = 0
+    frontdesk_missing_slot_count: int = 0
+    frontdesk_slot_conflict_count: int = 0
+    intent_bundle_ready: bool = False
+    product_compile_status: str = ""
+    product_clarification_count: int = 0
+    product_acceptance_coverage_passed: bool = False
+    product_gate_blocking_finding_count: int = 0
     review_score: float = 0.0
     time_to_first_artifact_ms: int = 0
     time_to_generic_verifier_pass_ms: int = 0
@@ -246,6 +255,42 @@ class BenchmarkSummary:
                 "benchmark_summary.hidden_acceptance_passed",
             ),
             product_gate_status=str(data.get("product_gate_status", "")),
+            frontdesk_node_count=require_int_at_least(
+                data.get("frontdesk_node_count", 0),
+                "benchmark_summary.frontdesk_node_count",
+                0,
+            ),
+            frontdesk_worker_call_count=require_int_at_least(
+                data.get("frontdesk_worker_call_count", 0),
+                "benchmark_summary.frontdesk_worker_call_count",
+                0,
+            ),
+            frontdesk_missing_slot_count=require_int_at_least(
+                data.get("frontdesk_missing_slot_count", 0),
+                "benchmark_summary.frontdesk_missing_slot_count",
+                0,
+            ),
+            frontdesk_slot_conflict_count=require_int_at_least(
+                data.get("frontdesk_slot_conflict_count", 0),
+                "benchmark_summary.frontdesk_slot_conflict_count",
+                0,
+            ),
+            intent_bundle_ready=_require_bool(data.get("intent_bundle_ready", False), "benchmark_summary.intent_bundle_ready"),
+            product_compile_status=str(data.get("product_compile_status", "")),
+            product_clarification_count=require_int_at_least(
+                data.get("product_clarification_count", 0),
+                "benchmark_summary.product_clarification_count",
+                0,
+            ),
+            product_acceptance_coverage_passed=_require_bool(
+                data.get("product_acceptance_coverage_passed", False),
+                "benchmark_summary.product_acceptance_coverage_passed",
+            ),
+            product_gate_blocking_finding_count=require_int_at_least(
+                data.get("product_gate_blocking_finding_count", 0),
+                "benchmark_summary.product_gate_blocking_finding_count",
+                0,
+            ),
             review_score=_require_number_at_least(data.get("review_score", 0.0), "benchmark_summary.review_score", 0.0),
             time_to_first_artifact_ms=require_int_at_least(
                 data.get("time_to_first_artifact_ms", 0),
@@ -334,6 +379,11 @@ class BenchmarkSummary:
         require_int_at_least(self.seed, "benchmark_summary.seed", 0)
         _require_bool(self.accepted, "benchmark_summary.accepted")
         _require_bool(self.comparable, "benchmark_summary.comparable")
+        _require_bool(self.intent_bundle_ready, "benchmark_summary.intent_bundle_ready")
+        _require_bool(
+            self.product_acceptance_coverage_passed,
+            "benchmark_summary.product_acceptance_coverage_passed",
+        )
         _validate_ref_list(self.artifact_refs, "benchmark_summary.artifact_refs")
         if self.metric_events_ref:
             validate_ref(self.metric_events_ref, "benchmark_summary.metric_events_ref")
@@ -353,6 +403,15 @@ class BenchmarkSummary:
                 "comparable": self.comparable,
                 "generic_verifier_passed": self.generic_verifier_passed,
                 "hidden_acceptance_passed": self.hidden_acceptance_passed,
+                "frontdesk_node_count": self.frontdesk_node_count,
+                "frontdesk_worker_call_count": self.frontdesk_worker_call_count,
+                "frontdesk_missing_slot_count": self.frontdesk_missing_slot_count,
+                "frontdesk_slot_conflict_count": self.frontdesk_slot_conflict_count,
+                "intent_bundle_ready": self.intent_bundle_ready,
+                "product_compile_status": self.product_compile_status,
+                "product_clarification_count": self.product_clarification_count,
+                "product_acceptance_coverage_passed": self.product_acceptance_coverage_passed,
+                "product_gate_blocking_finding_count": self.product_gate_blocking_finding_count,
                 "review_score": self.review_score,
                 "time_to_first_artifact_ms": self.time_to_first_artifact_ms,
                 "time_to_generic_verifier_pass_ms": self.time_to_generic_verifier_pass_ms,
@@ -389,6 +448,15 @@ class BenchmarkSummary:
             "generic_verifier_passed": self.generic_verifier_passed,
             "hidden_acceptance_passed": self.hidden_acceptance_passed,
             "product_gate_status": self.product_gate_status,
+            "frontdesk_node_count": self.frontdesk_node_count,
+            "frontdesk_worker_call_count": self.frontdesk_worker_call_count,
+            "frontdesk_missing_slot_count": self.frontdesk_missing_slot_count,
+            "frontdesk_slot_conflict_count": self.frontdesk_slot_conflict_count,
+            "intent_bundle_ready": self.intent_bundle_ready,
+            "product_compile_status": self.product_compile_status,
+            "product_clarification_count": self.product_clarification_count,
+            "product_acceptance_coverage_passed": self.product_acceptance_coverage_passed,
+            "product_gate_blocking_finding_count": self.product_gate_blocking_finding_count,
             "review_score": self.review_score,
             "time_to_first_artifact_ms": self.time_to_first_artifact_ms,
             "time_to_generic_verifier_pass_ms": self.time_to_generic_verifier_pass_ms,
@@ -707,6 +775,15 @@ _SUMMARY_FIELDS = {
     "generic_verifier_passed",
     "hidden_acceptance_passed",
     "product_gate_status",
+    "frontdesk_node_count",
+    "frontdesk_worker_call_count",
+    "frontdesk_missing_slot_count",
+    "frontdesk_slot_conflict_count",
+    "intent_bundle_ready",
+    "product_compile_status",
+    "product_clarification_count",
+    "product_acceptance_coverage_passed",
+    "product_gate_blocking_finding_count",
     "review_score",
     "time_to_first_artifact_ms",
     "time_to_generic_verifier_pass_ms",
@@ -724,6 +801,12 @@ _SUMMARY_FIELDS = {
     "repair_count",
     "user_turn_count",
     "clarification_turn_count",
+    "frontdesk_node_count",
+    "frontdesk_worker_call_count",
+    "frontdesk_missing_slot_count",
+    "frontdesk_slot_conflict_count",
+    "product_clarification_count",
+    "product_gate_blocking_finding_count",
     "privacy_violation_count",
     "boundary_violation_count",
     "defect_leakage_count",
@@ -779,27 +862,45 @@ def build_aggregate(*, benchmark_run_id: str, summaries: list[BenchmarkSummary],
                 "comparable_accepted_count": 0,
                 "comparable_trial_count": 0,
                 "estimated_cost_usd": 0.0,
+                "total_estimated_cost_usd": 0.0,
                 "provider_reported_cost_usd": 0.0,
+                "total_provider_reported_cost_usd": 0.0,
                 "total_tokens": 0,
                 "tool_call_count": 0,
                 "repair_count": 0,
                 "privacy_violation_count": 0,
                 "boundary_violation_count": 0,
                 "defect_leakage_count": 0,
+                "wall_duration_ms": 0,
+                "total_wall_duration_ms": 0,
+                "time_to_accepted_deliverable_ms": 0,
+                "avg_time_to_accepted_deliverable_ms": 0.0,
+                "p50_time_to_accepted_deliverable_ms": 0.0,
+                "p95_time_to_accepted_deliverable_ms": 0.0,
+                "non_comparable_trial_count": 0,
             },
         )
         bucket["trial_count"] += 1
         bucket["accepted_count"] += 1 if summary.accepted else 0
         bucket["comparable_accepted_count"] += 1 if summary.accepted and summary.comparable else 0
         bucket["comparable_trial_count"] += 1 if summary.comparable else 0
-        bucket["estimated_cost_usd"] += summary.estimated_cost_usd
-        bucket["provider_reported_cost_usd"] += summary.provider_reported_cost_usd
-        bucket["total_tokens"] += summary.total_tokens
-        bucket["tool_call_count"] += summary.tool_call_count
-        bucket["repair_count"] += summary.repair_count
+        bucket["non_comparable_trial_count"] += 0 if summary.comparable else 1
+        bucket["total_estimated_cost_usd"] += summary.estimated_cost_usd
+        bucket["total_provider_reported_cost_usd"] += summary.provider_reported_cost_usd
+        bucket["total_wall_duration_ms"] += summary.wall_duration_ms
+        if summary.comparable:
+            bucket["estimated_cost_usd"] += summary.estimated_cost_usd
+            bucket["provider_reported_cost_usd"] += summary.provider_reported_cost_usd
+            bucket["total_tokens"] += summary.total_tokens
+            bucket["tool_call_count"] += summary.tool_call_count
+            bucket["repair_count"] += summary.repair_count
         bucket["privacy_violation_count"] += summary.privacy_violation_count
         bucket["boundary_violation_count"] += summary.boundary_violation_count
         bucket["defect_leakage_count"] += summary.defect_leakage_count
+        if summary.comparable:
+            bucket["wall_duration_ms"] += summary.wall_duration_ms
+        if summary.comparable and summary.accepted and summary.time_to_accepted_deliverable_ms > 0:
+            bucket["time_to_accepted_deliverable_ms"] += summary.time_to_accepted_deliverable_ms
         for failure in summary.failure_taxonomy:
             failure_counts[failure] = failure_counts.get(failure, 0) + 1
     for values in mode_summaries.values():
@@ -808,8 +909,24 @@ def build_aggregate(*, benchmark_run_id: str, summaries: list[BenchmarkSummary],
             values["comparable_accepted_count"] / comparable if comparable else 0.0
         )
         values["cost_per_accepted_deliverable_usd"] = (
-            values["estimated_cost_usd"] / values["accepted_count"] if values["accepted_count"] else 0.0
+            values["estimated_cost_usd"] / values["comparable_accepted_count"]
+            if values["comparable_accepted_count"]
+            else 0.0
         )
+        accepted_times = sorted(
+            summary.time_to_accepted_deliverable_ms
+            for summary in sorted_summaries
+            if summary.mode.value in mode_summaries
+            and values is mode_summaries[summary.mode.value]
+            and summary.comparable
+            and summary.accepted
+            and summary.time_to_accepted_deliverable_ms > 0
+        )
+        values["avg_time_to_accepted_deliverable_ms"] = (
+            values["time_to_accepted_deliverable_ms"] / len(accepted_times) if accepted_times else 0.0
+        )
+        values["p50_time_to_accepted_deliverable_ms"] = _percentile(accepted_times, 0.50)
+        values["p95_time_to_accepted_deliverable_ms"] = _percentile(accepted_times, 0.95)
     aggregate = BenchmarkAggregate(
         benchmark_run_id=run_id,
         summary_refs=sorted(summary_refs),
@@ -888,3 +1005,13 @@ def _is_scalar_metric_value(value: Any) -> bool:
     if isinstance(value, bool):
         return True
     return isinstance(value, (str, int, float))
+
+
+def _percentile(values: list[int], percentile: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return float(values[0])
+    index = int(round((len(values) - 1) * percentile))
+    index = max(0, min(index, len(values) - 1))
+    return float(values[index])
