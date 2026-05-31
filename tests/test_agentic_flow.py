@@ -18,7 +18,9 @@ from missionforge import (
     JudgeReport,
     JudgeReportDecision,
     PermissionManifest,
+    RepairBrief,
     TaskContract,
+    TaskRevisionRequest,
     WorkspacePolicy,
 )
 
@@ -288,7 +290,24 @@ class RepairJudge:
         packet_ref: str,
         workspace: AgentWorkspace,
     ) -> JudgeReport:
-        workspace.write_text("projections/repair_brief.md", "repair brief")
+        repair_brief_ref = "projections/repair_brief.json"
+        workspace.write_json(
+            repair_brief_ref,
+            RepairBrief(
+                brief_id="repair-brief-001",
+                run_id="run-repair",
+                contract_id=packet.contract_id,
+                contract_hash=packet.contract_hash,
+                contract_ref=packet.contract_ref,
+                judge_packet_ref=packet_ref,
+                judge_report_ref=packet.report_ref,
+                execution_report_ref=packet.execution_report_ref,
+                reason="Artifact needs a targeted repair while preserving the frozen contract.",
+                repair_steps=["Update the produced artifact to satisfy the judge rubric."],
+                target_artifact_refs=list(packet.artifact_refs),
+                evidence_refs=[packet.execution_report_ref],
+            ).to_dict(),
+        )
         return JudgeReport(
             report_id="judge-report-001",
             packet_id=packet.packet_id,
@@ -299,7 +318,7 @@ class RepairJudge:
             decision=JudgeReportDecision.REPAIR,
             hard_check_status=packet.hard_check_status,
             evidence_refs=[packet.execution_report_ref],
-            repair_brief_ref="projections/repair_brief.md",
+            repair_brief_ref=repair_brief_ref,
         )
 
 
@@ -311,7 +330,86 @@ class RevisionJudge:
         packet_ref: str,
         workspace: AgentWorkspace,
     ) -> JudgeReport:
-        workspace.write_text("revisions/request.json", "{}")
+        revision_request_ref = "revisions/request.json"
+        workspace.write_json(
+            revision_request_ref,
+            TaskRevisionRequest(
+                request_id="revision-request-001",
+                run_id="run-revision",
+                contract_id=packet.contract_id,
+                contract_hash=packet.contract_hash,
+                contract_ref=packet.contract_ref,
+                judge_packet_ref=packet_ref,
+                judge_report_ref=packet.report_ref,
+                execution_report_ref=packet.execution_report_ref,
+                reason="The frozen contract appears incomplete; repair alone is insufficient.",
+                proposed_contract_changes=["Clarify the semantic acceptance clause before continuing."],
+                evidence_refs=[packet.execution_report_ref],
+            ).to_dict(),
+        )
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.REVISION_REQUIRED,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=[packet.execution_report_ref],
+            revision_request_ref=revision_request_ref,
+        )
+
+
+class InvalidRepairBriefJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_json("projections/repair_brief.json", {})
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.REPAIR,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=[packet.execution_report_ref],
+            repair_brief_ref="projections/repair_brief.json",
+        )
+
+
+class WrongRevisionRequestJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_json(
+            "revisions/request.json",
+            {
+                "schema_version": "task_revision_request.v1",
+                "request_id": "revision-request-001",
+                "run_id": "run-revision",
+                "contract_id": packet.contract_id,
+                "contract_hash": "sha256:" + ("0" * 64),
+                "contract_ref": packet.contract_ref,
+                "judge_packet_ref": packet_ref,
+                "judge_report_ref": packet.report_ref,
+                "execution_report_ref": packet.execution_report_ref,
+                "reason": "Bad request with mismatched contract hash.",
+                "proposed_contract_changes": ["Clarify acceptance."],
+                "authority_required": "product_integration",
+                "evidence_refs": [packet.execution_report_ref],
+            },
+        )
         return JudgeReport(
             report_id="judge-report-001",
             packet_id=packet.packet_id,
@@ -617,7 +715,7 @@ class AgenticFlowTests(unittest.TestCase):
                 hard_check_refs=["reports/hard_checks.json"],
             )
             self.assertEqual(repair.status, AgenticFlowStatus.REPAIR)
-            self.assertEqual(repair.repair_brief_ref, "projections/repair_brief.md")
+            self.assertEqual(repair.repair_brief_ref, "projections/repair_brief.json")
             self.assertEqual(repair.accepted_artifact_refs, [])
 
         with TemporaryDirectory() as tmpdir:
@@ -635,6 +733,36 @@ class AgenticFlowTests(unittest.TestCase):
             self.assertEqual(revision.status, AgenticFlowStatus.REVISION_REQUIRED)
             self.assertEqual(revision.revision_request_ref, "revisions/request.json")
             self.assertEqual(revision.accepted_artifact_refs, [])
+
+    def test_repair_decision_requires_structured_repair_brief(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-repair",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=InvalidRepairBriefJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_revision_decision_requires_structured_request_for_same_contract(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-revision",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=WrongRevisionRequestJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
 
     def test_result_payload_uses_ref_map_without_raw_body_fields(self) -> None:
         result = AgenticFlowRunner("/tmp")._build_result(

@@ -22,6 +22,12 @@ from .agent_packets import (
     validate_judge_packet_for_execution,
     validate_judge_report_for_packet,
 )
+from .agentic_repair import (
+    RepairBrief,
+    TaskRevisionRequest,
+    validate_repair_brief_for_judge,
+    validate_revision_request_for_judge,
+)
 from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
@@ -405,6 +411,7 @@ class AgenticFlowRunner:
                 runtime_workspace,
             )
         _ensure_judge_report_authorized(judge_report, scoped_judge_workspace)
+        _ensure_judge_decision_artifact(run_id, judge_report, judge_packet, scoped_judge_workspace)
         runtime_workspace.write_json(self.refs.judge_report_ref, judge_report.to_dict())
 
         result = self._build_result(run_id, contract, execution_report, judge_report)
@@ -548,6 +555,7 @@ def _judge_permission_manifest(
             "projections",
             "policy",
             "packets",
+            "revisions",
         ]
     )
     writable = _unique_refs(["reports", "projections", "revisions"])
@@ -644,6 +652,42 @@ def _ensure_judge_report_authorized(report: JudgeReport, workspace: AgentWorkspa
         *([report.revision_request_ref] if report.revision_request_ref else []),
     ]:
         workspace.ensure_write_ref(ref)
+
+
+def _ensure_judge_decision_artifact(
+    run_id: str,
+    report: JudgeReport,
+    packet: JudgePacket,
+    workspace: AgentWorkspace,
+) -> None:
+    if report.decision is JudgeReportDecision.REPAIR:
+        if report.repair_brief_ref is None:
+            raise ContractValidationError("judge_report.repair requires repair_brief_ref")
+        brief = _read_decision_artifact(workspace, report.repair_brief_ref, RepairBrief, "repair_brief")
+        validate_repair_brief_for_judge(brief, packet, report, run_id=run_id)
+    elif report.decision is JudgeReportDecision.REVISION_REQUIRED:
+        if report.revision_request_ref is None:
+            raise ContractValidationError("judge_report.revision_required requires revision_request_ref")
+        request = _read_decision_artifact(
+            workspace,
+            report.revision_request_ref,
+            TaskRevisionRequest,
+            "task_revision_request",
+        )
+        validate_revision_request_for_judge(request, packet, report, run_id=run_id)
+
+
+def _read_decision_artifact(
+    workspace: AgentWorkspace,
+    ref: str,
+    artifact_type: type[RepairBrief] | type[TaskRevisionRequest],
+    field_name: str,
+) -> RepairBrief | TaskRevisionRequest:
+    try:
+        payload = workspace.read_json(ref)
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        raise ContractValidationError(f"{field_name} ref is missing or unreadable: {ref}") from exc
+    return artifact_type.from_dict(payload)
 
 
 def _ensure_expected_artifacts_accepted(

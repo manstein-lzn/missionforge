@@ -40,6 +40,9 @@ not contaminated by FrontDesk or product-specific behavior.
 - Executor output can never grant final acceptance.
 - Judge acceptance requires passed hard checks and completed execution.
 - Passed hard checks must cite explicit hard-check refs.
+- Repair and revision decisions must point to structured judge-authored
+  artifacts that are validated against the judge packet and report before the
+  run result is finalized.
 - Executor-produced artifacts must be under declared artifact roots and worker
   writable refs.
 - Executor evidence, metrics, repair, and revision refs must be worker-writable.
@@ -97,6 +100,11 @@ not contaminated by FrontDesk or product-specific behavior.
   `RunWorkspace` while denying writes to runtime-owned refs. This is not a
   substitute for the later PiWorker tool sandbox; it is a product-neutral guard
   for the offline S4 test seam.
+
+`RepairBrief`, `TaskRevisionRequest`, `TaskRevisionDecision`
+: Product-neutral repair and revision artifacts used when the judge returns a
+  repair or revision-required decision. They preserve the frozen contract hash
+  and make the downstream state auditable.
 
 These protocols are test seams and future PiWorker integration seams. They are
 not a public multi-worker marketplace.

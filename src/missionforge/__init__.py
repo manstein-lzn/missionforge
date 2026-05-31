@@ -22,6 +22,15 @@ from .agentic_flow import (
     AgenticFlowRunner,
     AgenticFlowStatus,
 )
+from .agentic_repair import (
+    RepairBrief,
+    TaskRevisionAuthority,
+    TaskRevisionDecision,
+    TaskRevisionDecisionStatus,
+    TaskRevisionRequest,
+    validate_repair_brief_for_judge,
+    validate_revision_request_for_judge,
+)
 from .contracts import (
     AdaptiveDecision,
     AuthorityRequirement,
@@ -286,6 +295,7 @@ __all__ = [
     "TaskContractProductIntegration",
     "ProfileRegistry",
     "Ref",
+    "RepairBrief",
     "RepairStrategyProposal",
     "ReviewPacket",
     "ReviewerDecision",
@@ -306,6 +316,10 @@ __all__ = [
     "SteeringProposalKind",
     "TaskContract",
     "TaskContractRevision",
+    "TaskRevisionAuthority",
+    "TaskRevisionDecision",
+    "TaskRevisionDecisionStatus",
+    "TaskRevisionRequest",
     "ValidatorMode",
     "ValidatorResult",
     "ValidatorSeverity",
@@ -340,6 +354,8 @@ __all__ = [
     "validate_execution_report_for_packet",
     "validate_judge_packet_for_execution",
     "validate_judge_report_for_packet",
+    "validate_repair_brief_for_judge",
+    "validate_revision_request_for_judge",
     "verify_spec",
     "steering_refs_for_iteration",
     "steering_root_ref",

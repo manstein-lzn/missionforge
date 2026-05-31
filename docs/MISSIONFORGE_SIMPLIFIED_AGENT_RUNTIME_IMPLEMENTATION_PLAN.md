@@ -294,7 +294,6 @@ Candidate files:
 
 ```text
 src/missionforge/agentic_repair.py
-src/missionforge/task_revision.py
 tests/test_agentic_repair.py
 tests/test_task_revision_policy.py
 ```
@@ -302,13 +301,13 @@ tests/test_task_revision_policy.py
 Core objects:
 
 - `RepairBrief`
-- `RevisionRequest`
-- `RevisionDecision`
+- `TaskRevisionRequest`
+- `TaskRevisionDecision`
 
 Implementation notes:
 
 - RepairBrief keeps the same TaskContract hash.
-- RevisionRequest proposes changing the contract and must cite why repair is
+- TaskRevisionRequest proposes changing the contract and must cite why repair is
   insufficient.
 - Approved revision freezes a new TaskContract revision.
 - Rejected revision routes back to repair, rejection, or user/operator review
@@ -321,6 +320,13 @@ Acceptance tests:
 - revision ledger preserves old and new contract refs;
 - judge can request repair or revision_required but cannot directly mutate the
   contract.
+
+Status note:
+
+- The first S6 slice has landed as `RepairBrief`, `TaskRevisionRequest`, and
+  `TaskRevisionDecision` plus flow-level validation for repair/revision
+  artifacts. The remaining work in this phase is the explicit controller that
+  turns a repair or revision decision into the next durable run step.
 
 ## Phase S7: PiWorker Runtime Hardening
 
