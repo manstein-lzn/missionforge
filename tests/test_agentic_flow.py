@@ -1,0 +1,687 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from missionforge import (
+    AgentExecutionPacket,
+    AgentExecutionReport,
+    AgentExecutionStatus,
+    AgentWorkspace,
+    AgenticFlowRunner,
+    AgenticFlowStatus,
+    ContractValidationError,
+    HardCheckStatus,
+    JudgePacket,
+    JudgeReport,
+    JudgeReportDecision,
+    PermissionManifest,
+    TaskContract,
+    WorkspacePolicy,
+)
+
+
+def sample_contract() -> TaskContract:
+    return TaskContract.from_dict(
+        {
+            "schema_version": "task_contract.v1",
+            "contract_id": "contract-001",
+            "product_id": "product.generic",
+            "objective": "Produce the requested deliverable inside the declared workspace.",
+            "background": "Compiled from a FrontDesk intent bundle by product integration.",
+            "users_or_audience": ["operator"],
+            "non_goals": ["Do not change unrelated files."],
+            "assumptions": ["Inputs are available by ref."],
+            "required_outputs": [
+                {
+                    "output_id": "out-001",
+                    "description": "Write the declared final artifact.",
+                    "artifact_refs": ["artifacts/final.md"],
+                }
+            ],
+            "hard_constraints": [
+                {
+                    "constraint_id": "hc-001",
+                    "statement": "Stay inside the declared writable roots.",
+                    "source_refs": ["policy/permission_manifest.json"],
+                }
+            ],
+            "semantic_acceptance": [
+                {
+                    "criterion_id": "acc-001",
+                    "statement": "The artifact satisfies the frozen task objective.",
+                    "evidence_refs": ["reports/execution_report.json"],
+                }
+            ],
+            "risk_notes": ["Ask for explicit revision if the contract is wrong."],
+            "source_refs": ["frontdesk/intent_bundle.json"],
+            "workspace_policy_ref": "policy/workspace_policy.json",
+            "permission_manifest_ref": "policy/permission_manifest.json",
+            "judge_rubric_ref": "projections/judge_rubric.json",
+            "revision_policy": {"mode": "explicit_revision_required"},
+            "created_by": "product.integration",
+            "created_at": "2026-05-31T00:00:00Z",
+        }
+    )
+
+
+def sample_workspace_policy() -> WorkspacePolicy:
+    return WorkspacePolicy.from_dict(
+        {
+            "policy_id": "workspace-001",
+            "workspace_root_ref": "runs/run-001",
+            "input_refs": ["frontdesk"],
+            "artifact_root_refs": ["artifacts"],
+            "scratch_root_refs": ["scratch"],
+            "denied_refs": ["secrets"],
+        }
+    )
+
+
+def sample_permission_manifest(writable_refs: list[str] | None = None) -> PermissionManifest:
+    return PermissionManifest.from_dict(
+        {
+            "manifest_id": "perm-001",
+            "workspace_policy_ref": "policy/workspace_policy.json",
+            "readable_refs": ["frontdesk", "policy", "contract"],
+            "writable_refs": writable_refs or ["artifacts", "reports", "ledgers"],
+            "denied_refs": ["secrets"],
+            "network_policy": "disabled",
+        }
+    )
+
+
+def sample_permission_manifest_with_unsupported_policy() -> PermissionManifest:
+    return PermissionManifest.from_dict(
+        {
+            "manifest_id": "perm-001",
+            "workspace_policy_ref": "policy/workspace_policy.json",
+            "readable_refs": ["frontdesk", "policy", "contract"],
+            "writable_refs": ["artifacts", "reports"],
+            "unsupported_hard_policies": ["shell_command_sandbox"],
+        }
+    )
+
+
+class CompletingExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        workspace.write_text("artifacts/final.md", "deliverable")
+        workspace.write_text("reports/executor_evidence.md", "execution evidence")
+        return AgentExecutionReport(
+            report_id="execution-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.COMPLETED,
+            produced_artifact_refs=["artifacts/final.md"],
+            changed_refs=["artifacts/final.md"],
+            evidence_refs=["reports/executor_evidence.md"],
+            metric_refs=["ledgers/executor_metrics.jsonl"],
+        )
+
+
+class OutsideArtifactExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        return AgentExecutionReport(
+            report_id="execution-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.COMPLETED,
+            produced_artifact_refs=["secrets/final.md"],
+            changed_refs=["secrets/final.md"],
+        )
+
+
+class EmptyArtifactExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        return AgentExecutionReport(
+            report_id="execution-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.COMPLETED,
+        )
+
+
+class UnwrittenArtifactExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        return AgentExecutionReport(
+            report_id="execution-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.COMPLETED,
+            produced_artifact_refs=["artifacts/final.md"],
+            changed_refs=["artifacts/final.md"],
+        )
+
+
+class LedgerWritingExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        workspace.write_text("ledgers/decision_ledger.jsonl", "forged")
+        raise AssertionError("control write should fail before executor returns")
+
+
+class HardCheckWritingExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        workspace.write_text("reports/hard_checks.json", '{"status": "mutated"}')
+        raise AssertionError("hard-check write should fail before executor returns")
+
+
+class BlockedExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        return AgentExecutionReport(
+            report_id="execution-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.BLOCKED,
+        )
+
+
+class AcceptingJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_text("reports/judge_rationale.md", "judge rationale")
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.ACCEPTED,
+            hard_check_status=packet.hard_check_status,
+            rationale_refs=["reports/judge_rationale.md"],
+            evidence_refs=[packet.execution_report_ref],
+            accepted_artifact_refs=list(packet.artifact_refs),
+        )
+
+
+class BadArtifactJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.ACCEPTED,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=[packet.execution_report_ref],
+            accepted_artifact_refs=["artifacts/not-produced.md"],
+        )
+
+
+class RepairJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_text("projections/repair_brief.md", "repair brief")
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.REPAIR,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=[packet.execution_report_ref],
+            repair_brief_ref="projections/repair_brief.md",
+        )
+
+
+class RevisionJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_text("revisions/request.json", "{}")
+        return JudgeReport(
+            report_id="judge-report-001",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.REVISION_REQUIRED,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=[packet.execution_report_ref],
+            revision_request_ref="revisions/request.json",
+        )
+
+
+class ExecutionReportWritingJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_text("reports/execution_report.json", "{}")
+        raise AssertionError("control write should fail before judge returns")
+
+
+class HardCheckWritingJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        workspace.write_text("reports/hard_checks.json", '{"status": "mutated"}')
+        raise AssertionError("hard-check write should fail before judge returns")
+
+
+class AgenticFlowTests(unittest.TestCase):
+    def test_offline_accepted_flow_writes_refs_only_artifacts(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            result = AgenticFlowRunner(tmpdir, now=lambda: "2026-05-31T00:00:00Z").run(
+                run_id="run-001",
+                contract=sample_contract(),
+                workspace_policy=sample_workspace_policy(),
+                permission_manifest=sample_permission_manifest(),
+                executor=CompletingExecutor(),
+                judge=AcceptingJudge(),
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=["reports/hard_checks.json"],
+            )
+
+            self.assertEqual(result.status, AgenticFlowStatus.ACCEPTED)
+            self.assertEqual(result.judge_decision, JudgeReportDecision.ACCEPTED)
+            self.assertEqual(result.accepted_artifact_refs, ["artifacts/final.md"])
+            self.assertIn("ref_map", result.to_dict())
+            self.assertNotIn("refs", result.to_dict())
+
+            root = sample_workspace_policy().workspace_root_ref
+            base = f"{tmpdir}/{root}"
+            self.assertTrue(_exists(f"{base}/contract/task_contract.json"))
+            self.assertTrue(_exists(f"{base}/projections/worker_brief.json"))
+            self.assertTrue(_exists(f"{base}/projections/judge_rubric.json"))
+            self.assertTrue(_exists(f"{base}/packets/execution_packet.json"))
+            self.assertTrue(_exists(f"{base}/packets/judge_packet.json"))
+            self.assertTrue(_exists(f"{base}/reports/execution_report.json"))
+            self.assertTrue(_exists(f"{base}/reports/judge_report.json"))
+            self.assertTrue(_exists(f"{base}/checkpoints/latest.json"))
+            self.assertEqual(_line_count(f"{base}/ledgers/decision_ledger.jsonl"), 4)
+            entries = [
+                json.loads(line)
+                for line in Path(f"{base}/ledgers/decision_ledger.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(
+                [entry["event_kind"] for entry in entries],
+                [
+                    "execution_packet_issued",
+                    "execution_report_recorded",
+                    "judge_packet_issued",
+                    "judge_report_recorded",
+                ],
+            )
+            self.assertTrue(all(entry["contract_hash"] == result.contract_hash for entry in entries))
+            self.assertTrue(all("ref_map" in entry for entry in entries))
+            self.assertNotIn("raw_transcript", json.dumps(entries, sort_keys=True))
+
+            checkpoint = json.loads(Path(f"{base}/checkpoints/latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(checkpoint["status"], "accepted")
+            self.assertEqual(checkpoint["ref_map"]["judge_report_ref"], "reports/judge_report.json")
+
+    def test_passed_hard_checks_require_explicit_refs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_unsupported_hard_policies_fail_closed(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest_with_unsupported_policy(),
+                    executor=CompletingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_executor_report_refs_must_stay_inside_worker_permissions(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=OutsideArtifactExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_executor_and_judge_cannot_write_runtime_owned_control_refs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=LedgerWritingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=ExecutionReportWritingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=HardCheckWritingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=HardCheckWritingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_required_artifacts_must_be_worker_writable(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(writable_refs=["reports"]),
+                    executor=CompletingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_accepted_runs_require_required_artifacts_to_be_produced_and_existing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=EmptyArtifactExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=UnwrittenArtifactExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_judge_cannot_accept_failed_hard_checks_or_incomplete_execution(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.FAILED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=BlockedExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_judge_cannot_accept_artifacts_not_in_judge_packet(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=CompletingExecutor(),
+                    judge=BadArtifactJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+    def test_repair_and_revision_decisions_route_refs_without_acceptance(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            repair = AgenticFlowRunner(tmpdir).run(
+                run_id="run-repair",
+                contract=sample_contract(),
+                workspace_policy=sample_workspace_policy(),
+                permission_manifest=sample_permission_manifest(),
+                executor=CompletingExecutor(),
+                judge=RepairJudge(),
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=["reports/hard_checks.json"],
+            )
+            self.assertEqual(repair.status, AgenticFlowStatus.REPAIR)
+            self.assertEqual(repair.repair_brief_ref, "projections/repair_brief.md")
+            self.assertEqual(repair.accepted_artifact_refs, [])
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            revision = AgenticFlowRunner(tmpdir).run(
+                run_id="run-revision",
+                contract=sample_contract(),
+                workspace_policy=sample_workspace_policy(),
+                permission_manifest=sample_permission_manifest(),
+                executor=CompletingExecutor(),
+                judge=RevisionJudge(),
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=["reports/hard_checks.json"],
+            )
+            self.assertEqual(revision.status, AgenticFlowStatus.REVISION_REQUIRED)
+            self.assertEqual(revision.revision_request_ref, "revisions/request.json")
+            self.assertEqual(revision.accepted_artifact_refs, [])
+
+    def test_result_payload_uses_ref_map_without_raw_body_fields(self) -> None:
+        result = AgenticFlowRunner("/tmp")._build_result(
+            "run-001",
+            sample_contract(),
+            AgentExecutionReport(
+                report_id="execution-report-001",
+                packet_id="execution-packet-001",
+                packet_ref="packets/execution_packet.json",
+                contract_id=sample_contract().contract_id,
+                contract_hash=sample_contract().contract_hash,
+                contract_ref="contract/task_contract.json",
+                status=AgentExecutionStatus.COMPLETED,
+                produced_artifact_refs=["artifacts/final.md"],
+            ),
+            JudgeReport(
+                report_id="judge-report-001",
+                packet_id="judge-packet-001",
+                packet_ref="packets/judge_packet.json",
+                contract_id=sample_contract().contract_id,
+                contract_hash=sample_contract().contract_hash,
+                contract_ref="contract/task_contract.json",
+                decision=JudgeReportDecision.ACCEPTED,
+                hard_check_status=HardCheckStatus.PASSED,
+                accepted_artifact_refs=["artifacts/final.md"],
+            ),
+        )
+        payload = result.to_dict()
+
+        self.assertIn("ref_map", payload)
+        self.assertNotIn("refs", payload)
+        self.assertNotIn("raw_transcript", payload)
+
+
+def _exists(path: str) -> bool:
+    return Path(path).exists()
+
+
+def _line_count(path: str) -> int:
+    return len(Path(path).read_text(encoding="utf-8").splitlines())
+
+
+def _write_hard_check(tmpdir: str) -> None:
+    path = Path(tmpdir) / "runs/run-001/reports/hard_checks.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"status": "passed"}\n', encoding="utf-8")
+
+
+if __name__ == "__main__":
+    unittest.main()

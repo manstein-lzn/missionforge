@@ -188,39 +188,71 @@ Acceptance tests:
 - malformed judge report fails closed;
 - role IDs and packet IDs are recorded in the ledger.
 
-## Phase S4: Decision Ledger And Checkpoints
+## Phase S4: Minimal Offline Agentic Flow, Ledger, And Checkpoints
 
-Purpose: replace implicit runtime memory with small append-only records.
+Purpose: prove the new runtime shape with a product-neutral offline flow, while
+replacing implicit runtime memory with small refs-only records.
 
 Candidate files:
 
 ```text
-src/missionforge/decision_ledger.py
-src/missionforge/checkpoints.py
-tests/test_decision_ledger.py
-tests/test_agentic_checkpoints.py
+src/missionforge/agentic_flow.py
+docs/modules/agentic_flow.md
+tests/test_agentic_flow.py
 ```
 
 Core objects:
 
-- `DecisionLedgerEntry`
-- `Checkpoint`
-- `RunSummary`
+- `AgenticFlowRunner`
+- `AgenticFlowRefs`
+- `AgenticFlowResult`
+- `AgenticFlowStatus`
+- `AgentExecutorNode`
+- `AgentJudgeNode`
 
 Implementation notes:
 
-- Reuse the existing JSON store where practical.
-- Ledger entries must be refs-first.
-- Include event kind, actor role, contract hash, packet refs, report refs,
-  timestamps, and compact summaries.
+- Keep this phase offline: no live PiWorker invocation, no provider calls, no
+  network, and no product-specific fake behavior.
+- Compose the existing S1-S3 primitives rather than adding a new semantic
+  runtime.
+- Project WorkerBrief and JudgeRubric through the projection helpers.
+- Build packets and reports through `agent_packets.py` and call the existing
+  cross-object validators.
+- Enforce worker output refs through `RunWorkspace` and `PermissionManifest`.
+- Fail closed when the permission manifest declares unsupported hard policies.
+- Passed hard checks must cite explicit hard-check refs.
+- Passed hard-check refs must exist in the run workspace.
+- Passed hard-check refs are runtime-owned evidence and must be denied for
+  executor/judge writes.
+- Judge acceptance requires passed hard checks and completed execution.
+- Judge acceptance requires required artifact refs to be produced, accepted, and
+  present in the run workspace.
+- Executor and judge workspaces must deny writes to runtime-owned packets,
+  reports, ledgers, checkpoints, and contract/policy refs.
+- Ledger and checkpoint entries must be refs-first.
+- Include event kind, contract hash, packet refs, report refs, timestamps, and
+  compact status.
 - Do not embed raw provider payloads, transcripts, or artifact bodies.
+- Add a separate ledger/checkpoint module later only if replay or richer event
+  querying is needed; the S4 runner API must already expose append-only ledger
+  behavior for this path.
 
 Acceptance tests:
 
-- append-only ledger writes;
-- latest checkpoint reconstructs current contract, revision, and next action;
+- accepted offline executor-then-judge path writes the expected workspace refs;
+- required artifact refs outside worker writable roots fail closed;
+- executor reports outside workspace or permission roots fail closed;
+- executor or judge attempts to write runtime-owned control refs fail closed;
+- judge acceptance with failed hard checks fails closed;
+- judge acceptance with missing hard-check evidence fails closed;
+- judge acceptance with missing or unproduced required artifacts fails closed;
+- judge acceptance for artifacts not produced by execution fails closed;
+- repair and revision decisions route refs without granting acceptance;
+- append-only ledger writes and latest checkpoint writes are produced;
 - refs are safe and local to the run workspace;
-- raw body fields are rejected or redacted by schema.
+- raw body fields are rejected or absent from result, checkpoint, and ledger
+  payloads.
 
 ## Phase S5: SkillFoundry Product Integration On The New Path
 

@@ -13,6 +13,15 @@ from .agent_packets import (
     validate_judge_packet_for_execution,
     validate_judge_report_for_packet,
 )
+from .agentic_flow import (
+    AgentExecutorNode,
+    AgentJudgeNode,
+    AgentWorkspace,
+    AgenticFlowRefs,
+    AgenticFlowResult,
+    AgenticFlowRunner,
+    AgenticFlowStatus,
+)
 from .contracts import (
     AdaptiveDecision,
     AuthorityRequirement,
@@ -150,7 +159,14 @@ __all__ = [
     "AgentExecutionPacket",
     "AgentExecutionReport",
     "AgentExecutionStatus",
+    "AgentExecutorNode",
+    "AgentJudgeNode",
+    "AgentWorkspace",
     "AgentRole",
+    "AgenticFlowRefs",
+    "AgenticFlowResult",
+    "AgenticFlowRunner",
+    "AgenticFlowStatus",
     "ArtifactRef",
     "ArtifactStore",
     "AttemptInputManifest",
