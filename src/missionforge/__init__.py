@@ -108,6 +108,8 @@ from .product_integration import (
     ProductCompileResult,
     ProductCompileStatus,
     ProductIntegration,
+    ProductTaskContractCompileResult,
+    TaskContractProductIntegration,
 )
 from .revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
 from .revision_store import MissionRevisionStore, apply_mission_revision
@@ -280,6 +282,8 @@ __all__ = [
     "ProductGateStatus",
     "ProductInquiryProfile",
     "ProductIntegration",
+    "ProductTaskContractCompileResult",
+    "TaskContractProductIntegration",
     "ProfileRegistry",
     "Ref",
     "RepairStrategyProposal",

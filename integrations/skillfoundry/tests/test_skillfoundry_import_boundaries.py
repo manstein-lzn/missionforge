@@ -16,8 +16,11 @@ SKILLFOUNDRY_SYMBOLS = {
     "SkillFoundryCompileResult",
     "SkillFoundryMissionCompiler",
     "SkillFoundrySourceBundle",
+    "SkillFoundryTaskContractCompileResult",
     "SkillPackageTarget",
     "compile_skillfoundry_bundle",
+    "compile_skillfoundry_task_contract",
+    "load_skillfoundry_task_contract",
 }
 FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "anthropic",

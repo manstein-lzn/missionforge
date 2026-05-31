@@ -7,6 +7,7 @@ from missionforge.product_integration import (
     ProductClarificationQuestion,
     ProductCompileResult,
     ProductCompileStatus,
+    ProductTaskContractCompileResult,
 )
 
 
@@ -37,9 +38,58 @@ class ProductIntegrationContractTests(unittest.TestCase):
                 intent_bundle_ref="frontdesk/intent_bundle.json",
             ).validate()
 
+    def test_task_contract_compile_result_round_trip_without_mission_ir(self) -> None:
+        result = ProductTaskContractCompileResult(
+            product_id="product",
+            status=ProductCompileStatus.COMPILED,
+            intent_bundle_ref="frontdesk/intent_bundle.json",
+            run_workspace_ref="runs/product",
+            task_contract_ref="runs/product/contract/task_contract.json",
+            workspace_policy_ref="runs/product/policy/workspace_policy.json",
+            permission_manifest_ref="runs/product/policy/permission_manifest.json",
+            product_request_ref="runs/product/product_contract/request.json",
+            product_contract_ref="runs/product/product_contract/contract.json",
+            hard_check_refs=["reports/hard_checks.json"],
+            evidence_refs=["runs/product/product_contract/compile_report.json"],
+        )
+
+        restored = ProductTaskContractCompileResult.from_dict(result.to_dict())
+
+        self.assertEqual(restored.status, ProductCompileStatus.COMPILED)
+        self.assertEqual(restored.task_contract_ref, "runs/product/contract/task_contract.json")
+        self.assertNotIn("mission_ir_ref", restored.to_dict())
+
+    def test_task_contract_compile_result_requires_task_refs(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            ProductTaskContractCompileResult(
+                product_id="product",
+                status=ProductCompileStatus.COMPILED,
+                intent_bundle_ref="frontdesk/intent_bundle.json",
+            ).validate()
+
+    def test_task_contract_compile_result_requires_refs_under_run_workspace(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "under run_workspace_ref"):
+            ProductTaskContractCompileResult(
+                product_id="product",
+                status=ProductCompileStatus.COMPILED,
+                intent_bundle_ref="frontdesk/intent_bundle.json",
+                run_workspace_ref="runs/product",
+                task_contract_ref="runs/other/contract/task_contract.json",
+                workspace_policy_ref="runs/product/policy/workspace_policy.json",
+                permission_manifest_ref="runs/product/policy/permission_manifest.json",
+                product_request_ref="runs/product/product_contract/request.json",
+                product_contract_ref="runs/product/product_contract/contract.json",
+            ).validate()
+
     def test_clarification_status_requires_missing_slots_or_questions(self) -> None:
         with self.assertRaises(ContractValidationError):
             ProductCompileResult(
+                product_id="product",
+                status=ProductCompileStatus.NEEDS_CLARIFICATION,
+                intent_bundle_ref="frontdesk/intent_bundle.json",
+            ).validate()
+        with self.assertRaises(ContractValidationError):
+            ProductTaskContractCompileResult(
                 product_id="product",
                 status=ProductCompileStatus.NEEDS_CLARIFICATION,
                 intent_bundle_ref="frontdesk/intent_bundle.json",

@@ -37,6 +37,11 @@ from .product_grade_gate import ProductGradeFinding, ProductGradeReport, Product
 from .registry import RegistryEntry, SkillFoundryRegistry, register_skill_bundle
 from .reports import SkillFoundryProductReport
 from .runtime import run_skillfoundry_bundle_build
+from .task_contract_compiler import (
+    SkillFoundryTaskContractCompileResult,
+    compile_skillfoundry_task_contract,
+    load_skillfoundry_task_contract,
+)
 from .validators import BundleValidationCheck, BundleValidationReport, validate_skill_bundle
 
 __all__ = [
@@ -69,6 +74,7 @@ __all__ = [
     "SkillFoundryRegistry",
     "SkillFoundryRequest",
     "SkillFoundrySourceBundle",
+    "SkillFoundryTaskContractCompileResult",
     "SkillProductContract",
     "SkillPackageTarget",
     "acceptance_summary_for_profile",
@@ -76,6 +82,7 @@ __all__ = [
     "build_skillfoundry_request",
     "capability_surface_for_profile",
     "compile_skillfoundry_bundle",
+    "compile_skillfoundry_task_contract",
     "compile_frontdesk_intent",
     "evaluate_product_grade",
     "manifest_for_profile",
@@ -83,5 +90,6 @@ __all__ = [
     "run_skillfoundry_live_dogfood",
     "run_skillfoundry_bundle_build",
     "target_package_refs_for_profile",
+    "load_skillfoundry_task_contract",
     "validate_skill_bundle",
 ]

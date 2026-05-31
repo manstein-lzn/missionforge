@@ -12,11 +12,13 @@ from missionforge.product_integration import (
     ProductClarificationRequest,
     ProductCompileResult,
     ProductCompileStatus,
+    ProductTaskContractCompileResult,
 )
 
 from .compiler import SkillFoundryMissionCompiler
 from .frontdesk_context import SkillFoundryInquiryProfile
 from .product_contract import BundleProfile, PROMPT_ONLY_REQUIRED_PACKAGE_REFS, SkillFoundryRequest
+from .task_contract_compiler import compile_skillfoundry_task_contract
 
 
 SKILLFOUNDRY_INTENT_BUNDLE_REF = "frontdesk/intent_bundle.json"
@@ -135,6 +137,38 @@ class SkillFoundryFrontDeskIntegration:
         workspace: str | Path = ".",
     ) -> ProductCompileResult:
         return compile_frontdesk_intent(bundle, workspace=workspace, bundle_id=self.bundle_id)
+
+    def compile_task_contract(
+        self,
+        bundle: FrontDeskIntentBundle,
+        *,
+        workspace: str | Path = ".",
+    ) -> ProductTaskContractCompileResult:
+        request_or_clarification = build_skillfoundry_request(bundle, bundle_id=self.bundle_id)
+        if isinstance(request_or_clarification, ProductClarificationRequest):
+            return ProductTaskContractCompileResult(
+                product_id="skillfoundry",
+                status=ProductCompileStatus.NEEDS_CLARIFICATION,
+                intent_bundle_ref=bundle.intent_bundle_ref,
+                missing_slot_ids=list(request_or_clarification.missing_slot_ids),
+                clarification_questions=list(request_or_clarification.questions),
+                reason=request_or_clarification.reason,
+            )
+        result = compile_skillfoundry_task_contract(request_or_clarification, workspace=workspace)
+        return ProductTaskContractCompileResult(
+            product_id="skillfoundry",
+            status=ProductCompileStatus.COMPILED,
+            intent_bundle_ref=bundle.intent_bundle_ref,
+            run_workspace_ref=result.run_workspace_ref,
+            task_contract_ref=result.task_contract_ref,
+            workspace_policy_ref=result.workspace_policy_ref,
+            permission_manifest_ref=result.permission_manifest_ref,
+            product_request_ref=result.product_request_ref,
+            product_contract_ref=result.product_contract_ref,
+            hard_check_refs=list(result.hard_check_refs),
+            evidence_refs=[result.compile_report_ref],
+            reason="compiled SkillFoundry TaskContract runtime refs from FrontDeskIntentBundle",
+        )
 
 
 def _bridge_missing_slots(bundle: FrontDeskIntentBundle) -> list[str]:
