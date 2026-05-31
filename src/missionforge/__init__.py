@@ -32,9 +32,20 @@ from .agentic_repair import (
     validate_revision_request_for_judge,
 )
 from .agentic_repair_controller import (
+    RepairExecutionDirective,
+    RepairExecutionDirectiveStatus,
     RepairTicket,
     RepairTicketStatus,
+    build_repair_execution_directive,
     build_repair_ticket,
+)
+from .agentic_revision_controller import (
+    RevisionAppliedRecord,
+    RevisionAppliedStatus,
+    RevisionPendingRecord,
+    RevisionPendingStatus,
+    apply_task_contract_revision,
+    build_revision_pending_record,
 )
 from .contracts import (
     AdaptiveDecision,
@@ -301,9 +312,15 @@ __all__ = [
     "ProfileRegistry",
     "Ref",
     "RepairBrief",
+    "RepairExecutionDirective",
+    "RepairExecutionDirectiveStatus",
     "RepairTicket",
     "RepairTicketStatus",
     "RepairStrategyProposal",
+    "RevisionAppliedRecord",
+    "RevisionAppliedStatus",
+    "RevisionPendingRecord",
+    "RevisionPendingStatus",
     "ReviewPacket",
     "ReviewerDecision",
     "ReviewerProvider",
@@ -346,7 +363,10 @@ __all__ = [
     "WorkspaceFacts",
     "assert_refs_only_payload",
     "apply_mission_revision",
+    "apply_task_contract_revision",
     "build_judge_rubric",
+    "build_repair_execution_directive",
+    "build_revision_pending_record",
     "build_worker_brief",
     "build_run_audit",
     "build_repair_ticket",

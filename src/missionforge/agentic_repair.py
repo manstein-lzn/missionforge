@@ -271,6 +271,7 @@ class TaskRevisionDecision:
     current_contract_hash: str
     decision: TaskRevisionDecisionStatus
     decided_by: str
+    authority: TaskRevisionAuthority = TaskRevisionAuthority.PRODUCT_INTEGRATION
     rationale_refs: list[str] = field(default_factory=list)
     revised_contract_ref: str = ""
     revised_contract_hash: str = ""
@@ -290,6 +291,7 @@ class TaskRevisionDecision:
                 "current_contract_hash",
                 "decision",
                 "decided_by",
+                "authority",
                 "rationale_refs",
                 "revised_contract_ref",
                 "revised_contract_hash",
@@ -313,6 +315,11 @@ class TaskRevisionDecision:
             ),
             decision=require_enum(data.get("decision"), TaskRevisionDecisionStatus, "task_revision_decision.decision"),
             decided_by=require_non_empty_str(data.get("decided_by"), "task_revision_decision.decided_by"),
+            authority=require_enum(
+                data.get("authority", TaskRevisionAuthority.PRODUCT_INTEGRATION.value),
+                TaskRevisionAuthority,
+                "task_revision_decision.authority",
+            ),
             rationale_refs=_ref_list(data.get("rationale_refs", []), "task_revision_decision.rationale_refs"),
             revised_contract_ref=_optional_empty_ref(
                 data.get("revised_contract_ref", ""),
@@ -335,6 +342,7 @@ class TaskRevisionDecision:
         _validate_hash(self.current_contract_hash, "task_revision_decision.current_contract_hash")
         decision = require_enum(self.decision, TaskRevisionDecisionStatus, "task_revision_decision.decision")
         require_non_empty_str(self.decided_by, "task_revision_decision.decided_by")
+        require_enum(self.authority, TaskRevisionAuthority, "task_revision_decision.authority")
         _validate_unique_refs(self.rationale_refs, "task_revision_decision.rationale_refs")
         if decision is TaskRevisionDecisionStatus.APPROVED:
             validate_ref(self.revised_contract_ref, "task_revision_decision.revised_contract_ref")
@@ -355,6 +363,7 @@ class TaskRevisionDecision:
             "current_contract_hash": self.current_contract_hash,
             "decision": self.decision.value,
             "decided_by": self.decided_by,
+            "authority": self.authority.value,
             "rationale_refs": list(self.rationale_refs),
             "revised_contract_ref": self.revised_contract_ref,
             "revised_contract_hash": self.revised_contract_hash,

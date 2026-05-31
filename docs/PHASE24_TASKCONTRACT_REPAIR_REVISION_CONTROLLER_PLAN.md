@@ -2,26 +2,33 @@
 
 Last updated: 2026-05-31
 
-Status: accepted design for the first repair-controller slice.
+Status: implemented S6 repair/revision thin control surface.
 
 ## Goal
 
-Turn the already-validated `RepairBrief` artifact into a small, explicit,
-idempotent control layer that decides the next durable repair step without
-mutating the frozen contract implicitly.
+Turn already-validated repair and revision artifacts into small, explicit,
+idempotent control records that decide the next durable step without mutating
+the frozen contract implicitly.
 
 The controller should sit between the judge decision and the next run action:
 
 ```text
-AgenticFlowResult(decision=repair)
+AgenticFlowResult(status=repair)
   -> validated RepairBrief
   -> RepairTicket
-  -> next durable repair step
+  -> RepairExecutionDirective
+
+AgenticFlowResult(status=revision_required)
+  -> validated TaskRevisionRequest
+  -> RevisionPendingRecord
+  -> authority-matching approved TaskRevisionDecision + revised TaskContract
+  -> RevisionAppliedRecord + TaskContractRevision
 ```
 
 This is intentionally not a new workflow engine. It is a compact state
-transition surface for repair. Revision remains a follow-on slice and should
-not be mixed into the first implementation step.
+transition surface for repair and revision authority. Repair and revision are
+implemented as separate controller modules so the repair path cannot silently
+apply or weaken a contract.
 
 ## Why This Exists
 
@@ -33,8 +40,8 @@ The current runtime already does the hard part correctly:
   active run, contract hash, judge packet, and judge report.
 - `TaskRevisionDecision` is type-strict and hash-sensitive.
 
-What still needs a dedicated design is the control step that turns those
-artifacts into the next durable action without collapsing into ad hoc glue.
+The dedicated control step turns those artifacts into the next durable action
+without collapsing into ad hoc glue.
 
 ## Non-Goals
 
@@ -62,12 +69,16 @@ The controller should accept:
   explicitly;
 - the run workspace or run-state refs needed to write durable records.
 
-It should emit one durable control outcome:
+It should emit one durable control outcome at a time:
 
-1. `repair_ticket`
+1. `RepairTicket`
+2. `RepairExecutionDirective`
+3. `RevisionPendingRecord`
+4. `RevisionAppliedRecord`
 
 `accepted` remains a terminal path handled by the flow, not the controller.
-`revision_required` is not part of the first controller slice.
+`revision_required` is handled by the separate revision controller, not by the
+repair-ticket builder.
 
 ## Invariants
 
@@ -78,8 +89,21 @@ It should emit one durable control outcome:
   `hard_constraints`.
 - Repair artifacts must stay bound to the current run, current judge packet,
   current judge report, and the judged artifact/evidence surface.
-- The controller must not schedule another executor pass directly; it only
-  writes a durable ticket for the outer runtime to consume.
+- The controller must not invoke another executor pass directly. It writes a
+  durable ticket and, when asked, a repair execution directive plus packet ref
+  for the outer runtime to consume.
+
+### Revision
+
+- Revision keeps the original `TaskContract.contract_hash` authoritative until
+  an approved decision and revised contract are content-bound.
+- Revision pending records must cite the immutable result, judge report,
+  revision request, execution packet/report, and current contract.
+- The revision decision authority must match the pending record's
+  `authority_required`.
+- Applying a revision must write an explicit `TaskContractRevision`.
+- Rejected or redesign-required decisions cannot include revised contract refs
+  and cannot apply a contract.
 
 ### General
 
@@ -97,12 +121,22 @@ runs/{run_id}/
   results/{result_id}.json
   repairs/{ticket_id}/
     repair_ticket.json
+    repair_execution_directive.json
+  packets/repairs/{ticket_id}/
+    execution_packet.json
+  revisions/{request_id}/
+    revision_pending.json
+    task_revision_decision.json
+    task_contract_revision.json
+    revision_applied.json
 ```
 
 Notes:
 
-- `repair_ticket.json` is the next execution directive, not a semantic
+- `repair_ticket.json` is a durable repair control record, not a semantic
   judgment;
+- `repair_execution_directive.json` prepares the next repair execution packet
+  but does not invoke a worker;
 - the layout uses the existing run workspace as the physical root; refs stay
   workspace-relative inside the controller/runtime boundary;
 - `result_id` is an immutable result artifact id derived from the validated
@@ -114,7 +148,9 @@ Notes:
   that immutable ref;
 - `ticket_id` and `repair_id` are the same deterministic value in the first
   slice;
-- frozen contract remains untouched in this slice;
+- frozen contract remains untouched by repair;
+- revision application writes a new `TaskContractRevision`; runtime activation
+  of that revised contract remains a separate runtime-state concern;
 - the original `RepairBrief` remains at its source ref; the controller does not
   duplicate it into the ticket directory.
 
@@ -150,7 +186,7 @@ RepairTicket
 Rules:
 
 - `schema_version` starts as `repair_ticket.v1`.
-- `status` is a typed enum. The only first-slice value is `ready`.
+- `status` is a typed enum. The S6 value is `ready`.
 - `source_result_ref` is the immutable result artifact ref that stores the
   validated `AgenticFlowResult`; it is not under `checkpoints/`.
 - If the controller receives `source_result_ref`, it must load the JSON at that
@@ -203,12 +239,12 @@ Rules:
   itself. It must not rely on caller convention that the brief was already
   validated.
 
-Later slices may add consumed/closed states, but the first slice should not
-implement a retry loop.
+Later slices may add consumed/closed states, but S6 does not implement a retry
+loop.
 
-## First-Slice API
+## Controller APIs
 
-The first code slice should prefer an explicit helper over a controller class:
+The code prefers explicit helpers over a controller class:
 
 ```text
 build_repair_ticket(
@@ -223,23 +259,61 @@ build_repair_ticket(
   worker_brief=None,
   execution_packet=None,
 ) -> RepairTicket
+
+build_repair_execution_directive(
+  *,
+  ticket,
+  workspace,
+  repair_ticket_ref=None,
+  worker_brief=None,
+) -> RepairExecutionDirective
+
+build_revision_pending_record(
+  *,
+  contract,
+  result,
+  revision_request,
+  judge_packet,
+  judge_report,
+  workspace,
+  source_result_ref=None,
+) -> RevisionPendingRecord
+
+apply_task_contract_revision(
+  *,
+  pending,
+  decision,
+  revised_contract,
+  workspace,
+  pending_ref=None,
+  decision_ref=None,
+) -> RevisionAppliedRecord
 ```
 
-The helper is allowed to snapshot `result` to an immutable `results/{id}.json`
-ref if `source_result_ref` is not supplied. It should write only:
+`build_repair_ticket(...)` and `build_revision_pending_record(...)` are allowed
+to snapshot `result` to an immutable `results/{id}.json` ref if
+`source_result_ref` is not supplied. The repair ticket helper writes only:
 
 ```text
 results/{result_id}.json
 repairs/{ticket_id}/repair_ticket.json
 ```
 
-No controller ledger is part of the first slice. A ledger can be added later
-only after its event schema is designed.
+`build_repair_execution_directive(...)` additionally writes:
 
-## Revision Follow-Up Slice
+```text
+packets/repairs/{ticket_id}/execution_packet.json
+repairs/{ticket_id}/repair_execution_directive.json
+```
 
-Revision application requires a separate design pass before implementation.
-That slice must define:
+The revision helpers write under `revisions/{request_id}/`. No controller
+ledger is part of S6. A ledger can be added later only after its event schema
+is designed.
+
+## Revision Control Slice
+
+Revision application is implemented in `missionforge.agentic_revision_controller`.
+It defines:
 
 - a `RevisionPendingRecord` that binds `TaskRevisionRequest` to
   `AgenticFlowResult`;
@@ -250,8 +324,8 @@ That slice must define:
   `TaskContractRevision`;
 - idempotency and conflict rules equivalent to `RepairTicket`.
 
-The first controller implementation must not include this revision application
-slice.
+The revision controller remains separate from the repair controller. The repair
+ticket builder cannot approve or apply a revision.
 
 ## Acceptance Conditions
 
@@ -279,10 +353,13 @@ The repair controller design is good enough when:
   worker brief matches the active contract when supplied;
 - a repair run does not alter the frozen contract hash;
 - all controller records remain refs-first and product-neutral;
-- the repair controller first slice can be tested with offline fake executor
-  and judge fixtures only;
-- no decision ledger or revision application is implemented in this first
-  slice.
+- the controller surface can be tested with offline fake executor and judge
+  fixtures only;
+- revision application is implemented only through
+  `apply_task_contract_revision(...)`, after an approved
+  authority-matching `TaskRevisionDecision` and a content-bound revised
+  `TaskContract`;
+- no controller decision ledger is implemented in this slice.
 
 ## Review Questions
 
@@ -294,13 +371,14 @@ The reviewer should specifically check:
 - whether the durable layout remains stable enough for later PiWorker runtime
   hardening.
 
-## Next Implementation Slice
+## Implemented Slice
 
-If this design holds, the next code slice should be small:
+The S6 code slice is intentionally small:
 
-1. add `RepairTicket` and `build_repair_ticket(...)`;
-2. add deterministic idempotency keys and replay-safe record writing using
+1. add `RepairTicket`, `RepairExecutionDirective`, and repair builders;
+2. add `RevisionPendingRecord`, `RevisionAppliedRecord`, and revision builders;
+3. add deterministic idempotency keys and replay-safe record writing using
    `stable_json_hash(...)`;
-3. add tests for accepted / repair / foreign-run / unreviewed-target / replay;
-4. keep revision application out of scope for this slice;
+4. add tests for accepted / repair / revision / foreign-run / unreviewed-target
+   / replay / content-drift paths;
 5. keep live PiWorker integration out of scope for this slice.
