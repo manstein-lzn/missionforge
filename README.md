@@ -1,15 +1,18 @@
 # MissionForge
 
-MissionForge is a runtime for executing structured Mission IR with observable
-PiWorker execution, controlled steering proposals, evidence gates, adaptive
-repair, and verified closure.
+MissionForge is converging toward a simplified PiWorker-centered agent runtime:
+PiWorker performs semantic work, while MissionForge core enforces contracts,
+workspace boundaries, permissions, refs, ledgers, role separation, and explicit
+revision.
 
 It is intentionally not a SkillFoundry rewrite. SkillFoundry should become one
 application on top of MissionForge. MissionForge owns the generic substrate:
 
 ```text
-MissionIR + Workspace + PiWorker Boundary + ToolRegistry
-  -> MissionResult + EvidenceLedger + Artifacts + MetricLedger
+FrontDeskIntentBundle + ProductIntegration + TaskContract
+  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> PiWorker execution + independent PiWorker judgment
+  -> FinalPackage + DecisionLedger + Artifacts + MetricLedger
 ```
 
 ## Design Stance
@@ -22,10 +25,11 @@ MissionIR + Workspace + PiWorker Boundary + ToolRegistry
   initial skeleton does not vendor PI code; any future copied or adapted PI
   code must retain required attribution.
 - Context and evidence are first-class runtime objects, not chat memory.
-- Worker self-report is never acceptance evidence.
-- LLM output is proposal, hypothesis, or review evidence; it is never
-  acceptance by itself.
-- Verifier failures must become structured repair inputs.
+- Executor self-report is never acceptance evidence.
+- Semantic acceptance may be produced by an independent Judge PiWorker role
+  using a frozen contract, judge rubric, artifact refs, and evidence refs.
+- Repair must preserve the frozen contract. Contract changes require explicit
+  revision.
 - Steering proposals must be schema-validated, boundary-validated, and
   authority-validated before runtime commits state.
 - Core code must not contain benchmark or product names such as Codexarium.
@@ -54,6 +58,15 @@ task-specific semantics out of runtime code.
 
 Implementation should be driven through the hardened development documents:
 
+- [MissionForge Agentic Constitution](docs/MISSIONFORGE_AGENTIC_CONSTITUTION.md):
+  simplified PiWorker-centered laws, preserved principles, and boundaries.
+- [MissionForge Final System Shape](docs/MISSIONFORGE_FINAL_SYSTEM_SHAPE.md):
+  target architecture with FrontDesk, Product Integration, TaskContract,
+  WorkerBrief, JudgeRubric, PermissionManifest, Executor PiWorker, and Judge
+  PiWorker.
+- [Simplified Agent Runtime Implementation Plan](docs/MISSIONFORGE_SIMPLIFIED_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md):
+  staged development plan for converging from the current runtime to the
+  simplified architecture.
 - [Development Goal Protocol](docs/DEVELOPMENT_GOAL_PROTOCOL.md): `/goal`
   operating contract, verification discipline, safe-point control, and
   completion rules.
