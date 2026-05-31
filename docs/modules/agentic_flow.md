@@ -147,6 +147,11 @@ The checkpoint at `checkpoints/latest.json` is overwriteable. It is a compact
 recovery pointer to the current result and emitted refs, not a second source of
 task truth.
 
+Downstream controllers must not bind durable repair/revision decisions to that
+mutable checkpoint. The repair-ticket controller snapshots the
+`AgenticFlowResult` into an immutable `results/result-*.json` ref before
+writing `repairs/{ticket_id}/repair_ticket.json`.
+
 ## Expected Failure Modes
 
 The runner fails closed when:

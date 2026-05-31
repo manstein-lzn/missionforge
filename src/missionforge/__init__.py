@@ -31,6 +31,11 @@ from .agentic_repair import (
     validate_repair_brief_for_judge,
     validate_revision_request_for_judge,
 )
+from .agentic_repair_controller import (
+    RepairTicket,
+    RepairTicketStatus,
+    build_repair_ticket,
+)
 from .contracts import (
     AdaptiveDecision,
     AuthorityRequirement,
@@ -296,6 +301,8 @@ __all__ = [
     "ProfileRegistry",
     "Ref",
     "RepairBrief",
+    "RepairTicket",
+    "RepairTicketStatus",
     "RepairStrategyProposal",
     "ReviewPacket",
     "ReviewerDecision",
@@ -342,6 +349,7 @@ __all__ = [
     "build_judge_rubric",
     "build_worker_brief",
     "build_run_audit",
+    "build_repair_ticket",
     "expand_mission",
     "freeze_mission",
     "project_judge_rubric",

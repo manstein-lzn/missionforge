@@ -58,3 +58,40 @@ finalized.
 
 This keeps repair and revision in the contract/governance layer instead of
 making them ad hoc prompt text.
+
+## Repair Ticket Controller
+
+`missionforge.agentic_repair_controller` is the next thin control layer after a
+validated repair result. It turns:
+
+```text
+AgenticFlowResult(status=repair)
+  + RepairBrief
+  + JudgePacket/JudgeReport
+  + projected WorkerBrief/ExecutionPacket refs
+  -> RepairTicket
+```
+
+`RepairTicket` is not a workflow engine and not a semantic repair plan. It is a
+refs-only durable directive for the next repair execution pass. It records the
+frozen contract id/hash, immutable source result ref, repair brief ref, judge
+packet/report refs, execution packet/report refs, worker brief ref, target
+artifact refs, and evidence refs.
+
+The controller enforces these boundaries:
+
+- it only accepts `AgenticFlowResult.status=repair` and
+  `JudgeReportDecision.REPAIR`;
+- it re-runs `validate_repair_brief_for_judge(...)` instead of trusting caller
+  convention;
+- it snapshots the result to an immutable `results/result-*.json` ref when no
+  immutable result ref is supplied;
+- it rejects checkpoint refs as `source_result_ref`;
+- it loads and content-binds the result, contract, judge packet, judge report,
+  repair brief, worker brief, and execution packet refs before writing a
+  ticket;
+- it writes `repairs/{ticket_id}/repair_ticket.json` idempotently, returning
+  the existing ticket on exact replay and failing closed on hash conflict;
+- it does not copy judge-authored `reason` or `repair_steps` into the ticket;
+- it does not apply revisions, schedule a new executor pass, mutate the frozen
+  contract, or write a controller ledger in the first slice.

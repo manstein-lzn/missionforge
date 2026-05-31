@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Mapping, Protocol
 
 from .agent_packets import (
     AgentExecutionPacket,
@@ -32,7 +32,9 @@ from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
     require_enum,
+    require_mapping,
     require_non_empty_str,
+    require_str_list,
     validate_ref,
 )
 from .permissions import ref_is_under
@@ -147,6 +149,56 @@ class AgenticFlowRefs:
     decision_ledger_ref: str = "ledgers/decision_ledger.jsonl"
     checkpoint_ref: str = "checkpoints/latest.json"
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AgenticFlowRefs":
+        data = require_mapping(payload, "agentic_flow_refs")
+        allowed = {
+            "contract_ref",
+            "worker_brief_ref",
+            "execution_packet_ref",
+            "execution_report_ref",
+            "judge_packet_ref",
+            "judge_report_ref",
+            "decision_ledger_ref",
+            "checkpoint_ref",
+        }
+        unknown = sorted(set(data) - allowed)
+        if unknown:
+            raise ContractValidationError(f"agentic_flow_refs contains unknown fields: {unknown}")
+        refs = cls(
+            contract_ref=validate_ref(data.get("contract_ref", cls.contract_ref), "agentic_flow_refs.contract_ref"),
+            worker_brief_ref=validate_ref(
+                data.get("worker_brief_ref", cls.worker_brief_ref),
+                "agentic_flow_refs.worker_brief_ref",
+            ),
+            execution_packet_ref=validate_ref(
+                data.get("execution_packet_ref", cls.execution_packet_ref),
+                "agentic_flow_refs.execution_packet_ref",
+            ),
+            execution_report_ref=validate_ref(
+                data.get("execution_report_ref", cls.execution_report_ref),
+                "agentic_flow_refs.execution_report_ref",
+            ),
+            judge_packet_ref=validate_ref(
+                data.get("judge_packet_ref", cls.judge_packet_ref),
+                "agentic_flow_refs.judge_packet_ref",
+            ),
+            judge_report_ref=validate_ref(
+                data.get("judge_report_ref", cls.judge_report_ref),
+                "agentic_flow_refs.judge_report_ref",
+            ),
+            decision_ledger_ref=validate_ref(
+                data.get("decision_ledger_ref", cls.decision_ledger_ref),
+                "agentic_flow_refs.decision_ledger_ref",
+            ),
+            checkpoint_ref=validate_ref(
+                data.get("checkpoint_ref", cls.checkpoint_ref),
+                "agentic_flow_refs.checkpoint_ref",
+            ),
+        )
+        refs.validate()
+        return refs
+
     def validate(self) -> None:
         validate_ref(self.contract_ref, "agentic_flow_refs.contract_ref")
         validate_ref(self.worker_brief_ref, "agentic_flow_refs.worker_brief_ref")
@@ -185,6 +237,53 @@ class AgenticFlowResult:
     accepted_artifact_refs: list[str] = field(default_factory=list)
     repair_brief_ref: str | None = None
     revision_request_ref: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "AgenticFlowResult":
+        data = require_mapping(payload, "agentic_flow_result")
+        allowed = {
+            "run_id",
+            "contract_id",
+            "contract_hash",
+            "status",
+            "execution_status",
+            "judge_decision",
+            "accepted_artifact_refs",
+            "repair_brief_ref",
+            "revision_request_ref",
+            "ref_map",
+        }
+        unknown = sorted(set(data) - allowed)
+        if unknown:
+            raise ContractValidationError(f"agentic_flow_result contains unknown fields: {unknown}")
+        judge_decision = data.get("judge_decision")
+        result = cls(
+            run_id=require_non_empty_str(data.get("run_id"), "agentic_flow_result.run_id"),
+            contract_id=require_non_empty_str(data.get("contract_id"), "agentic_flow_result.contract_id"),
+            contract_hash=require_non_empty_str(data.get("contract_hash"), "agentic_flow_result.contract_hash"),
+            status=require_enum(data.get("status"), AgenticFlowStatus, "agentic_flow_result.status"),
+            execution_status=require_enum(
+                data.get("execution_status"),
+                AgentExecutionStatus,
+                "agentic_flow_result.execution_status",
+            ),
+            judge_decision=(
+                None
+                if judge_decision is None
+                else require_enum(judge_decision, JudgeReportDecision, "agentic_flow_result.judge_decision")
+            ),
+            accepted_artifact_refs=_unique_refs(
+                require_str_list(data.get("accepted_artifact_refs", []), "agentic_flow_result.accepted_artifact_refs"),
+            ),
+            repair_brief_ref=_optional_ref(data.get("repair_brief_ref"), "agentic_flow_result.repair_brief_ref"),
+            revision_request_ref=_optional_ref(
+                data.get("revision_request_ref"),
+                "agentic_flow_result.revision_request_ref",
+            ),
+            refs=AgenticFlowRefs.from_dict(data.get("ref_map", {})),
+        )
+        result.validate()
+        return result
 
     def validate(self) -> None:
         if not isinstance(self.status, AgenticFlowStatus):
@@ -730,6 +829,12 @@ def _without_json_suffix(ref: str) -> str:
     if safe_ref.endswith(".json"):
         return safe_ref[:-5]
     return safe_ref
+
+
+def _optional_ref(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return validate_ref(value, field_name)
 
 
 def _utc_now() -> str:
