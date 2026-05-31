@@ -2,7 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 
 import type { RuntimeInput } from "./contract.js";
-import { appendJsonLine, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
+import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
 import { redactJson, redactText } from "./redaction.js";
 
 export interface RuntimeMetrics {
@@ -70,14 +70,18 @@ export class EvidenceRecorder {
 
   async record(event: AgentEvent): Promise<void> {
     this.updateMetrics(event);
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref), {
-      schema_version: "missionforge.pi_agent_runtime_event.v1",
-      event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
-      created_at: new Date().toISOString(),
-      work_unit_id: this.input.work_unit_id,
-      event_type: event.type,
-      payload: redactJson(summarizeEvent(event), this.env),
-    });
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+      {
+        schema_version: "missionforge.pi_agent_runtime_event.v1",
+        event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
+        created_at: new Date().toISOString(),
+        work_unit_id: this.input.work_unit_id,
+        event_type: event.type,
+        payload: redactJson(summarizeEvent(event), this.env),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
     if (event.type === "tool_execution_end" || event.type === "turn_end") {
       await this.recordFirstArtifactIfPresent();
     }
@@ -95,17 +99,21 @@ export class EvidenceRecorder {
         message: redactJson(summarizeMessage(message), this.env),
       }),
     );
-    await writeText(path, `${lines.join("\n")}${lines.length ? "\n" : ""}`);
+    await writeText(path, `${lines.join("\n")}${lines.length ? "\n" : ""}`, this.workspaceRoot);
   }
 
   async writeMetrics(durationMs: number): Promise<void> {
     await this.recordFirstArtifactIfPresent();
-    await writeJsonFile(resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref), {
-      schema_version: "missionforge.pi_agent_runtime_metrics.v1",
-      work_unit_id: this.input.work_unit_id,
-      duration_ms: durationMs,
-      ...this.safeMetrics(),
-    });
+    await writeJsonFile(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref),
+      {
+        schema_version: "missionforge.pi_agent_runtime_metrics.v1",
+        work_unit_id: this.input.work_unit_id,
+        duration_ms: durationMs,
+        ...this.safeMetrics(),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
   }
 
   safeMetrics(): RuntimeMetrics {
@@ -137,46 +145,54 @@ export class EvidenceRecorder {
   }
 
   async writeCompactionMarker(reason: string): Promise<void> {
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref), {
-      schema_version: "missionforge.pi_agent_runtime_event.v1",
-      event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
-      created_at: new Date().toISOString(),
-      work_unit_id: this.input.work_unit_id,
-      event_type: "compaction",
-      payload: redactJson({
-        reason,
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+      {
+        schema_version: "missionforge.pi_agent_runtime_event.v1",
+        event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
+        created_at: new Date().toISOString(),
+        work_unit_id: this.input.work_unit_id,
+        event_type: "compaction",
+        payload: redactJson({
+          reason,
+          turn_index: this.metrics.turn_count,
+          savepoints_ref: this.input.savepoints_ref,
+          resume_boundary: "after_completed_turn",
+        }, this.env),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref),
+      redactJson({
+        schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
+        work_unit_id: this.input.work_unit_id,
         turn_index: this.metrics.turn_count,
-        savepoints_ref: this.input.savepoints_ref,
-        resume_boundary: "after_completed_turn",
+        created_at: new Date().toISOString(),
+        message_ref: `${this.input.session_ref}#compact`,
+        events_ref: this.input.events_ref,
+        changed_refs: [],
+        tool_call_count: this.metrics.tool_call_count,
+        commands_run: this.metrics.commands_run.slice(),
+        stop_reason: "compacted",
+        token_count: this.metrics.total_tokens,
+        resume_hint: {
+          supported: true,
+          boundary: "after_completed_turn",
+          unsupported: [
+            "mid_tool_call",
+            "active_shell_process",
+            "partial_provider_stream",
+            "uncommitted_filesystem_mutations",
+          ],
+        },
+        compaction: {
+          applied: true,
+          reason,
+        },
       }, this.env),
-    });
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref), redactJson({
-      schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-      work_unit_id: this.input.work_unit_id,
-      turn_index: this.metrics.turn_count,
-      created_at: new Date().toISOString(),
-      message_ref: `${this.input.session_ref}#compact`,
-      events_ref: this.input.events_ref,
-      changed_refs: [],
-      tool_call_count: this.metrics.tool_call_count,
-      commands_run: this.metrics.commands_run.slice(),
-      stop_reason: "compacted",
-      token_count: this.metrics.total_tokens,
-      resume_hint: {
-        supported: true,
-        boundary: "after_completed_turn",
-        unsupported: [
-          "mid_tool_call",
-          "active_shell_process",
-          "partial_provider_stream",
-          "uncommitted_filesystem_mutations",
-        ],
-      },
-      compaction: {
-        applied: true,
-        reason,
-      },
-    }, this.env));
+      { workspaceRoot: this.workspaceRoot },
+    );
   }
 
   private updateMetrics(event: AgentEvent): void {
@@ -243,29 +259,33 @@ export class EvidenceRecorder {
   }
 
   private async writeSavepoint(event: Extract<AgentEvent, { type: "turn_end" }>): Promise<void> {
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref), redactJson({
-      schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-      work_unit_id: this.input.work_unit_id,
-      turn_index: this.metrics.turn_count,
-      created_at: new Date().toISOString(),
-      message_ref: `${this.input.session_ref}#turn=${this.metrics.turn_count}`,
-      events_ref: this.input.events_ref,
-      changed_refs: [],
-      tool_call_count: event.toolResults.length,
-      commands_run: this.metrics.commands_run.slice(),
-      stop_reason: event.message.role === "assistant" ? event.message.stopReason : undefined,
-      token_count: this.metrics.total_tokens,
-      resume_hint: {
-        supported: true,
-        boundary: "after_completed_turn",
-        unsupported: [
-          "mid_tool_call",
-          "active_shell_process",
-          "partial_provider_stream",
-          "uncommitted_filesystem_mutations",
-        ],
-      },
-    }, this.env));
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref),
+      redactJson({
+        schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
+        work_unit_id: this.input.work_unit_id,
+        turn_index: this.metrics.turn_count,
+        created_at: new Date().toISOString(),
+        message_ref: `${this.input.session_ref}#turn=${this.metrics.turn_count}`,
+        events_ref: this.input.events_ref,
+        changed_refs: [],
+        tool_call_count: event.toolResults.length,
+        commands_run: this.metrics.commands_run.slice(),
+        stop_reason: event.message.role === "assistant" ? event.message.stopReason : undefined,
+        token_count: this.metrics.total_tokens,
+        resume_hint: {
+          supported: true,
+          boundary: "after_completed_turn",
+          unsupported: [
+            "mid_tool_call",
+            "active_shell_process",
+            "partial_provider_stream",
+            "uncommitted_filesystem_mutations",
+          ],
+        },
+      }, this.env),
+      { workspaceRoot: this.workspaceRoot },
+    );
   }
 }
 
@@ -285,10 +305,43 @@ function safeNumericRecord(values: Record<string, number>): Record<string, numbe
 
 function summarizeEvent(event: AgentEvent): unknown {
   switch (event.type) {
+    case "agent_start":
+    case "turn_start":
+      return { type: event.type };
+    case "agent_end":
+      return {
+        type: event.type,
+        message_count: event.messages.length,
+        messages: event.messages.map(summarizeMessage),
+      };
     case "message_start":
     case "message_update":
     case "message_end":
-      return { ...event, message: summarizeMessage(event.message) };
+      return { type: event.type, message: summarizeMessage(event.message) };
+    case "tool_execution_start":
+      return {
+        type: event.type,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: summarizeToolArgs(event.toolName, event.args),
+      };
+    case "tool_execution_update":
+      return {
+        type: event.type,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: summarizeToolArgs(event.toolName, event.args),
+        partialResult: summarizeToolExecutionResult(event.partialResult),
+      };
+    case "tool_execution_end":
+      return {
+        type: event.type,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: "args" in event ? summarizeToolArgs(event.toolName, event.args) : undefined,
+        result: summarizeToolExecutionResult(event.result),
+        isError: event.isError,
+      };
     case "turn_end":
       return {
         type: event.type,
@@ -296,7 +349,7 @@ function summarizeEvent(event: AgentEvent): unknown {
         toolResults: event.toolResults.map(summarizeToolResult),
       };
     default:
-      return event;
+      return { type: (event as { type?: string }).type ?? "unknown" };
   }
 }
 
@@ -306,36 +359,132 @@ function summarizeToolResult(message: ToolResultMessage): unknown {
     toolCallId: message.toolCallId,
     toolName: message.toolName,
     isError: message.isError,
-    content: message.content.map((block) => (block.type === "text" ? { ...block, text: truncate(block.text) } : block)),
+    content: summarizeContentBlocks(message.content),
   };
 }
 
 function summarizeMessage(message: AgentMessage): unknown {
-  if (message.role !== "assistant") return message;
+  const raw = message as any;
+  if (!raw || typeof raw !== "object") return { type: typeof message };
   return {
-    ...message,
-    content: message.content.map((block) => {
-      if (block.type === "text") return { ...block, text: truncate(block.text) };
-      if (block.type === "thinking") return { ...block, thinking: truncate(block.thinking) };
-      return block;
-    }),
+    role: raw.role,
+    api: raw.api,
+    stopReason: raw.stopReason,
+    errorMessage: raw.errorMessage ? redactText(String(raw.errorMessage)) : undefined,
+    usage: raw.role === "assistant" ? summarizeUsage(raw.usage) : undefined,
+    content: summarizeContentBlocks(raw.content),
   };
 }
 
-function truncate(value: string, limit = 4000): string {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, limit)}\n[truncated]`;
+function summarizeUsage(usage: any): unknown {
+  if (!usage || typeof usage !== "object") return undefined;
+  return {
+    input: nonNegativeNumber(usage.input),
+    output: nonNegativeNumber(usage.output),
+    cacheRead: nonNegativeNumber(usage.cacheRead),
+    cacheWrite: nonNegativeNumber(usage.cacheWrite),
+    totalTokens: nonNegativeNumber(usage.totalTokens),
+    cost: usage.cost && typeof usage.cost === "object"
+      ? {
+          input: nonNegativeNumber(usage.cost.input),
+          output: nonNegativeNumber(usage.cost.output),
+          cacheRead: nonNegativeNumber(usage.cost.cacheRead),
+          cacheWrite: nonNegativeNumber(usage.cost.cacheWrite),
+          total: nonNegativeNumber(usage.cost.total),
+        }
+      : undefined,
+  };
+}
+
+function summarizeToolExecutionResult(result: any): unknown {
+  if (!result || typeof result !== "object") return { type: typeof result };
+  return {
+    content: summarizeContentBlocks(result.content),
+    details: summarizeJsonShape(result.details),
+    terminate: result.terminate,
+  };
+}
+
+function summarizeToolArgs(toolName: string, args: any): unknown {
+  if (!args || typeof args !== "object") return { type: typeof args };
+  if (toolName === "read") {
+    return { path: safeString(args.path), offset: args.offset, limit: args.limit };
+  }
+  if (toolName === "write") {
+    return { path: safeString(args.path), content: summarizeString(args.content) };
+  }
+  if (toolName === "edit") {
+    return {
+      path: safeString(args.path),
+      edit_count: Array.isArray(args.edits) ? args.edits.length : undefined,
+    };
+  }
+  if (toolName === "bash") {
+    return {
+      command: summarizeString(args.command),
+      timeout: args.timeout,
+    };
+  }
+  return summarizeJsonShape(args);
+}
+
+function summarizeContentBlocks(content: unknown): unknown[] {
+  if (!Array.isArray(content)) return [];
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return { type: typeof block };
+    const value = block as any;
+    if (value.type === "text") return { type: "text", text: summarizeString(value.text) };
+    if (value.type === "thinking") return { type: "thinking", thinking: summarizeString(value.thinking) };
+    if (value.type === "toolCall") {
+      return {
+        type: "toolCall",
+        id: safeString(value.id),
+        name: safeString(value.name),
+        arguments: summarizeToolArgs(String(value.name ?? ""), value.arguments),
+      };
+    }
+    if (value.type === "image") return { type: "image", mimeType: safeString(value.mimeType) };
+    return { type: safeString(value.type) };
+  });
+}
+
+function summarizeJsonShape(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return summarizeString(value);
+  if (typeof value === "number" || typeof value === "boolean") return { type: typeof value };
+  if (Array.isArray(value)) return { type: "array", length: value.length };
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return {
+      type: "object",
+      keys: entries.map(([key]) => key),
+    };
+  }
+  return { type: typeof value };
+}
+
+function summarizeString(value: unknown): { type: "string"; length: number } {
+  return { type: "string", length: typeof value === "string" ? value.length : 0 };
+}
+
+function nonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function safeString(value: unknown): string | undefined {
+  return typeof value === "string" ? redactText(value) : undefined;
 }
 
 function looksLikeTestCommand(command: string): boolean {
   return /\b(pytest|unittest|npm test|vitest|make test|go test|cargo test)\b/.test(command);
 }
 
-async function writeText(path: string, text: string): Promise<void> {
+async function writeText(path: string, text: string, workspaceRoot: string): Promise<void> {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text, "utf-8");
+  const safePath = prepareWorkspaceWritePath(path, workspaceRoot);
+  await mkdir(dirname(safePath), { recursive: true });
+  await writeFile(safePath, text, "utf-8");
 }
 
 async function fileExists(path: string): Promise<boolean> {

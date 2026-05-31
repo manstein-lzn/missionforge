@@ -40,6 +40,8 @@ PI_AGENT_STATUSES = {"completed", "failed", "blocked", "cancelled"}
 PI_AGENT_VERIFICATION_STATUSES = {"passed", "failed", "not_run", "review_required"}
 PI_AGENT_REPAIR_MODES = {"none", "follow_up"}
 PI_AGENT_RESUME_MODES = {"none", "follow_up"}
+SAFE_WORKER_CLAIM_RE = re.compile(r"^([a-z][a-z0-9_.-]*):length=[0-9]+$")
+SAFE_WORKER_CLAIM_NAMES = {"assistant_final_text_present", "worker_claim_present"}
 
 
 @dataclass(frozen=True)
@@ -229,7 +231,9 @@ class PiAgentRunResult:
             commands_run=require_str_list(data.get("commands_run", []), "pi_agent_run_result.commands_run"),
             tests_run=require_str_list(data.get("tests_run", []), "pi_agent_run_result.tests_run"),
             failures=require_str_list(data.get("failures", []), "pi_agent_run_result.failures"),
-            worker_claims=require_str_list(data.get("worker_claims", []), "pi_agent_run_result.worker_claims"),
+            worker_claims=_summarized_worker_claims(
+                require_str_list(data.get("worker_claims", []), "pi_agent_run_result.worker_claims")
+            ),
             verifier_evidence=require_str_list(data.get("verifier_evidence", []), "pi_agent_run_result.verifier_evidence"),
             new_unknowns=require_str_list(data.get("new_unknowns", []), "pi_agent_run_result.new_unknowns"),
             recommended_next_steps=require_str_list(
@@ -556,6 +560,7 @@ class PiAgentRuntimeAdapter:
             "metrics_ref": refs["metrics"],
             "savepoints_ref": refs["savepoints"],
             "contract": work_unit.to_dict(),
+            "permission_manifest": _permission_manifest_payload(work_unit),
             "runtime": {
                 "runtime_name": self.config.runtime_name,
                 "timeout_seconds": self.config.timeout_seconds,
@@ -856,6 +861,35 @@ def _reject_outputs_outside_scope(work_unit: WorkUnitContract) -> None:
             raise ContractValidationError(f"PI Agent runtime output outside allowed scope: {output_ref}")
 
 
+def _permission_manifest_payload(work_unit: WorkUnitContract) -> dict[str, Any]:
+    readable_refs = _dedupe_refs([
+        *work_unit.visible_refs,
+        *work_unit.allowed_scope,
+        *[_parent_ref(ref) for ref in work_unit.expected_outputs],
+    ])
+    return {
+        "manifest_id": f"{work_unit.work_unit_id}-pi-runtime-permissions",
+        "schema_version": "permission_manifest.v1",
+        "workspace_policy_ref": None,
+        "readable_refs": readable_refs,
+        "writable_refs": _dedupe_refs(list(work_unit.allowed_scope)),
+        "denied_refs": [],
+        "allowed_commands": [],
+        "network_policy": "disabled",
+        "env_allowlist": [],
+        "secret_ref": None,
+        "unsupported_hard_policies": [],
+    }
+
+
+def _parent_ref(ref: str) -> str:
+    safe_ref = validate_ref(ref, "ref")
+    parts = safe_ref.split("/")
+    if len(parts) == 1:
+        return safe_ref
+    return "/".join(parts[:-1])
+
+
 def _is_within(ref: str, scope: str) -> bool:
     safe_ref = validate_ref(ref, "ref")
     safe_scope = validate_ref(scope, "scope")
@@ -954,6 +988,17 @@ def _process_output_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+def _summarized_worker_claims(claims: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    for claim in claims:
+        match = SAFE_WORKER_CLAIM_RE.fullmatch(claim)
+        if match and match.group(1) in SAFE_WORKER_CLAIM_NAMES:
+            result.append(claim)
+        else:
+            result.append(f"worker_claim_present:length={len(claim.strip())}")
+    return result
 
 
 def _duration_ms(started: float) -> int:

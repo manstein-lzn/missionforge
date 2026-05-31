@@ -60,7 +60,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
     commands_run: options.commandsRun.map((item) => redactText(item)),
     tests_run: options.testsRun.map((item) => redactText(item)),
     failures: failures.map((item) => redactText(item)),
-    worker_claims: (options.workerClaims ?? []).map((item) => redactText(item)),
+    worker_claims: (options.workerClaims ?? []).map(summarizeWorkerClaim),
     verifier_evidence: [
       options.input.output_ref,
       options.input.events_ref,
@@ -88,7 +88,7 @@ export async function writeRuntimeOutput(
   input: RuntimeInput,
   output: RuntimeOutput,
 ): Promise<void> {
-  await writeJsonFile(resolveWorkspaceRef(workspaceRoot, input.output_ref), output);
+  await writeJsonFile(resolveWorkspaceRef(workspaceRoot, input.output_ref), output, { workspaceRoot });
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -109,4 +109,9 @@ function dedupe(values: string[]): string[] {
     result.push(value);
   }
   return result;
+}
+
+function summarizeWorkerClaim(value: string): string {
+  const text = redactText(value).trim();
+  return text ? `assistant_final_text_present:length=${text.length}` : "";
 }

@@ -1,5 +1,8 @@
 export const INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1";
 export const OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1";
+export const PERMISSION_MANIFEST_SCHEMA_VERSION = "permission_manifest.v1";
+
+export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -29,6 +32,7 @@ export interface RuntimeInput {
   metrics_ref: string;
   savepoints_ref: string;
   contract: WorkUnitContract;
+  permission_manifest: PermissionManifest;
   runtime: {
     runtime_name: string;
     timeout_seconds: number;
@@ -37,6 +41,20 @@ export interface RuntimeInput {
   };
   repair: RepairInput;
   resume: ResumeInput;
+}
+
+export interface PermissionManifest {
+  manifest_id: string;
+  workspace_policy_ref: string | null;
+  readable_refs: string[];
+  writable_refs: string[];
+  denied_refs: string[];
+  allowed_commands: string[];
+  network_policy: NetworkPolicy;
+  env_allowlist: string[];
+  secret_ref: string | null;
+  unsupported_hard_policies: string[];
+  schema_version: typeof PERMISSION_MANIFEST_SCHEMA_VERSION;
 }
 
 export interface RepairInput {
@@ -102,6 +120,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     metrics_ref: requireRef(data.metrics_ref, "metrics_ref"),
     savepoints_ref: requireRef(data.savepoints_ref, "savepoints_ref"),
     contract,
+    permission_manifest: parsePermissionManifest(data.permission_manifest),
     runtime: parseRuntime(data.runtime),
     repair: parseRepair(data.repair),
     resume: parseResume(data.resume),
@@ -114,6 +133,46 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     throw new Error("input.mission_id must match contract.mission_id");
   }
   return result;
+}
+
+export function parsePermissionManifest(value: unknown): PermissionManifest {
+  const data = requireObject(value, "permission_manifest");
+  const schemaVersion = requireString(
+    data.schema_version ?? PERMISSION_MANIFEST_SCHEMA_VERSION,
+    "permission_manifest.schema_version",
+  );
+  if (schemaVersion !== PERMISSION_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(`Unsupported permission_manifest.schema_version: ${schemaVersion}`);
+  }
+  const networkPolicy = requireString(
+    data.network_policy ?? "disabled",
+    "permission_manifest.network_policy",
+  ) as NetworkPolicy;
+  if (!["disabled", "restricted", "enabled"].includes(networkPolicy)) {
+    throw new Error("permission_manifest.network_policy must be disabled, restricted, or enabled");
+  }
+  return {
+    manifest_id: requireString(data.manifest_id, "permission_manifest.manifest_id"),
+    workspace_policy_ref:
+      data.workspace_policy_ref === undefined || data.workspace_policy_ref === null
+        ? null
+        : requireRef(data.workspace_policy_ref, "permission_manifest.workspace_policy_ref"),
+    readable_refs: requireRefList(data.readable_refs ?? [], "permission_manifest.readable_refs"),
+    writable_refs: requireRefList(data.writable_refs ?? [], "permission_manifest.writable_refs"),
+    denied_refs: requireRefList(data.denied_refs ?? [], "permission_manifest.denied_refs"),
+    allowed_commands: requireStringList(data.allowed_commands ?? [], "permission_manifest.allowed_commands"),
+    network_policy: networkPolicy,
+    env_allowlist: requireStringList(data.env_allowlist ?? [], "permission_manifest.env_allowlist"),
+    secret_ref:
+      data.secret_ref === undefined || data.secret_ref === null
+        ? null
+        : requireRef(data.secret_ref, "permission_manifest.secret_ref"),
+    unsupported_hard_policies: requireStringList(
+      data.unsupported_hard_policies ?? [],
+      "permission_manifest.unsupported_hard_policies",
+    ),
+    schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
+  };
 }
 
 function parseResume(value: unknown): ResumeInput {

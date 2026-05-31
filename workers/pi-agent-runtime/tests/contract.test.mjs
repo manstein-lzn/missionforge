@@ -8,11 +8,19 @@ test("parseRuntimeInput accepts valid input", () => {
   const input = parseRuntimeInput(sampleInput());
   assert.equal(input.schema_version, "missionforge.pi_agent_runtime_input.v1");
   assert.equal(input.work_unit_id, "WU-000001");
+  assert.equal(input.permission_manifest.schema_version, "permission_manifest.v1");
+  assert.deepEqual(input.permission_manifest.writable_refs, ["attempts/WU-000001"]);
 });
 
 test("parseRuntimeInput rejects escaping refs", () => {
   const payload = sampleInput({ output_ref: "../escape.json" });
   assert.throws(() => parseRuntimeInput(payload), /workspace-relative/);
+});
+
+test("parseRuntimeInput fails closed without permission manifest", () => {
+  const payload = sampleInput();
+  delete payload.permission_manifest;
+  assert.throws(() => parseRuntimeInput(payload), /permission_manifest/);
 });
 
 test("parseRuntimeInput defaults missing repair to none", () => {

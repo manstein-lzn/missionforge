@@ -294,8 +294,10 @@ Candidate files:
 
 ```text
 src/missionforge/agentic_repair.py
+src/missionforge/agentic_repair_controller.py
+src/missionforge/agentic_revision_controller.py
 tests/test_agentic_repair.py
-tests/test_task_revision_policy.py
+tests/test_agentic_repair_controller.py
 ```
 
 Core objects:
@@ -303,6 +305,10 @@ Core objects:
 - `RepairBrief`
 - `TaskRevisionRequest`
 - `TaskRevisionDecision`
+- `RepairTicket`
+- `RepairExecutionDirective`
+- `RevisionPendingRecord`
+- `RevisionAppliedRecord`
 
 Implementation notes:
 
@@ -312,6 +318,15 @@ Implementation notes:
 - Approved revision freezes a new TaskContract revision.
 - Rejected revision routes back to repair, rejection, or user/operator review
   depending on policy.
+- Repair controller records are refs-only, idempotent, and content-bound to the
+  immutable `AgenticFlowResult`, judge packet/report, worker brief, and repair
+  brief.
+- Revision controller records are separate from repair: `revision_required`
+  becomes a pending record first; only an approved `TaskRevisionDecision` plus a
+  content-bound revised `TaskContract` can write a `TaskContractRevision`.
+- `TaskRevisionDecision.authority` must match the pending record's
+  `authority_required`; `decided_by` names the actor but does not bypass the
+  authority route.
 
 Acceptance tests:
 
@@ -320,13 +335,24 @@ Acceptance tests:
 - revision ledger preserves old and new contract refs;
 - judge can request repair or revision_required but cannot directly mutate the
   contract.
+- repair execution directive prepares the next execution packet without
+  invoking a worker;
+- stale, checkpoint-based, foreign-run, or content-drifted controller inputs
+  fail closed;
+- wrong-authority revision approvals fail closed;
+- replay returns the same durable record and deterministic-id conflicts fail
+  closed.
 
 Status note:
 
 - The first S6 slice has landed as `RepairBrief`, `TaskRevisionRequest`, and
   `TaskRevisionDecision` plus flow-level validation for repair/revision
-  artifacts. The remaining work in this phase is the explicit controller that
-  turns a repair or revision decision into the next durable run step.
+  artifacts.
+- The controller slice has now landed as `RepairTicket`,
+  `RepairExecutionDirective`, `RevisionPendingRecord`, and
+  `RevisionAppliedRecord`. It deliberately stops at durable control records and
+  packet refs; it does not invoke PiWorker, perform product semantic repair, or
+  mutate runtime state implicitly.
 
 ## Phase S7: PiWorker Runtime Hardening
 
@@ -358,6 +384,37 @@ Acceptance tests:
 - disallowed environment variables are not exposed;
 - runtime reports unsupported hard policy honestly when enforcement is not yet
   implemented.
+
+Status note:
+
+- The first S7 slice has landed in `workers/pi-agent-runtime`: runtime input now
+  carries a required `permission_manifest`, file tools enforce readable,
+  writable, and denied refs before touching the filesystem, bash requires an
+  exact `allowed_commands` match, and bash environment variables are filtered by
+  `env_allowlist`.
+- Tool path checks reject symlink components before read/write/edit/mkdir so an
+  allowed lexical ref cannot escape the workspace through a filesystem link.
+- Runtime-owned writes also reject symlink components before writing output,
+  session, event, metric, savepoint, startup-failure, and direct benchmark
+  artifacts.
+- The direct benchmark path now rejects symlink components for `workspace_ref`,
+  initial user text refs, allowed source refs, and expected output existence
+  checks so benchmark comparison code cannot become a looser side door.
+- Runtime session and event artifacts now store structure summaries for
+  messages, tool args, and tool results rather than raw transcript text, write
+  bodies, or provider/tool payload bodies by default.
+- Runtime `worker_claims` store length summaries rather than raw final
+  assistant text. The Python adapter also re-summarizes non-whitelisted
+  `worker_claims` during ingestion before writing execution reports.
+- The Python `PiAgentRuntimeAdapter` emits a legacy-compatible derived
+  permission manifest from `WorkUnitContract` so older WorkUnit entry points do
+  not bypass the Pi runtime boundary.
+- Broad search/listing tools are intentionally not exposed by the hardened tool
+  set until they have permission-aware implementations that cannot leak denied
+  roots.
+- Network `restricted` and unknown `unsupported_hard_policies` fail closed and
+  are reported through the normal runtime output instead of being silently
+  ignored.
 
 ## Phase S8: Legacy Runtime Demotion
 

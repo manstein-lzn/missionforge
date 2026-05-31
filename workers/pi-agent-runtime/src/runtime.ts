@@ -20,8 +20,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   let cancelled = false;
   let compactionWritten = false;
   let unregisterFaux: (() => void) | undefined;
+  let permissionBoundaryReady = false;
 
   try {
+    const tools = createMissionForgeTools({
+      workspaceRoot,
+      permissionManifest: input.permission_manifest,
+      toolTimeoutSeconds: provider.toolTimeoutSeconds,
+    });
+    permissionBoundaryReady = true;
+
     if (provider.mode === "faux") {
       const faux = registerFauxProvider({
         api: "missionforge-faux",
@@ -51,10 +59,7 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
         systemPrompt: buildSystemPrompt(input),
         model: provider.model,
         thinkingLevel: provider.reasoning,
-        tools: createMissionForgeTools({
-          workspaceRoot,
-          toolTimeoutSeconds: provider.toolTimeoutSeconds,
-        }),
+        tools,
       },
       streamFn: streamSimple,
       getApiKey: () => provider.apiKey,
@@ -95,7 +100,7 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     workerClaims.push(extractFinalText(agent.state.messages) ?? "");
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
-    if (provider.mode === "faux") {
+    if (provider.mode === "faux" && permissionBoundaryReady) {
       await fallbackFauxArtifact(input, workspaceRoot, failures);
     }
   } finally {
@@ -133,7 +138,7 @@ export async function stripUnreplayableResponsesReasoning(messages: any[]): Prom
 function buildSystemPrompt(input: RuntimeInput): string {
   const lines = [
     "You are MissionForge's dedicated PI Agent runtime worker.",
-    "Act as a complete coding agent. Use the available tools freely inside the workspace.",
+    "Act as a complete coding agent. Use the available tools only inside the declared permission manifest.",
     "MissionForge owns verification; your completion claims are evidence only.",
     `Work unit: ${input.work_unit_id}`,
     `Mission: ${input.mission_id}`,
@@ -167,7 +172,7 @@ function buildUserPrompt(input: RuntimeInput): string {
       `Events ref: ${input.resume.events_ref}`,
       `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
       "Do not claim completion as acceptance; MissionForge will verify after this attempt.",
-      "Use tools freely inside the workspace, then stop.",
+      "Use only permitted tools and refs, then stop.",
     ].join("\n");
   }
   if (input.repair.mode === "follow_up") {
@@ -178,13 +183,13 @@ function buildUserPrompt(input: RuntimeInput): string {
       `Failed constraints: ${input.repair.failed_constraints.join(", ") || "<none>"}`,
       `Previous output ref: ${input.repair.previous_output_ref}`,
       `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
-      "Use tools freely inside the workspace, then stop.",
+      "Use only permitted tools and refs, then stop.",
     ].join("\n");
   }
   return [
     "Complete this MissionForge work unit.",
     `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
-    "Use tools to inspect, edit, run commands, and verify as needed.",
+    "Use permitted tools to inspect, edit, run commands, and verify as needed.",
   ].join("\n");
 }
 
@@ -210,6 +215,7 @@ async function fallbackFauxArtifact(input: RuntimeInput, workspaceRoot: string, 
       workspaceRoot,
       firstOutput,
       `pi-agent-runtime fallback faux artifact for ${input.work_unit_id}\n`,
+      input.permission_manifest,
     );
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));

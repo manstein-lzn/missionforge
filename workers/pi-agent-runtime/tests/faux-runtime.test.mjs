@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { parseRuntimeInput } from "../dist/contract.js";
+import { EvidenceRecorder } from "../dist/evidence-recorder.js";
 import { runMissionForgePiAgent } from "../dist/runtime.js";
 import { readJson, sampleInput, withWorkspace, writeInput } from "./helpers.mjs";
 
@@ -55,12 +56,16 @@ test("faux runtime does not serialize api keys", async () => {
     process.env.MISSIONFORGE_PI_AGENT_API_KEY = "secret-value-12345";
     await runMissionForgePiAgent(parseRuntimeInput(input), root);
 
+    const outputData = await readJson(join(root, input.output_ref));
     const output = await readFile(join(root, input.output_ref), "utf-8");
     const events = await readFile(join(root, input.events_ref), "utf-8");
     const session = await readFile(join(root, input.session_ref), "utf-8");
     const metrics = await readFile(join(root, input.metrics_ref), "utf-8");
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
     assert.equal(`${output}${events}${session}${metrics}${savepoints}`.includes("secret-value-12345"), false);
+    assert.equal(`${events}${session}${savepoints}`.includes("pi-agent-runtime faux artifact"), false);
+    assert.equal(`${output}${events}${session}`.includes("Completed WU-000001"), false);
+    assert.deepEqual(outputData.worker_claims, ["assistant_final_text_present:length=20"]);
   });
 });
 
@@ -101,5 +106,24 @@ test("faux runtime compaction writes a savepoint marker", async () => {
     assert.equal(savepoints.includes('"compaction"'), true);
     assert.equal(savepoints.includes("after_completed_turn"), true);
     assert.equal(events.includes('"event_type":"compaction"'), true);
+  });
+});
+
+test("evidence recorder summarizes unknown provider events instead of serializing payloads", async () => {
+  await withWorkspace(async (root) => {
+    const input = parseRuntimeInput(sampleInput());
+    await writeInput(root, input);
+    const recorder = new EvidenceRecorder(input, root);
+
+    await recorder.record({
+      type: "provider_payload",
+      raw_prompt: "raw-provider-secret",
+      nested: { transcript: "raw-transcript-secret" },
+    });
+
+    const events = await readFile(join(root, input.events_ref), "utf-8");
+    assert.equal(events.includes("provider_payload"), true);
+    assert.equal(events.includes("raw-provider-secret"), false);
+    assert.equal(events.includes("raw-transcript-secret"), false);
   });
 });

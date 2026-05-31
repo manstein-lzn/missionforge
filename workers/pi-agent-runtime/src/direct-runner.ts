@@ -6,7 +6,8 @@ import { fauxAssistantMessage, fauxToolCall, registerFauxProvider, streamSimple 
 import { DIRECT_OUTPUT_SCHEMA_VERSION, type DirectRuntimeInput, type DirectRuntimeOutput, validateDirectRuntimeOutput } from "./direct-contract.js";
 import { DirectEvidenceRecorder } from "./direct-evidence-recorder.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
-import { resolveWorkspaceRef, writeJsonFile } from "./paths.js";
+import { prepareWorkspaceReadPath, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
+import { deriveDirectPermissionManifest } from "./permissions.js";
 import { resolveProviderConfig } from "./provider-config.js";
 import { redactText } from "./redaction.js";
 import { createMissionForgeTools } from "./tools.js";
@@ -14,7 +15,7 @@ import { createMissionForgeTools } from "./tools.js";
 export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, workspaceRoot: string): Promise<void> {
   const provider = resolveProviderConfig();
   const started = Date.now();
-  const toolWorkspaceRoot = resolveWorkspaceRef(workspaceRoot, input.workspace_ref);
+  const toolWorkspaceRoot = prepareWorkspaceWritePath(resolveWorkspaceRef(workspaceRoot, input.workspace_ref), workspaceRoot);
   await mkdir(toolWorkspaceRoot, { recursive: true });
   const before = await snapshotWorkspace(toolWorkspaceRoot);
   const recorder = new DirectEvidenceRecorder(input, workspaceRoot);
@@ -26,7 +27,10 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
   let agent: Agent | undefined;
 
   try {
-    const userText = await readFile(resolveWorkspaceRef(workspaceRoot, input.initial_user_text_ref), "utf-8");
+    const userText = await readFile(
+      prepareWorkspaceReadPath(resolveWorkspaceRef(workspaceRoot, input.initial_user_text_ref), workspaceRoot),
+      "utf-8",
+    );
     const allowedSources = await readAllowedSourceRefs(input, workspaceRoot);
     if (provider.mode === "faux") {
       const faux = registerFauxProvider({
@@ -60,6 +64,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
         thinkingLevel: provider.reasoning,
         tools: createMissionForgeTools({
           workspaceRoot: toolWorkspaceRoot,
+          permissionManifest: deriveDirectPermissionManifest(input.task_id, input.expected_output_refs),
           toolTimeoutSeconds: provider.toolTimeoutSeconds,
         }),
       },
@@ -117,7 +122,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
       ...failures,
       ...missingOutputs.map((ref) => `expected output was not produced: ${ref}`),
     ],
-    worker_claims: workerClaims.filter(Boolean).map((claim) => redactText(claim)),
+    worker_claims: workerClaims.filter(Boolean).map(summarizeWorkerClaim),
     input_ref: input.input_ref,
     output_ref: input.output_ref,
     session_ref: input.session_ref,
@@ -132,7 +137,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
 export function buildDirectSystemPrompt(input: DirectRuntimeInput): string {
   const lines = [
     "You are a direct PiWorker coding agent in a benchmark trial.",
-    "Use the available tools inside the current workspace to satisfy the user's request.",
+    "Use the available tools inside the current workspace permission manifest to satisfy the user's request.",
     "Write or update the requested output paths relative to the current workspace.",
     "Do not wait for external orchestration or acceptance feedback.",
     `Benchmark run: ${input.benchmark_run_id}`,
@@ -184,7 +189,9 @@ export async function writeDirectOutput(
   input: DirectRuntimeInput,
   output: DirectRuntimeOutput,
 ): Promise<void> {
-  await writeJsonFile(resolveWorkspaceRef(workspaceRoot, input.output_ref), validateDirectRuntimeOutput(output));
+  await writeJsonFile(resolveWorkspaceRef(workspaceRoot, input.output_ref), validateDirectRuntimeOutput(output), {
+    workspaceRoot,
+  });
 }
 
 export async function stripUnreplayableResponsesReasoning(messages: any[]): Promise<any[]> {
@@ -220,7 +227,7 @@ export function buildDirectUserPrompt(
     "Output paths to write relative to the current workspace:",
     ...input.expected_output_refs.map((ref) => `- ${ref}`),
     "",
-    "Use tools freely inside the current workspace, then stop.",
+    "Use only permitted tools and refs inside the current workspace, then stop.",
   );
   return lines.join("\n");
 }
@@ -242,8 +249,12 @@ function extractFinalText(messages: readonly unknown[]): string | undefined {
 async function existingExpectedOutputs(root: string, expectedRefs: string[]): Promise<string[]> {
   const result: string[] = [];
   for (const ref of expectedRefs) {
-    if (await fileExists(resolveWorkspaceRef(root, ref))) {
-      result.push(ref);
+    try {
+      if (await fileExists(prepareWorkspaceReadPath(resolveWorkspaceRef(root, ref), root))) {
+        result.push(ref);
+      }
+    } catch {
+      continue;
     }
   }
   return result;
@@ -252,7 +263,10 @@ async function existingExpectedOutputs(root: string, expectedRefs: string[]): Pr
 async function readAllowedSourceRefs(input: DirectRuntimeInput, workspaceRoot: string): Promise<DirectAllowedSource[]> {
   const sources: DirectAllowedSource[] = [];
   for (const ref of input.allowed_source_refs) {
-    const content = await readFile(resolveWorkspaceRef(workspaceRoot, ref), "utf-8");
+    const content = await readFile(
+      prepareWorkspaceReadPath(resolveWorkspaceRef(workspaceRoot, ref), workspaceRoot),
+      "utf-8",
+    );
     sources.push({ ref, content });
   }
   return sources;
@@ -266,4 +280,9 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function summarizeWorkerClaim(value: string): string {
+  const text = redactText(value).trim();
+  return text ? `assistant_final_text_present:length=${text.length}` : "";
 }

@@ -2,7 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 
 import type { DirectRuntimeInput } from "./direct-contract.js";
-import { appendJsonLine, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
+import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
 import { redactText } from "./redaction.js";
 
 export interface DirectRuntimeMetrics {
@@ -70,16 +70,20 @@ export class DirectEvidenceRecorder {
 
   async record(event: AgentEvent): Promise<void> {
     this.updateMetrics(event);
-    await appendJsonLine(resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref), {
-      schema_version: "missionforge.pi_agent_direct_event.v1",
-      event_id: `pi-agent-direct-event-${String(++this.sequence).padStart(6, "0")}`,
-      created_at: new Date().toISOString(),
-      benchmark_run_id: this.input.benchmark_run_id,
-      task_id: this.input.task_id,
-      seed: this.input.seed,
-      event_type: event.type,
-      payload: summarizeEvent(event, this.env),
-    });
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+      {
+        schema_version: "missionforge.pi_agent_direct_event.v1",
+        event_id: `pi-agent-direct-event-${String(++this.sequence).padStart(6, "0")}`,
+        created_at: new Date().toISOString(),
+        benchmark_run_id: this.input.benchmark_run_id,
+        task_id: this.input.task_id,
+        seed: this.input.seed,
+        event_type: event.type,
+        payload: summarizeEvent(event, this.env),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
     if (event.type === "tool_execution_end" || event.type === "turn_end") {
       await this.recordFirstArtifactIfPresent();
     }
@@ -93,19 +97,27 @@ export class DirectEvidenceRecorder {
         message: summarizeMessage(message),
       }),
     );
-    await writeText(resolveWorkspaceRef(this.workspaceRoot, this.input.session_ref), `${lines.join("\n")}${lines.length ? "\n" : ""}`);
+    await writeText(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.session_ref),
+      `${lines.join("\n")}${lines.length ? "\n" : ""}`,
+      this.workspaceRoot,
+    );
   }
 
   async writeMetrics(durationMs: number): Promise<void> {
     await this.recordFirstArtifactIfPresent();
-    await writeJsonFile(resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref), {
-      schema_version: "missionforge.pi_agent_direct_metrics.v1",
-      benchmark_run_id: this.input.benchmark_run_id,
-      task_id: this.input.task_id,
-      seed: this.input.seed,
-      duration_ms: durationMs,
-      ...this.safeMetrics(),
-    });
+    await writeJsonFile(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref),
+      {
+        schema_version: "missionforge.pi_agent_direct_metrics.v1",
+        benchmark_run_id: this.input.benchmark_run_id,
+        task_id: this.input.task_id,
+        seed: this.input.seed,
+        duration_ms: durationMs,
+        ...this.safeMetrics(),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
   }
 
   safeMetrics(): DirectRuntimeMetrics {
@@ -340,11 +352,12 @@ function joinRef(prefix: string, ref: string): string {
   return prefix ? `${prefix.replace(/\/+$/, "")}/${ref.replace(/^\/+/, "")}` : ref;
 }
 
-async function writeText(path: string, text: string): Promise<void> {
+async function writeText(path: string, text: string, workspaceRoot: string): Promise<void> {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text, "utf-8");
+  const safePath = prepareWorkspaceWritePath(path, workspaceRoot);
+  await mkdir(dirname(safePath), { recursive: true });
+  await writeFile(safePath, text, "utf-8");
 }
 
 async function fileExists(path: string): Promise<boolean> {

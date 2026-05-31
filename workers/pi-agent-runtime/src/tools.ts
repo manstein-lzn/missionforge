@@ -1,86 +1,89 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import {
   createBashTool,
   createLocalBashOperations,
   createEditTool,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 
+import type { PermissionManifest } from "./contract.js";
 import { resolveWorkspaceRef } from "./paths.js";
+import { assertNoSymlinkSegments, guardWorkspacePath, ToolPermissionEnforcer } from "./permissions.js";
 
 export interface MissionForgeToolOptions {
   workspaceRoot: string;
+  permissionManifest: PermissionManifest;
   toolTimeoutSeconds: number;
 }
 
 export function createMissionForgeTools(options: MissionForgeToolOptions): AgentTool<any>[] {
   const cwd = options.workspaceRoot;
+  const enforcer = new ToolPermissionEnforcer(cwd, options.permissionManifest);
   const bashOps = createLocalBashOperations();
   return [
     createReadTool(cwd, {
       operations: {
-        readFile: (absolutePath) => readFile(guardPath(cwd, absolutePath)),
+        readFile: (absolutePath) => readFile(enforcer.ensureReadPath(absolutePath)),
         access: async (absolutePath) => {
-          await readFile(guardPath(cwd, absolutePath), { flag: "r" });
+          await readFile(enforcer.ensureReadPath(absolutePath), { flag: "r" });
         },
       },
     }),
     createBashTool(cwd, {
       operations: {
-        exec: (command, execCwd, execOptions) =>
-          bashOps.exec(command, execCwd, {
+        exec: (command, execCwd, execOptions) => {
+          const allowedCommand = enforcer.ensureCommand(command);
+          return bashOps.exec(allowedCommand, guardPath(cwd, execCwd), {
             ...execOptions,
+            env: enforcer.filterEnv(execOptions.env),
             timeout: execOptions.timeout ?? options.toolTimeoutSeconds,
-          }),
+          });
+        },
       },
       spawnHook: (context) => ({
         ...context,
         cwd: guardPath(cwd, context.cwd),
+        env: enforcer.filterEnv(context.env),
       }),
     }),
     createEditTool(cwd, {
       operations: {
-        readFile: (absolutePath) => readFile(guardPath(cwd, absolutePath)),
-        writeFile: (absolutePath, content) => writeFile(guardPath(cwd, absolutePath), content, "utf-8"),
+        readFile: (absolutePath) => readFile(enforcer.ensureReadPath(absolutePath)),
+        writeFile: (absolutePath, content) => writeFile(enforcer.ensureWritePath(absolutePath), content, "utf-8"),
         access: async (absolutePath) => {
-          await readFile(guardPath(cwd, absolutePath), { flag: "r" });
+          await readFile(enforcer.ensureReadPath(absolutePath), { flag: "r" });
         },
       },
     }),
     createWriteTool(cwd, {
       operations: {
-        writeFile: (absolutePath, content) => writeFile(guardPath(cwd, absolutePath), content, "utf-8"),
+        writeFile: (absolutePath, content) => writeFile(enforcer.ensureWritePath(absolutePath), content, "utf-8"),
         mkdir: async (dir) => {
-          await mkdir(guardPath(cwd, dir), { recursive: true });
+          await mkdir(enforcer.ensureWriteContainerPath(dir), { recursive: true });
         },
       },
     }),
-    createGrepTool(cwd),
-    createFindTool(cwd),
-    createLsTool(cwd),
   ];
 }
 
 export function guardPath(workspaceRoot: string, path: string): string {
-  const root = resolve(workspaceRoot);
-  const resolved = resolve(path);
-  const rel = relative(root, resolved);
-  if (rel === "" || (!rel.startsWith("..") && !rel.includes(".."))) return resolved;
-  throw new Error(`Path escapes MissionForge workspace: ${path}`);
+  return guardWorkspacePath(workspaceRoot, path);
 }
 
 export async function writeExpectedArtifact(
   workspaceRoot: string,
   ref: string,
   content: string,
+  permissionManifest?: PermissionManifest,
 ): Promise<void> {
+  if (permissionManifest) {
+    new ToolPermissionEnforcer(workspaceRoot, permissionManifest).ensureWriteRef(ref);
+  }
   const path = resolveWorkspaceRef(workspaceRoot, ref);
+  assertNoSymlinkSegments(workspaceRoot, path, { allowMissingLeaf: true });
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf-8");
 }

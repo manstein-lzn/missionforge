@@ -39,6 +39,33 @@ PiWorker-centered runtime.
 S2 adds `PermissionEnforcer` in `src/missionforge/permissions.py` and
 `RunWorkspace` in `src/missionforge/workspace_runtime.py`.
 
-This is a Python-side contract and filesystem boundary. Future phases still
-need to push equivalent enforcement into `workers/pi-agent-runtime`, especially
-for shell command policy.
+S7 pushes the same boundary into `workers/pi-agent-runtime`:
+
+- `permission_manifest` is required in the Pi runtime input envelope;
+- read, write, and edit tools translate absolute tool paths back to workspace
+  refs and reject paths outside readable/writable roots;
+- denied refs override readable/writable refs at tool execution time;
+- symlink components under tool paths are rejected before filesystem access;
+- runtime-owned writes for output, session, event, metric, savepoint, and direct
+  benchmark artifacts reject symlink components before writing;
+- direct benchmark workspace and source refs use the same symlink-aware read and
+  write path preparation as the main Pi runtime path;
+- bash rejects commands that are not exact `allowed_commands` entries;
+- bash receives only `env_allowlist` variables;
+- unsupported hard policies are reported as runtime failures before worker tool
+  execution.
+
+The Pi runtime evidence plane also records structure summaries for messages,
+tool args, and tool results instead of raw transcript or tool-output bodies by
+default. This keeps permissioned reads and write bodies from being copied into
+session or event artifacts.
+
+Runtime `worker_claims` are not durable free text. Node runtime output stores
+final assistant text as a length summary, and the Python adapter re-summarizes
+any non-whitelisted claim strings at ingestion before writing execution reports
+or operator-facing state. This prevents old runtimes, hand-written output, or
+malicious output from smuggling raw final text or secrets through claim fields.
+
+The current S7 hardening does not yet expose permission-aware grep/find/ls
+tools. They should stay disabled until they can enforce denied roots without
+leaking file names or contents through underlying search binaries.

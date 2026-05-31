@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { parseDirectRuntimeInput } from "../dist/direct-contract.js";
@@ -60,6 +61,8 @@ test("direct faux runner writes comparable safe artifacts without WorkUnit promp
     assert.equal(publicArtifacts.includes("secret-value-12345"), false);
     assert.equal(publicArtifacts.includes("raw-user-secret-phrase"), false);
     assert.equal(publicArtifacts.includes("Please solve this private direct baseline task"), false);
+    assert.equal(publicArtifacts.includes("Completed direct benchmark task"), false);
+    assert.deepEqual(output.worker_claims, ["assistant_final_text_present:length=41"]);
   });
 });
 
@@ -81,6 +84,95 @@ test("direct prompt exposes public allowed source refs without MissionForge inte
   assert.equal(userPrompt.includes("WorkUnitContract"), false);
   assert.equal(userPrompt.includes("MissionIR"), false);
   assert.equal(userPrompt.includes("FrontDesk"), false);
+});
+
+test("direct runner rejects workspace_ref symlink escape before tool setup", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "mf-direct-outside-"));
+  try {
+    await withWorkspace(async (root) => {
+      const input = sampleDirectInput();
+      await mkdir(join(root, dirname(input.workspace_ref)), { recursive: true });
+      await symlink(outside, join(root, input.workspace_ref), "dir");
+
+      process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+      try {
+        await assert.rejects(
+          () => runDirectPiWorkerBenchmark(parseDirectRuntimeInput(input), root),
+          /symlink/,
+        );
+      } finally {
+        delete process.env.MISSIONFORGE_PI_AGENT_PROVIDER;
+      }
+      await assert.rejects(() => access(join(outside, "package/SKILL.md")));
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("direct runner rejects initial user text symlink without reading outside content", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "mf-direct-outside-"));
+  try {
+    await withWorkspace(async (root) => {
+      const input = sampleDirectInput();
+      await mkdir(join(root, "benchmarks/tasks/task-001"), { recursive: true });
+      await mkdir(join(root, dirname(input.output_ref)), { recursive: true });
+      await writeFile(join(outside, "secret.txt"), "direct-source-secret\n", "utf-8");
+      await symlink(outside, join(root, "benchmarks/tasks/task-001/link"), "dir");
+      const linkedInput = {
+        ...input,
+        initial_user_text_ref: "benchmarks/tasks/task-001/link/secret.txt",
+      };
+
+      process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+      try {
+        await runDirectPiWorkerBenchmark(parseDirectRuntimeInput(linkedInput), root);
+      } finally {
+        delete process.env.MISSIONFORGE_PI_AGENT_PROVIDER;
+      }
+
+      const output = await readJson(join(root, linkedInput.output_ref));
+      const serialized = await serializedWorkspace(root);
+      assert.equal(output.status, "failed");
+      assert.equal(serialized.includes("symlink"), true);
+      assert.equal(serialized.includes("direct-source-secret"), false);
+      await assert.rejects(() => access(join(outside, "package/SKILL.md")));
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("direct runner rejects allowed source symlink without reading outside content", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "mf-direct-outside-"));
+  try {
+    await withWorkspace(async (root) => {
+      const input = sampleDirectInput({
+        allowed_source_refs: ["benchmarks/tasks/task-001/link/source.md"],
+      });
+      await mkdir(join(root, "benchmarks/tasks/task-001"), { recursive: true });
+      await mkdir(join(root, dirname(input.output_ref)), { recursive: true });
+      await writeFile(join(root, input.initial_user_text_ref), "Build the package.\n", "utf-8");
+      await writeFile(join(outside, "source.md"), "allowed-source-secret\n", "utf-8");
+      await symlink(outside, join(root, "benchmarks/tasks/task-001/link"), "dir");
+
+      process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+      try {
+        await runDirectPiWorkerBenchmark(parseDirectRuntimeInput(input), root);
+      } finally {
+        delete process.env.MISSIONFORGE_PI_AGENT_PROVIDER;
+      }
+
+      const output = await readJson(join(root, input.output_ref));
+      const serialized = await serializedWorkspace(root);
+      assert.equal(output.status, "failed");
+      assert.equal(serialized.includes("symlink"), true);
+      assert.equal(serialized.includes("allowed-source-secret"), false);
+      await assert.rejects(() => access(join(outside, "package/SKILL.md")));
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 function sampleDirectInput(overrides = {}) {
@@ -108,4 +200,30 @@ function sampleDirectInput(overrides = {}) {
     },
     ...overrides,
   };
+}
+
+async function serializedWorkspace(root) {
+  const chunks = [];
+  await collectFiles(root, chunks);
+  return chunks.join("\n");
+}
+
+async function collectFiles(path, chunks) {
+  const { readdir, stat } = await import("node:fs/promises");
+  const entries = await readdir(path, { withFileTypes: true });
+  for (const entry of entries) {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) {
+      await collectFiles(child, chunks);
+    } else if (entry.isFile()) {
+      chunks.push(await readFile(child, "utf-8"));
+    } else {
+      try {
+        const info = await stat(child);
+        if (info.isFile()) chunks.push(await readFile(child, "utf-8"));
+      } catch {
+        continue;
+      }
+    }
+  }
 }

@@ -39,6 +39,7 @@ class RecordingRunner:
     output_payload: dict[str, object] | None = None
     write_output: bool = True
     artifact_content: str = "# Skill\n"
+    worker_claims: tuple[str, ...] | None = None
     write_savepoints: bool = True
     captured_env: dict[str, str] | None = None
     captured_input: dict[str, object] | None = None
@@ -85,7 +86,9 @@ class RecordingRunner:
                 "commands_run": ["fake-pi-agent"],
                 "tests_run": [],
                 "failures": [],
-                "worker_claims": ["PI Agent says the artifact is done."],
+                "worker_claims": list(self.worker_claims)
+                if self.worker_claims is not None
+                else ["PI Agent says the artifact is done."],
                 "verifier_evidence": [artifact_ref, events_ref, metrics_ref, savepoints_ref],
                 "new_unknowns": [],
                 "recommended_next_steps": ["Run verifier."],
@@ -152,7 +155,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
         self.assertEqual(result.worker_result.status, "completed")
         self.assertEqual(result.execution_report.produced_artifacts, ["package/SKILL.md"])
-        self.assertEqual(result.execution_report.worker_claims, ["PI Agent says the artifact is done."])
+        self.assertEqual(result.execution_report.worker_claims, ["worker_claim_present:length=35"])
         self.assertEqual(result.execution_report.metrics["provider_mode"], "faux")
         self.assertEqual(result.execution_report.metrics["total_tokens"], 7)
         self.assertEqual(result.execution_report.metrics["input_tokens"], 5)
@@ -171,9 +174,29 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(input_payload["schema_version"], "missionforge.pi_agent_runtime_input.v1")
         self.assertEqual(input_payload["repair"]["mode"], "none")
         self.assertEqual(input_payload["savepoints_ref"], "attempts/WU-000001/pi_agent_savepoints.jsonl")
+        self.assertEqual(input_payload["permission_manifest"]["schema_version"], "permission_manifest.v1")
+        self.assertEqual(input_payload["permission_manifest"]["writable_refs"], ["package"])
+        self.assertEqual(input_payload["permission_manifest"]["allowed_commands"], [])
         self.assertNotIn("api_key", json.dumps(input_payload).lower())
         self.assertNotIn("# Skill", json.dumps(report_payload))
+        self.assertNotIn("PI Agent says the artifact is done.", json.dumps(report_payload))
         self.assertEqual([record.evidence_ref.kind for record in store.snapshot().records], ["pi_agent_runtime_event"] * 3)
+
+    def test_adapter_summarizes_safe_looking_worker_claim_slugs(self) -> None:
+        runner = RecordingRunner(worker_claims=("sk-live-secret-456:length=18",))
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run(sample_work_unit(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+            report_payload = json.loads(
+                Path(tempdir, "attempts/WU-000001/pi_agent_execution_report.json").read_text(encoding="utf-8")
+            )
+
+        serialized_report = json.dumps(report_payload, sort_keys=True)
+        self.assertEqual(result.execution_report.worker_claims, ["worker_claim_present:length=28"])
+        self.assertNotIn("sk-live-secret-456", serialized_report)
 
     def test_adapter_passes_follow_up_repair_envelope(self) -> None:
         runner = RecordingRunner()
