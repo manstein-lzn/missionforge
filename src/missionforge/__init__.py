@@ -76,6 +76,7 @@ from .ir import (
 from .json_store import JsonArtifactStore, JsonEventLogStore, JsonRunStore, JsonWorkspaceStore
 from .metric_store import MetricStore
 from .metrics import MetricEvent, MetricProjection, MetricTrustLevel, project_metric_events
+from .permissions import PermissionDecision, PermissionEnforcer, PermissionOperation, ref_is_under
 from .profiles import CapabilityProfile, ProfileExpansion, ProfilePack, ProfileRegistry, VerificationProfile
 from .product_gate import ProductGateFinding, ProductGateResult, ProductGateSeverity, ProductGateSpec, ProductGateStatus
 from .product_integration import (
@@ -128,6 +129,7 @@ from .task_projection import (
 from .validators import run_validator
 from .verification import FailedConstraint, MissingEvidence, VerificationResult, VerificationSpec, ValidatorResult, ValidatorSpec
 from .verifier import Verifier, verify_spec
+from .workspace_runtime import RunWorkspace
 from .work_unit import AttemptInputManifest, ExecutionReport, WorkUnitContract, WorkerInvocation, WorkerResult
 
 __all__ = [
@@ -220,6 +222,9 @@ __all__ = [
     "ProposalProvider",
     "ProposalValidator",
     "PermissionManifest",
+    "PermissionDecision",
+    "PermissionEnforcer",
+    "PermissionOperation",
     "ProfileExpansion",
     "ProfilePack",
     "ProfileRecommendation",
@@ -250,6 +255,7 @@ __all__ = [
     "RuntimeFeedbackAction",
     "RuntimeFeedbackRecommendation",
     "RuntimeFeedbackSourceKind",
+    "RunWorkspace",
     "RunStore",
     "SanitizedSourceSet",
     "StateCorrection",
@@ -286,6 +292,7 @@ __all__ = [
     "project_judge_rubric",
     "project_metric_events",
     "project_worker_brief",
+    "ref_is_under",
     "run_validator",
     "stable_json_hash",
     "validate_ref",
