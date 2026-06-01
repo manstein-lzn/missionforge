@@ -179,6 +179,22 @@ def require_non_empty_str(value: Any, field_name: str) -> str:
     return value.strip()
 
 
+
+def require_str(value: Any, field_name: str) -> str:
+    """Return a string, including empty strings, or fail closed."""
+
+    if not isinstance(value, str):
+        raise ContractValidationError(f"{field_name} must be a string")
+    return value
+
+
+def optional_ref(value: Any, field_name: str) -> str:
+    """Return a validated ref, or an empty string for omitted optional refs."""
+
+    if value == "":
+        return ""
+    return validate_ref(value, field_name)
+
 def require_str_list(value: Any, field_name: str) -> list[str]:
     """Return a list of non-empty strings."""
 
@@ -200,6 +216,14 @@ def require_int_at_least(value: Any, field_name: str, minimum: int) -> int:
 
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
         raise ContractValidationError(f"{field_name} must be an integer >= {minimum}")
+    return value
+
+
+def require_bool(value: Any, field_name: str) -> bool:
+    """Return a boolean or fail closed without truthiness coercion."""
+
+    if not isinstance(value, bool):
+        raise ContractValidationError(f"{field_name} must be a boolean")
     return value
 
 

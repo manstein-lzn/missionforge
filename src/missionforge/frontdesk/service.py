@@ -8,7 +8,7 @@ from typing import Any
 
 from ..contracts import ContractValidationError, require_mapping, require_non_empty_str, validate_ref
 from ..ir import MissionIR
-from ..product_integration import ProductCompileResult, ProductCompileStatus, ProductIntegration
+from ..product_integration import ProductCompileResult, ProductCompileStatus, ProductIntegration, ProductTaskContractCompileResult, TaskContractProductIntegration
 from ..profiles import ProfileRegistry
 from ..runner import MissionRuntime
 from .compiler import FrontDeskCompileResult, approved_hash_for
@@ -545,6 +545,28 @@ class FrontDesk:
         else:
             bundle = self.build_intent_bundle(session.session_ref, product_context=profile)
         result = integration.compile_intent(bundle, workspace=self.workspace.workspace)
+        result.validate()
+        if result.status == ProductCompileStatus.NEEDS_CLARIFICATION:
+            updated = session.transition(FrontDeskStatus.NEEDS_CLARIFICATION, next_action="answer_question")
+            self.workspace.write_json(updated.session_ref, updated.to_dict())
+        return result
+
+    def compile_product_task_contract(
+        self,
+        session_ref: str,
+        integration: TaskContractProductIntegration,
+    ) -> ProductTaskContractCompileResult:
+        """Compile a FrontDesk intent bundle through the default TaskContract product path."""
+
+        session = self.load_session(session_ref)
+        profile = integration.inquiry_profile() if hasattr(integration, "inquiry_profile") else None
+        if profile is not None:
+            bundle = self.build_intent_bundle(session.session_ref, product_context=profile)
+        elif self.workspace.exists(INTENT_BUNDLE_REF):
+            bundle = FrontDeskIntentBundle.from_dict(self.workspace.read_json(INTENT_BUNDLE_REF))
+        else:
+            bundle = self.build_intent_bundle(session.session_ref, product_context=profile)
+        result = integration.compile_task_contract(bundle, workspace=self.workspace.workspace)
         result.validate()
         if result.status == ProductCompileStatus.NEEDS_CLARIFICATION:
             updated = session.transition(FrontDeskStatus.NEEDS_CLARIFICATION, next_action="answer_question")

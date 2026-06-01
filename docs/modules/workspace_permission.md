@@ -51,7 +51,11 @@ S7 pushes the same boundary into `workers/pi-agent-runtime`:
 - direct benchmark workspace and source refs use the same symlink-aware read and
   write path preparation as the main Pi runtime path;
 - bash rejects commands that are not exact `allowed_commands` entries;
-- bash receives only `env_allowlist` variables;
+- bash is disabled when a manifest also declares readable/writable/denied ref
+  restrictions or a non-enabled network policy, because local shell execution is
+  not a filesystem or network sandbox;
+- bash receives only `env_allowlist` variables when explicitly enabled by an
+  unrestricted manifest;
 - unsupported hard policies are reported as runtime failures before worker tool
   execution.
 

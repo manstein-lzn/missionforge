@@ -12,6 +12,7 @@ from .contracts import (
     require_enum,
     require_mapping,
     require_non_empty_str,
+    require_str,
     require_str_list,
     validate_ref,
 )
@@ -213,7 +214,7 @@ class ProductGateResult:
                 for child in data.get("findings", [])
             ],
             evidence_refs=require_str_list(data.get("evidence_refs", []), "product_gate_result.evidence_refs"),
-            reason=str(data.get("reason", "")),
+            reason=require_str(data.get("reason", ""), "product_gate_result.reason"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_GATE_RESULT_SCHEMA_VERSION),
                 "product_gate_result.schema_version",

@@ -152,6 +152,255 @@ class ValueBenchmarkReportBuilderTests(unittest.TestCase):
         self.assertEqual(full_row["failure_taxonomy_counts"], {"product_gate_failed": 1})
         self.assertIn("weakened", summary["interpretation"])
 
+    def test_stage5_claim_requires_direct_metric_advantage(self) -> None:
+        module = _load_report_builder()
+        primary = {
+            "aggregate": {
+                "task_count": 5,
+                "mode_summaries": {},
+            },
+            "mode_comparisons": {
+                "winner_by_cost_per_acceptance": "direct_piworker_chat",
+                "winner_by_time_to_acceptance": "direct_piworker_chat",
+            },
+        }
+        stability = {
+            "status": "available",
+            "interpretation": "fixture",
+            "mode_rows": [
+                {
+                    "mode": "direct_piworker_chat",
+                    "success_rate": 0.5,
+                    "cost_per_accepted_deliverable_usd": 0.30,
+                    "p95_time_to_accepted_deliverable_ms": 300.0,
+                },
+                {
+                    "mode": "missionforge_full_product_flow",
+                    "success_rate": 1.0,
+                    "cost_per_accepted_deliverable_usd": 0.10,
+                    "p95_time_to_accepted_deliverable_ms": 100.0,
+                },
+            ],
+        }
+
+        claims = module.claims_we_can_make(
+            primary=primary,
+            stability_summary=stability,
+            leakage={"passed": True},
+            blind_review_waived=False,
+        )
+
+        self.assertFalse(any("direct PiWorker chat had higher" in claim for claim in claims))
+
+    def test_stage5_lower_cost_claim_requires_available_cost_data(self) -> None:
+        module = _load_report_builder()
+        primary = {
+            "aggregate": {"task_count": 5, "mode_summaries": {}},
+            "mode_comparisons": {
+                "winner_by_cost_per_acceptance": "direct_piworker_chat",
+                "winner_by_time_to_acceptance": "direct_piworker_chat",
+            },
+        }
+        stability = {
+            "status": "available",
+            "interpretation": "fixture",
+            "mode_rows": [
+                {
+                    "mode": "direct_piworker_chat",
+                    "success_rate": 1.0,
+                    "cost_source": "unavailable",
+                    "estimated_cost_available_count": 0,
+                    "cost_per_accepted_deliverable_usd": 0.0,
+                    "p95_time_to_accepted_deliverable_ms": 50.0,
+                },
+                {
+                    "mode": "missionforge_full_product_flow",
+                    "success_rate": 0.5,
+                    "cost_source": "pricing_table",
+                    "estimated_cost_available_count": 1,
+                    "cost_per_accepted_deliverable_usd": 0.10,
+                    "p95_time_to_accepted_deliverable_ms": 100.0,
+                },
+            ],
+        }
+
+        claims = module.claims_we_can_make(
+            primary=primary,
+            stability_summary=stability,
+            leakage={"passed": True},
+            blind_review_waived=False,
+        )
+
+        self.assertFalse(any("lower projected cost" in claim for claim in claims))
+
+    def test_readiness_unavailable_suppresses_winner_claims(self) -> None:
+        module = _load_report_builder()
+        primary = {
+            "aggregate": {
+                "task_count": 5,
+                "mode_summaries": {
+                    "direct_piworker_chat": {"success_rate_within_budget": 1.0},
+                    "missionforge_full_product_flow": {"success_rate_within_budget": 0.0},
+                },
+            },
+            "mode_comparisons": {
+                "winner_by_cost_per_acceptance": "direct_piworker_chat",
+                "winner_by_time_to_acceptance": "direct_piworker_chat",
+            },
+            "readiness_report": {
+                "schema_version": "missionforge.benchmark_readiness_report.v1",
+                "benchmark_run_id": "s9",
+                "status": "unavailable",
+                "modes": ["direct_piworker_chat", "missionforge_full_product_flow"],
+                "ready_modes": [],
+                "reason": "one or more benchmark prerequisites are unavailable",
+                "checks": [],
+            },
+        }
+
+        claims = module.claims_we_can_make(
+            primary=primary,
+            stability_summary={"status": "available", "interpretation": "direct wins", "mode_rows": []},
+            leakage={"passed": True},
+            blind_review_waived=False,
+        )
+        cannot = module.claims_we_cannot_make(primary=primary, leakage={"passed": True}, blind_review_waived=False)
+
+        self.assertTrue(any("readiness status `unavailable`" in claim for claim in claims))
+        self.assertFalse(any("In Stage 4" in claim for claim in claims))
+        self.assertTrue(any("not product failures" in claim for claim in cannot))
+
+    def test_load_run_record_includes_readiness_report_ref(self) -> None:
+        module = _load_report_builder()
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            _write_minimal_run(root, "run-a")
+            _write_json(
+                root / "benchmarks/runs/run-a/readiness/readiness_report.json",
+                {
+                    "schema_version": "missionforge.benchmark_readiness_report.v1",
+                    "benchmark_run_id": "run-a",
+                    "status": "ready",
+                    "modes": ["direct_piworker_chat"],
+                    "ready_modes": ["direct_piworker_chat"],
+                    "reason": "all selected benchmark prerequisites are ready",
+                    "checks": [
+                        {
+                            "schema_version": "missionforge.benchmark_readiness_check.v1",
+                            "check_id": "provider_config",
+                            "status": "ready",
+                            "reason": "faux provider mode is configured",
+                            "evidence_refs": [],
+                        }
+                    ],
+                },
+            )
+            module.ROOT = root
+
+            record = module.load_run_record("run-a")
+
+        self.assertEqual(record["readiness_report_ref"], "benchmarks/runs/run-a/readiness/readiness_report.json")
+        self.assertEqual(record["readiness_report"]["status"], "ready")
+
+    def test_readiness_only_skipped_run_is_reportable(self) -> None:
+        module = _load_report_builder()
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            run_root = root / "benchmarks/runs/run-skipped"
+            _write_json(
+                run_root / "execution_summary.json",
+                {
+                    "schema_version": "missionforge.value_benchmark_execution_summary.v1",
+                    "run_id": "run-skipped",
+                    "stage": "s9",
+                    "task_ids": ["task"],
+                    "modes": ["missionforge_full_product_flow"],
+                    "seeds": [1],
+                    "provider_mode": "live",
+                    "provider_config_source": "env",
+                    "provider_env": {},
+                    "pricing_table_id": "fixture-prices",
+                    "readiness_report_ref": "benchmarks/runs/run-skipped/readiness/readiness_report.json",
+                    "readiness_status": "unavailable",
+                },
+            )
+            _write_json(
+                run_root / "readiness/readiness_report.json",
+                {
+                    "schema_version": "missionforge.benchmark_readiness_report.v1",
+                    "benchmark_run_id": "run-skipped",
+                    "status": "unavailable",
+                    "modes": ["missionforge_full_product_flow"],
+                    "ready_modes": [],
+                    "reason": "one or more benchmark prerequisites are unavailable",
+                    "checks": [
+                        {
+                            "schema_version": "missionforge.benchmark_readiness_check.v1",
+                            "check_id": "provider_config",
+                            "status": "unavailable",
+                            "reason": "provider config unavailable: missing env",
+                            "evidence_refs": [],
+                        }
+                    ],
+                },
+            )
+            module.ROOT = root
+
+            record = module.load_run_record("run-skipped")
+            claims = module.claims_we_can_make(
+                primary=record,
+                stability_summary={"status": "not_available"},
+                leakage={"passed": True},
+                blind_review_waived=False,
+            )
+
+        self.assertEqual(record["aggregate"]["trial_count"], 0)
+        self.assertTrue(any("readiness status `unavailable`" in claim for claim in claims))
+
+    def test_ready_run_missing_primary_artifacts_is_rejected(self) -> None:
+        module = _load_report_builder()
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            run_root = root / "benchmarks/runs/run-ready-incomplete"
+            _write_json(
+                run_root / "aggregate.json",
+                {
+                    "schema_version": "missionforge.benchmark_aggregate.v1",
+                    "benchmark_run_id": "run-ready-incomplete",
+                    "task_count": 1,
+                    "trial_count": 1,
+                    "accepted_count": 1,
+                    "comparable_trial_count": 1,
+                    "mode_summaries": {},
+                    "failure_taxonomy_counts": {},
+                    "summary_refs": [],
+                },
+            )
+            _write_json(
+                run_root / "readiness/readiness_report.json",
+                {
+                    "schema_version": "missionforge.benchmark_readiness_report.v1",
+                    "benchmark_run_id": "run-ready-incomplete",
+                    "status": "ready",
+                    "modes": ["direct_piworker_chat"],
+                    "ready_modes": ["direct_piworker_chat"],
+                    "reason": "all selected benchmark prerequisites are ready",
+                    "checks": [
+                        {
+                            "schema_version": "missionforge.benchmark_readiness_check.v1",
+                            "check_id": "provider_config",
+                            "status": "ready",
+                            "reason": "faux provider mode is configured",
+                            "evidence_refs": [],
+                        }
+                    ],
+                },
+            )
+            module.ROOT = root
+
+            with self.assertRaisesRegex(ContractValidationError, "missing primary result artifacts"):
+                module.load_run_record("run-ready-incomplete")
+
     def test_primary_task_mode_summary_includes_acceptance_and_gate_counts(self) -> None:
         module = _load_report_builder()
         with tempfile.TemporaryDirectory() as tempdir:

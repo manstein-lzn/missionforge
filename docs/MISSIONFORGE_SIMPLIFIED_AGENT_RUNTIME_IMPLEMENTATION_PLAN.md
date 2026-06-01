@@ -280,10 +280,20 @@ Implementation notes:
 Acceptance tests:
 
 - SkillFoundry contract compilation works from a stored intent bundle;
+- `FrontDesk.compile_product_task_contract(...)` is the default product compile
+  surface for TaskContract-capable integrations;
 - core imports do not import SkillFoundry;
 - product-specific strings and logic remain in `integrations/skillfoundry`;
-- WorkerBrief and JudgeRubric are sufficient for PiWorker execution and judge
-  review in a deterministic or fake-provider test.
+- WorkerBrief and JudgeRubric are sufficient for deterministic flow tests and a
+  faux Pi runtime executor-boundary test.
+
+Status note:
+
+- S5 has landed as an external TaskContract compiler plus FrontDesk adapter.
+  The older MissionIR compiler remains as compatibility/migration code, not the
+  default path for new SkillFoundry work.
+  A SkillFoundry TaskContract now runs through both the offline agentic flow and
+  a Pi runtime adapter executor boundary with independent judge acceptance.
 
 ## Phase S6: Repair And Revision Loop
 
@@ -392,6 +402,9 @@ Status note:
   writable, and denied refs before touching the filesystem, bash requires an
   exact `allowed_commands` match, and bash environment variables are filtered by
   `env_allowlist`.
+- Bash is disabled when a manifest also claims ref-scoped filesystem or
+  non-enabled network hard policies, because local shell execution is not a
+  filesystem or network sandbox.
 - Tool path checks reject symlink components before read/write/edit/mkdir so an
   allowed lexical ref cannot escape the workspace through a filesystem link.
 - Runtime-owned writes also reject symlink components before writing output,
@@ -407,8 +420,9 @@ Status note:
   assistant text. The Python adapter also re-summarizes non-whitelisted
   `worker_claims` during ingestion before writing execution reports.
 - The Python `PiAgentRuntimeAdapter` emits a legacy-compatible derived
-  permission manifest from `WorkUnitContract` so older WorkUnit entry points do
-  not bypass the Pi runtime boundary.
+  permission manifest from `WorkUnitContract`, and `PiAgentExecutorNode` bridges
+  TaskContract-derived execution packets into that runtime boundary for the new
+  agentic flow.
 - Broad search/listing tools are intentionally not exposed by the hardened tool
   set until they have permission-aware implementations that cannot leak denied
   roots.
@@ -444,6 +458,12 @@ Acceptance:
 - validation still passes;
 - product integrations use the new path by default.
 
+Status note:
+
+- S8 has started. FrontDesk and SkillFoundry docs now identify TaskContract as
+  the default new product path and MissionIR as compatibility-only. Legacy code
+  remains in place until benchmark and product-grade equivalence are proven.
+
 ## Phase S9: Value Benchmark Re-Run
 
 Purpose: validate that the new architecture improves the user-visible system,
@@ -478,6 +498,19 @@ Expected conclusion criteria:
   auditability, product boundary cleanliness, and long-task control;
 - if it is slower or more expensive, the report must show what value was bought
   by the extra structure.
+
+Status note:
+
+- S9 readiness gating has landed. Value benchmark runs now write a refs-first
+  `benchmarks/runs/{run_id}/readiness/readiness_report.json` before executing
+  gated runtime/full-flow modes.
+- Readiness distinguishes `ready`, `unavailable`, and `blocked` so missing live
+  provider configuration, missing hidden acceptance packs, missing pricing data,
+  and fixture gaps are not misclassified as product failures.
+- The report builder reads readiness evidence and suppresses full-flow winner
+  claims when prerequisites were not ready.
+- The expensive live rerun remains the next operational step; the code now has
+  the gate required to run it without over-claiming.
 
 ## Migration Strategy
 

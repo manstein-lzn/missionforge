@@ -10,6 +10,7 @@ from ..contracts import (
     ContractValidationError,
     assert_refs_only_payload,
     ensure_json_value,
+    require_bool,
     require_enum,
     require_mapping,
     require_non_empty_str,
@@ -378,7 +379,7 @@ class ProfileRecommendation:
             kind=require_enum(data.get("kind"), ProfileRecommendationKind, "profile_recommendation.kind"),
             rationale=require_non_empty_str(data.get("rationale"), "profile_recommendation.rationale"),
             requirements=require_mapping(data.get("requirements", {}), "profile_recommendation.requirements"),
-            selected=bool(data.get("selected", True)),
+            selected=require_bool(data.get("selected", True), "profile_recommendation.selected"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PROFILE_RECOMMENDATION_SCHEMA_VERSION),
                 "profile_recommendation.schema_version",

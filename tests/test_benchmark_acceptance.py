@@ -168,6 +168,53 @@ class BenchmarkAcceptanceTests(unittest.TestCase):
                 ref="../outside",
             ).validate()
 
+    def test_acceptance_schema_rejects_non_string_optional_text_and_refs(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            AcceptanceCheck.from_dict(
+                {
+                    "check_id": "bad-text",
+                    "kind": "file_contains",
+                    "ref": "package/SKILL.md",
+                    "expected_text": ["reusable"],
+                }
+            )
+
+        with self.assertRaises(ContractValidationError):
+            AcceptancePack.from_dict(
+                {
+                    "schema_version": "missionforge.benchmark_acceptance_pack.v1",
+                    "pack_id": "hidden",
+                    "task_id": "task-001",
+                    "visibility": "hidden",
+                    "checks": [
+                        {
+                            "check_id": "exists",
+                            "kind": "file_exists",
+                            "ref": "package/SKILL.md",
+                        }
+                    ],
+                    "rubric_ref": ["rubric.md"],
+                }
+            )
+
+        with self.assertRaises(ContractValidationError):
+            AcceptancePack.from_dict(
+                {
+                    "schema_version": "missionforge.benchmark_acceptance_pack.v1",
+                    "pack_id": "hidden",
+                    "task_id": "task-001",
+                    "visibility": "hidden",
+                    "checks": [
+                        {
+                            "check_id": "exists",
+                            "kind": "file_exists",
+                            "ref": "package/SKILL.md",
+                        }
+                    ],
+                    "rubric_ref": None,
+                }
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

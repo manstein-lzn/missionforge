@@ -385,7 +385,7 @@ def _permission_manifest_for_product(
             *(_root_ref(ref) for ref in source_refs),
         ]
     )
-    writable_refs = _unique_refs([*product_contract.allowed_write_scopes, "reports", "ledgers"])
+    writable_refs = _unique_refs([*product_contract.allowed_write_scopes, "attempts", "reports", "ledgers"])
     return PermissionManifest(
         manifest_id=f"skillfoundry-{request.bundle_id}-permissions",
         workspace_policy_ref=SKILLFOUNDRY_WORKSPACE_POLICY_REF,

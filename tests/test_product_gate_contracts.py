@@ -73,5 +73,17 @@ class ProductGateContractTests(unittest.TestCase):
         self.assertEqual(ProductGateCheck.from_dict(check.to_dict()).check_id, "SF-CODE-RUNTIME-ASSETS-EXIST")
 
 
+    def test_rejects_non_string_reason_before_serialization(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            ProductGateResult.from_dict(
+                {
+                    "schema_version": "missionforge.product_gate_result.v1",
+                    "product_id": "product",
+                    "status": "passed",
+                    "gate_spec_ref": "product/gate.json",
+                    "reason": {"secret": "raw-token"},
+                }
+            )
+
 if __name__ == "__main__":
     unittest.main()

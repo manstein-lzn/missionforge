@@ -28,7 +28,7 @@ def run_skillfoundry_bundle_build(
     pi_agent_config: Any | None = None,
     allow_candidate_registration: bool = True,
 ) -> SkillFoundryProductReport:
-    """Compile, run, validate, grade, register, and report one SkillFoundry bundle."""
+    """Compatibility MissionIR runtime path; new work should use TaskContract flow."""
 
     compile_result = compile_skillfoundry_bundle(request, workspace=workspace)
     mission = _load_mission(workspace, compile_result)

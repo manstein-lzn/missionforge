@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
-from .contracts import ContractValidationError, ensure_json_value, require_mapping, require_non_empty_str, require_str_list, validate_ref
+from .contracts import ContractValidationError, ensure_json_value, require_bool, require_mapping, require_non_empty_str, require_str_list, validate_ref
 
 
 MISSION_RUN_SCHEMA_VERSION = "missionforge.mission_run.v1"
@@ -328,7 +328,7 @@ class ArtifactHygieneReport:
             raise ContractValidationError("artifact_hygiene.schema_version is unsupported")
         report = cls(
             mission_run_id=require_non_empty_str(data.get("mission_run_id"), "artifact_hygiene.mission_run_id"),
-            passed=bool(data.get("passed")),
+            passed=require_bool(data.get("passed"), "artifact_hygiene.passed"),
             checks=list(data.get("checks", [])),
             failures=require_str_list(data.get("failures", []), "artifact_hygiene.failures"),
         )

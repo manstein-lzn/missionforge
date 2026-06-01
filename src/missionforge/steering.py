@@ -16,6 +16,7 @@ from .contracts import (
     SteeringProposalKind,
     assert_refs_only_payload,
     ensure_json_value,
+    require_bool,
     require_confidence,
     require_enum,
     require_int_at_least,
@@ -528,7 +529,10 @@ class ObservationSignal:
                 "observation_signal.affected_contract_fields",
             ),
             confidence=require_confidence(data.get("confidence", 0.0), "observation_signal.confidence"),
-            requires_verifier_confirmation=bool(data.get("requires_verifier_confirmation", True)),
+            requires_verifier_confirmation=require_bool(
+                data.get("requires_verifier_confirmation", True),
+                "observation_signal.requires_verifier_confirmation",
+            ),
             schema_version=require_non_empty_str(
                 data.get("schema_version", OBSERVATION_SIGNAL_SCHEMA_VERSION),
                 "observation_signal.schema_version",

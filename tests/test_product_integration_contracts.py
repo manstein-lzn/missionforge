@@ -136,5 +136,57 @@ class ProductIntegrationContractTests(unittest.TestCase):
             )
 
 
+    def test_rejects_non_string_refs_before_serialization(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            ProductCompileResult.from_dict(
+                {
+                    "schema_version": "missionforge.product_compile_result.v1",
+                    "product_id": "product",
+                    "status": "compiled",
+                    "intent_bundle_ref": "frontdesk/intent_bundle.json",
+                    "mission_ir_ref": ["missions/product.mission.json"],
+                }
+            )
+
+        with self.assertRaises(ContractValidationError):
+            ProductTaskContractCompileResult.from_dict(
+                {
+                    "schema_version": "missionforge.product_task_contract_compile_result.v1",
+                    "product_id": "product",
+                    "status": "compiled",
+                    "intent_bundle_ref": "frontdesk/intent_bundle.json",
+                    "run_workspace_ref": "runs/product",
+                    "task_contract_ref": ["runs/product/contract/task_contract.json"],
+                    "workspace_policy_ref": "runs/product/policy/workspace_policy.json",
+                    "permission_manifest_ref": "runs/product/policy/permission_manifest.json",
+                    "product_request_ref": "runs/product/product_contract/request.json",
+                    "product_contract_ref": "runs/product/product_contract/contract.json",
+                }
+            )
+
+        with self.assertRaises(ContractValidationError):
+            ProductCompileResult.from_dict(
+                {
+                    "schema_version": "missionforge.product_compile_result.v1",
+                    "product_id": "product",
+                    "status": "compiled",
+                    "intent_bundle_ref": "frontdesk/intent_bundle.json",
+                    "mission_ir_ref": None,
+                }
+            )
+
+    def test_rejects_non_string_reason_before_refs_only_check(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            ProductCompileResult.from_dict(
+                {
+                    "schema_version": "missionforge.product_compile_result.v1",
+                    "product_id": "product",
+                    "status": "compiled",
+                    "intent_bundle_ref": "frontdesk/intent_bundle.json",
+                    "mission_ir_ref": "missions/product.mission.json",
+                    "reason": {"secret": "raw-token"},
+                }
+            )
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,8 @@ import tempfile
 import unittest
 
 from missionforge.contracts import ContractValidationError
-from missionforge_skillfoundry import SkillBundleManifest, SkillFoundryMissionCompiler, validate_skill_bundle
+from missionforge_skillfoundry import BundleValidationCheck, SkillBundleManifest, SkillFoundryMissionCompiler, validate_skill_bundle
+from missionforge_skillfoundry.product_grade_gate import PRODUCT_GRADE_REPORT_SCHEMA_VERSION, ProductGradeReport
 
 from missionforge_skillfoundry.workspace import write_json_ref, write_text_ref
 from test_product_contract import code_runtime_request, sample_request
@@ -218,6 +219,43 @@ class SkillBundleValidatorTests(unittest.TestCase):
 
             self.assertFalse(report.passed)
             self.assertIn("SF-CODE-NO-SELF-GRADE", [check.check_id for check in report.blocking_failures])
+
+    def test_validation_check_rejects_string_booleans(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            BundleValidationCheck.from_dict(
+                {
+                    "check_id": "SF-CHECK",
+                    "passed": "false",
+                    "message": "Bad boolean.",
+                }
+            )
+
+        with self.assertRaises(ContractValidationError):
+            BundleValidationCheck.from_dict(
+                {
+                    "check_id": "SF-CHECK",
+                    "passed": False,
+                    "blocking": "false",
+                    "message": "Bad boolean.",
+                }
+            )
+
+    def test_product_grade_report_rejects_string_boolean(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            ProductGradeReport.from_dict(
+                {
+                    "schema_version": PRODUCT_GRADE_REPORT_SCHEMA_VERSION,
+                    "bundle_id": "demo-skill",
+                    "package_refs": ["package/SKILL.md"],
+                    "package_hash": "sha256:abc",
+                    "verifier_status": "passed",
+                    "verifier_refs": ["qa/verifier.json"],
+                    "bundle_validation_report_ref": "qa/skill_bundle_validation_report.json",
+                    "product_grade": "false",
+                    "recommended_registry_status": "product_grade_registered",
+                    "outcome_category": "product_grade_registered",
+                }
+            )
 
 
 if __name__ == "__main__":

@@ -10,9 +10,11 @@ from typing import Any, Mapping, Protocol, Self, runtime_checkable
 from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
+    optional_ref,
     require_enum,
     require_mapping,
     require_non_empty_str,
+    require_str,
     require_str_list,
     validate_ref,
 )
@@ -125,7 +127,7 @@ class ProductClarificationRequest:
                 )
                 for child in data.get("questions", [])
             ],
-            reason=str(data.get("reason", "")),
+            reason=require_str(data.get("reason", ""), "product_clarification_request.reason"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_CLARIFICATION_REQUEST_SCHEMA_VERSION),
                 "product_clarification_request.schema_version",
@@ -185,11 +187,11 @@ class ProductArtifactRefs:
             },
         )
         item = cls(
-            product_request_ref=str(data.get("product_request_ref", "")),
-            product_contract_ref=str(data.get("product_contract_ref", "")),
-            mission_ir_ref=str(data.get("mission_ir_ref", "")),
-            frozen_contract_ref=str(data.get("frozen_contract_ref", "")),
-            product_gate_spec_ref=str(data.get("product_gate_spec_ref", "")),
+            product_request_ref=optional_ref(data.get("product_request_ref", ""), "product_artifact_refs.product_request_ref"),
+            product_contract_ref=optional_ref(data.get("product_contract_ref", ""), "product_artifact_refs.product_contract_ref"),
+            mission_ir_ref=optional_ref(data.get("mission_ir_ref", ""), "product_artifact_refs.mission_ir_ref"),
+            frozen_contract_ref=optional_ref(data.get("frozen_contract_ref", ""), "product_artifact_refs.frozen_contract_ref"),
+            product_gate_spec_ref=optional_ref(data.get("product_gate_spec_ref", ""), "product_artifact_refs.product_gate_spec_ref"),
             evidence_refs=require_str_list(data.get("evidence_refs", []), "product_artifact_refs.evidence_refs"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_ARTIFACT_REFS_SCHEMA_VERSION),
@@ -269,11 +271,11 @@ class ProductCompileResult:
             product_id=require_non_empty_str(data.get("product_id"), "product_compile_result.product_id"),
             status=require_enum(data.get("status"), ProductCompileStatus, "product_compile_result.status"),
             intent_bundle_ref=validate_ref(data.get("intent_bundle_ref"), "product_compile_result.intent_bundle_ref"),
-            product_request_ref=str(data.get("product_request_ref", "")),
-            product_contract_ref=str(data.get("product_contract_ref", "")),
-            mission_ir_ref=str(data.get("mission_ir_ref", "")),
-            frozen_contract_ref=str(data.get("frozen_contract_ref", "")),
-            product_gate_spec_ref=str(data.get("product_gate_spec_ref", "")),
+            product_request_ref=optional_ref(data.get("product_request_ref", ""), "product_compile_result.product_request_ref"),
+            product_contract_ref=optional_ref(data.get("product_contract_ref", ""), "product_compile_result.product_contract_ref"),
+            mission_ir_ref=optional_ref(data.get("mission_ir_ref", ""), "product_compile_result.mission_ir_ref"),
+            frozen_contract_ref=optional_ref(data.get("frozen_contract_ref", ""), "product_compile_result.frozen_contract_ref"),
+            product_gate_spec_ref=optional_ref(data.get("product_gate_spec_ref", ""), "product_compile_result.product_gate_spec_ref"),
             missing_slot_ids=require_str_list(data.get("missing_slot_ids", []), "product_compile_result.missing_slot_ids"),
             clarification_questions=[
                 ProductClarificationQuestion.from_dict(
@@ -282,7 +284,7 @@ class ProductCompileResult:
                 for child in data.get("clarification_questions", [])
             ],
             evidence_refs=require_str_list(data.get("evidence_refs", []), "product_compile_result.evidence_refs"),
-            reason=str(data.get("reason", "")),
+            reason=require_str(data.get("reason", ""), "product_compile_result.reason"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_COMPILE_RESULT_SCHEMA_VERSION),
                 "product_compile_result.schema_version",
@@ -413,12 +415,12 @@ class ProductTaskContractCompileResult:
                 data.get("intent_bundle_ref"),
                 "product_task_contract_compile_result.intent_bundle_ref",
             ),
-            run_workspace_ref=str(data.get("run_workspace_ref", "")),
-            task_contract_ref=str(data.get("task_contract_ref", "")),
-            workspace_policy_ref=str(data.get("workspace_policy_ref", "")),
-            permission_manifest_ref=str(data.get("permission_manifest_ref", "")),
-            product_request_ref=str(data.get("product_request_ref", "")),
-            product_contract_ref=str(data.get("product_contract_ref", "")),
+            run_workspace_ref=optional_ref(data.get("run_workspace_ref", ""), "product_task_contract_compile_result.run_workspace_ref"),
+            task_contract_ref=optional_ref(data.get("task_contract_ref", ""), "product_task_contract_compile_result.task_contract_ref"),
+            workspace_policy_ref=optional_ref(data.get("workspace_policy_ref", ""), "product_task_contract_compile_result.workspace_policy_ref"),
+            permission_manifest_ref=optional_ref(data.get("permission_manifest_ref", ""), "product_task_contract_compile_result.permission_manifest_ref"),
+            product_request_ref=optional_ref(data.get("product_request_ref", ""), "product_task_contract_compile_result.product_request_ref"),
+            product_contract_ref=optional_ref(data.get("product_contract_ref", ""), "product_task_contract_compile_result.product_contract_ref"),
             hard_check_refs=require_str_list(
                 data.get("hard_check_refs", []),
                 "product_task_contract_compile_result.hard_check_refs",
@@ -437,7 +439,7 @@ class ProductTaskContractCompileResult:
                 )
                 for child in data.get("clarification_questions", [])
             ],
-            reason=str(data.get("reason", "")),
+            reason=require_str(data.get("reason", ""), "product_task_contract_compile_result.reason"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PRODUCT_TASK_CONTRACT_COMPILE_RESULT_SCHEMA_VERSION),
                 "product_task_contract_compile_result.schema_version",
@@ -528,6 +530,7 @@ class ProductIntegration(Protocol):
 
     def inquiry_profile(self) -> ProductInquiryProfile:
         """Return authoring-time product inquiry metadata."""
+        ...
 
     def compile_intent(
         self,
@@ -536,6 +539,7 @@ class ProductIntegration(Protocol):
         workspace: str | Path = ".",
     ) -> ProductCompileResult:
         """Compile a FrontDesk intent bundle into product artifacts."""
+        ...
 
 
 @runtime_checkable
@@ -546,6 +550,7 @@ class TaskContractProductIntegration(Protocol):
 
     def inquiry_profile(self) -> ProductInquiryProfile:
         """Return authoring-time product inquiry metadata."""
+        ...
 
     def compile_task_contract(
         self,
@@ -554,6 +559,7 @@ class TaskContractProductIntegration(Protocol):
         workspace: str | Path = ".",
     ) -> ProductTaskContractCompileResult:
         """Compile a FrontDesk intent bundle into TaskContract runtime refs."""
+        ...
 
 
 def _strict_mapping(value: Mapping[str, Any], field_name: str, allowed: set[str]) -> dict[str, Any]:

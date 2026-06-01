@@ -21,7 +21,7 @@ from missionforge.frontdesk import (
     SourcePolicy,
 )
 from missionforge.frontdesk.state import INTENT_BUNDLE_CANDIDATE_REF, INTENT_BUNDLE_REF
-from missionforge.product_integration import ProductCompileResult, ProductCompileStatus
+from missionforge.product_integration import ProductCompileResult, ProductCompileStatus, ProductTaskContractCompileResult
 from tests.frontdesk_llm_fixtures import ScriptedFrontDeskPiWorker, seed_llm_authored_frontdesk_artifacts
 
 
@@ -239,6 +239,35 @@ class FrontDeskProductContextServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractValidationError, "stale or tampered"):
                 frontdesk.compile_product(session.session_ref, _EchoProductIntegration(profile))
 
+    def test_compile_product_task_contract_is_default_task_contract_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            profile = _product_profile()
+            frontdesk = FrontDesk(
+                workspace=tempdir,
+                worker=ScriptedFrontDeskPiWorker(
+                    {
+                        INTENT_BUNDLE_CANDIDATE_REF: _confirmed_slot_candidate(
+                            session_id="fd-intent-task-contract",
+                            profile=profile,
+                            slot_id="goal",
+                            value="Build a reusable package.",
+                        )
+                    }
+                ),
+            )
+            session = frontdesk.start("Build a reusable package.", session_id="fd-intent-task-contract")
+            seed_llm_authored_frontdesk_artifacts(
+                frontdesk,
+                session.session_ref,
+                expected_artifacts=["package/SKILL.md"],
+            )
+
+            result = frontdesk.compile_product_task_contract(session.session_ref, _EchoTaskContractIntegration(profile))
+
+            self.assertEqual(result.status, ProductCompileStatus.COMPILED)
+            self.assertEqual(result.task_contract_ref, "runs/example/contract/task_contract.json")
+            self.assertFalse(hasattr(result, "mission_ir_ref"))
+
     def test_existing_product_bundle_revalidates_current_generic_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             profile = _product_profile()
@@ -315,6 +344,34 @@ class _EchoProductIntegration:
             status=ProductCompileStatus.COMPILED,
             intent_bundle_ref=bundle.intent_bundle_ref,
             mission_ir_ref="product/mission.json",
+        )
+
+
+class _EchoTaskContractIntegration:
+    product_id = "example_product"
+
+    def __init__(self, profile: ProductInquiryProfile) -> None:
+        self.profile = profile
+
+    def inquiry_profile(self) -> ProductInquiryProfile:
+        return self.profile
+
+    def compile_task_contract(
+        self,
+        bundle: FrontDeskIntentBundle,
+        *,
+        workspace: str | Path = ".",
+    ) -> ProductTaskContractCompileResult:
+        return ProductTaskContractCompileResult(
+            product_id=self.product_id,
+            status=ProductCompileStatus.COMPILED,
+            intent_bundle_ref=bundle.intent_bundle_ref,
+            run_workspace_ref="runs/example",
+            task_contract_ref="runs/example/contract/task_contract.json",
+            workspace_policy_ref="runs/example/policy/workspace_policy.json",
+            permission_manifest_ref="runs/example/policy/permission_manifest.json",
+            product_request_ref="runs/example/product_contract/request.json",
+            product_contract_ref="runs/example/product_contract/contract.json",
         )
 
 

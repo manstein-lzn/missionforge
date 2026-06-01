@@ -12,9 +12,11 @@ from ..contracts import (
     ContractValidationError,
     assert_refs_only_payload,
     ensure_json_value,
+    optional_ref,
     require_enum,
     require_mapping,
     require_non_empty_str,
+    require_str,
     require_str_list,
     validate_ref,
 )
@@ -77,10 +79,10 @@ class AcceptanceCheck:
             check_id=require_non_empty_str(data.get("check_id"), "acceptance_check.check_id"),
             kind=require_enum(data.get("kind"), AcceptanceCheckKind, "acceptance_check.kind"),
             ref=validate_ref(data.get("ref"), "acceptance_check.ref"),
-            expected_text=str(data.get("expected_text", "")),
+            expected_text=require_str(data.get("expected_text", ""), "acceptance_check.expected_text"),
             expected_terms=require_str_list(data.get("expected_terms", []), "acceptance_check.expected_terms"),
-            forbidden_text=str(data.get("forbidden_text", "")),
-            json_field=str(data.get("json_field", "")),
+            forbidden_text=require_str(data.get("forbidden_text", ""), "acceptance_check.forbidden_text"),
+            json_field=require_str(data.get("json_field", ""), "acceptance_check.json_field"),
             expected_value=ensure_json_value(data.get("expected_value"), "acceptance_check.expected_value")
             if "expected_value" in data
             else None,
@@ -150,7 +152,7 @@ class AcceptancePack:
             task_id=require_non_empty_str(data.get("task_id"), "acceptance_pack.task_id"),
             visibility=require_enum(data.get("visibility"), AcceptanceVisibility, "acceptance_pack.visibility"),
             checks=[AcceptanceCheck.from_dict(require_mapping(item, "acceptance_pack.checks[]")) for item in data.get("checks", [])],
-            rubric_ref=str(data.get("rubric_ref", "")),
+            rubric_ref=optional_ref(data.get("rubric_ref", ""), "acceptance_pack.rubric_ref"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", ACCEPTANCE_PACK_SCHEMA_VERSION),
                 "acceptance_pack.schema_version",
@@ -211,7 +213,7 @@ class AcceptanceCheckResult:
             passed=_require_bool(data.get("passed"), "acceptance_check_result.passed"),
             blocking=_require_bool(data.get("blocking", True), "acceptance_check_result.blocking"),
             evidence_refs=require_str_list(data.get("evidence_refs", []), "acceptance_check_result.evidence_refs"),
-            message=str(data.get("message", "")),
+            message=require_str(data.get("message", ""), "acceptance_check_result.message"),
         )
         result.validate()
         return result
@@ -264,7 +266,7 @@ class AcceptanceResult:
                 AcceptanceCheckResult.from_dict(require_mapping(item, "acceptance_result.check_results[]"))
                 for item in data.get("check_results", [])
             ],
-            result_ref=str(data.get("result_ref", "")),
+            result_ref=optional_ref(data.get("result_ref", ""), "acceptance_result.result_ref"),
             schema_version=require_non_empty_str(
                 data.get("schema_version", ACCEPTANCE_RESULT_SCHEMA_VERSION),
                 "acceptance_result.schema_version",

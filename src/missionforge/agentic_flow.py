@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 import json
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Protocol, cast
 
 from .agent_packets import (
     AgentExecutionPacket,
@@ -63,6 +63,7 @@ class AgentExecutorNode(Protocol):
         workspace: AgentWorkspace,
     ) -> AgentExecutionReport:
         """Produce artifacts and an executor report without acceptance authority."""
+        ...
 
 
 class AgentJudgeNode(Protocol):
@@ -76,6 +77,7 @@ class AgentJudgeNode(Protocol):
         workspace: AgentWorkspace,
     ) -> JudgeReport:
         """Return an independent judge decision over refs and evidence."""
+        ...
 
 
 class AgentWorkspace(Protocol):
@@ -83,21 +85,27 @@ class AgentWorkspace(Protocol):
 
     def ensure_read_ref(self, ref: str) -> str:
         """Return a readable ref or fail closed."""
+        ...
 
     def ensure_write_ref(self, ref: str) -> str:
         """Return a writable ref or fail closed."""
+        ...
 
     def read_text(self, ref: str) -> str:
         """Read a permitted text ref."""
+        ...
 
     def write_text(self, ref: str, text: str) -> str:
         """Write a permitted text ref."""
+        ...
 
     def read_json(self, ref: str) -> dict[str, object]:
         """Read a permitted JSON ref."""
+        ...
 
     def write_json(self, ref: str, payload: dict[str, object]) -> str:
         """Write a permitted JSON ref."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -762,16 +770,19 @@ def _ensure_judge_decision_artifact(
     if report.decision is JudgeReportDecision.REPAIR:
         if report.repair_brief_ref is None:
             raise ContractValidationError("judge_report.repair requires repair_brief_ref")
-        brief = _read_decision_artifact(workspace, report.repair_brief_ref, RepairBrief, "repair_brief")
+        brief = cast(RepairBrief, _read_decision_artifact(workspace, report.repair_brief_ref, RepairBrief, "repair_brief"))
         validate_repair_brief_for_judge(brief, packet, report, run_id=run_id)
     elif report.decision is JudgeReportDecision.REVISION_REQUIRED:
         if report.revision_request_ref is None:
             raise ContractValidationError("judge_report.revision_required requires revision_request_ref")
-        request = _read_decision_artifact(
-            workspace,
-            report.revision_request_ref,
+        request = cast(
             TaskRevisionRequest,
-            "task_revision_request",
+            _read_decision_artifact(
+                workspace,
+                report.revision_request_ref,
+                TaskRevisionRequest,
+                "task_revision_request",
+            ),
         )
         validate_revision_request_for_judge(request, packet, report, run_id=run_id)
 

@@ -18,6 +18,7 @@ export class ToolPermissionEnforcer {
     this.workspaceRoot = realpathSync(resolve(workspaceRoot));
     this.manifest = manifest;
     assertSupportedHardPolicies(manifest);
+    assertBashCompatibleManifest(manifest);
   }
 
   ensureReadPath(path: string): string {
@@ -118,6 +119,20 @@ export function assertSupportedHardPolicies(manifest: PermissionManifest): void 
   }
   if (unsupported.length > 0) {
     throw new Error(`unsupported hard permission policies: ${unsupported.join(", ")}`);
+  }
+}
+
+export function assertBashCompatibleManifest(manifest: PermissionManifest): void {
+  if (manifest.allowed_commands.length === 0) return;
+  const unsupported: string[] = [];
+  if (manifest.readable_refs.length > 0) unsupported.push("readable_refs");
+  if (manifest.writable_refs.length > 0) unsupported.push("writable_refs");
+  if (manifest.denied_refs.length > 0) unsupported.push("denied_refs");
+  if (manifest.network_policy !== "enabled") unsupported.push("network_policy");
+  if (unsupported.length > 0) {
+    throw new Error(
+      `bash cannot enforce ref-scoped or network-deny permissions; remove allowed_commands or remove hard policies: ${unsupported.join(", ")}`,
+    );
   }
 }
 

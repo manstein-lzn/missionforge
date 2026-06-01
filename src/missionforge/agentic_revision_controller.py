@@ -468,7 +468,7 @@ def build_revision_pending_record(
     if revision_request.execution_report_ref != result.refs.execution_report_ref:
         raise ContractValidationError("revision_pending_record request execution report ref does not match result")
 
-    payload_without_hash = {
+    payload_without_hash: dict[str, Any] = {
         "schema_version": REVISION_PENDING_RECORD_SCHEMA_VERSION,
         "pending_id": _revision_pending_id(
             run_id=result.run_id,
@@ -493,10 +493,29 @@ def build_revision_pending_record(
         "status": RevisionPendingStatus.PENDING.value,
     }
     record = RevisionPendingRecord(
+        schema_version=REVISION_PENDING_RECORD_SCHEMA_VERSION,
+        pending_id=_revision_pending_id(
+            run_id=result.run_id,
+            contract_hash=contract.contract_hash,
+            source_result_ref=result_ref,
+            source_revision_request_ref=result.revision_request_ref,
+        ),
         pending_hash=stable_json_hash(payload_without_hash),
-        status=RevisionPendingStatus.PENDING,
+        run_id=result.run_id,
+        contract_id=contract.contract_id,
+        contract_hash=contract.contract_hash,
+        contract_ref=result.refs.contract_ref,
+        request_id=revision_request.request_id,
+        source_result_ref=result_ref,
+        source_judge_report_ref=result.refs.judge_report_ref,
+        source_revision_request_ref=result.revision_request_ref,
+        execution_packet_ref=result.refs.execution_packet_ref,
+        execution_report_ref=revision_request.execution_report_ref,
+        judge_packet_ref=revision_request.judge_packet_ref,
+        judge_report_ref=revision_request.judge_report_ref,
         authority_required=revision_request.authority_required,
-        **{key: value for key, value in payload_without_hash.items() if key not in {"authority_required", "status"}},
+        evidence_refs=list(revision_request.evidence_refs),
+        status=RevisionPendingStatus.PENDING,
     )
     return _write_or_replay_pending(workspace, record)
 

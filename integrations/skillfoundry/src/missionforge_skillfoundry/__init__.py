@@ -9,7 +9,7 @@ from .compiler import (
     compile_skillfoundry_bundle,
 )
 from .dogfood import SkillFoundryDogfoodReport, run_skillfoundry_live_dogfood
-from .frontdesk_bridge import SkillFoundryFrontDeskIntegration, build_skillfoundry_request, compile_frontdesk_intent
+from .frontdesk_bridge import SkillFoundryFrontDeskIntegration, build_skillfoundry_request, compile_frontdesk_intent, compile_frontdesk_task_contract
 from .frontdesk_context import SkillFoundryInquiryProfile
 from .product_contract import (
     BUNDLE_MANIFEST_SCHEMA_VERSION,
@@ -84,6 +84,7 @@ __all__ = [
     "compile_skillfoundry_bundle",
     "compile_skillfoundry_task_contract",
     "compile_frontdesk_intent",
+    "compile_frontdesk_task_contract",
     "evaluate_product_grade",
     "manifest_for_profile",
     "register_skill_bundle",

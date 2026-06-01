@@ -2,9 +2,10 @@
 
 This integration is intentionally outside the `missionforge` Python package.
 
-It preserves the migration bridge from SkillFoundry/FrontDesk-style source refs
-to MissionForge `MissionIR`, while keeping MissionForge core adapters generic
-and product-neutral.
+It now defaults to the TaskContract-centered MissionForge runtime path while
+preserving the older SkillFoundry/FrontDesk-to-`MissionIR` bridge as an explicit
+compatibility surface. MissionForge core adapters remain generic and
+product-neutral.
 
 Dependency direction:
 
@@ -19,10 +20,13 @@ Run the integration tests from the repository root:
 PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s integrations/skillfoundry/tests
 ```
 
-The default MissionForge validation path does not run product integrations.
+The default SkillFoundry compile path emits TaskContract, WorkspacePolicy, and
+PermissionManifest refs under `runs/{bundle_id}/`; MissionIR APIs are retained
+for migration and benchmark comparison only.
 
 Planning:
 
+- [SkillFoundry TaskContract path](docs/task_contract_path.md)
 - [SkillFoundry integration contract](docs/skillfoundry_integration.md)
 - [SkillFoundry on MissionForge plan](docs/skillfoundry_on_missionforge_plan.md)
 - [SkillFoundry product shell validation plan](docs/skillfoundry_product_shell_validation_plan.md)

@@ -18,6 +18,9 @@ from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgen
 from missionforge.benchmark import (
     BenchmarkMode,
     BenchmarkPricingTable,
+    BenchmarkReadinessCheck,
+    BenchmarkReadinessReport,
+    BenchmarkReadinessStatus,
     BenchmarkTask,
     DirectPiWorkerBenchmarkRunner,
     DirectPiWorkerConfig,
@@ -27,6 +30,7 @@ from missionforge.benchmark import (
     MultiSeedBenchmarkRunner,
     ProductGateOutcome,
     RuntimeOnlyConfig,
+    build_readiness_report,
 )
 from missionforge.contracts import ContractValidationError, require_mapping, require_non_empty_str, validate_ref
 from missionforge.json_store import JsonWorkspaceStore
@@ -167,15 +171,67 @@ class SkillFoundryProductGate:
         )
 
 
+
+def validate_benchmark_run_id(run_id: str) -> str:
+    safe = validate_ref(run_id, "benchmark_run_id")
+    if "/" in safe or safe in {".", ".."}:
+        raise ContractValidationError("benchmark_run_id must be a safe id, not a path")
+    return safe
+
 def main() -> None:
     args = parse_args()
+    validate_benchmark_run_id(args.run_id)
     store = JsonWorkspaceStore(ROOT)
     manifest = load_task_manifest(args.task_manifest)
     task_items = select_task_items(manifest, parse_csv(args.task_ids))
     modes = parse_modes(args.modes)
     seeds = parse_seeds(args.seeds)
     pricing_table = load_pricing_table(args.pricing_table)
-    model = resolve_model(provider_mode=args.provider_mode, provider_config_source=args.provider_config_source, model=args.model)
+    model, model_error = resolve_model_for_readiness(
+        provider_mode=args.provider_mode,
+        provider_config_source=args.provider_config_source,
+        model=args.model,
+    )
+    tasks = [BenchmarkTask.from_dict(store.read_json(item["task_ref"])) for item in task_items]
+    readiness = build_value_benchmark_readiness(
+        args=args,
+        task_items=task_items,
+        tasks=tasks,
+        modes=modes,
+        pricing_table=pricing_table,
+        model=model,
+        model_error=model_error,
+    )
+    readiness_ref = write_readiness_report(args.run_id, readiness)
+    if readiness.status != BenchmarkReadinessStatus.READY:
+        summary_ref = write_execution_summary(
+            args=args,
+            manifest=manifest,
+            tasks=tasks,
+            modes=modes,
+            seeds=seeds,
+            pricing_table=pricing_table,
+            provider_env={},
+            result=None,
+            runtime_mission_refs={},
+            leak_hits=[],
+            readiness_report_ref=readiness_ref,
+            readiness_status=readiness.status.value,
+        )
+        print(
+            json.dumps(
+                {
+                    "event": "benchmark_readiness_not_ready",
+                    "run_id": args.run_id,
+                    "readiness_status": readiness.status.value,
+                    "readiness_report_ref": readiness_ref,
+                    "execution_summary_ref": summary_ref,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        return
     require_pricing_model(pricing_table=pricing_table, model=model, provider_mode=args.provider_mode)
     ensure_provider_available(
         provider_mode=args.provider_mode,
@@ -183,7 +239,6 @@ def main() -> None:
         model=model,
         metadata={"stage": args.stage, "run_id": args.run_id},
     )
-    tasks = [BenchmarkTask.from_dict(store.read_json(item["task_ref"])) for item in task_items]
     assert_hidden_checks_not_worker_visible(tasks)
     if args.dry_run:
         write_execution_summary(
@@ -197,6 +252,8 @@ def main() -> None:
             result=None,
             runtime_mission_refs={},
             leak_hits=[],
+            readiness_report_ref=readiness_ref,
+            readiness_status=readiness.status.value,
         )
         print(json.dumps({"event": "dry_run_ok", "run_id": args.run_id}), flush=True)
         return
@@ -296,6 +353,8 @@ def main() -> None:
         manifest=manifest,
         tasks=tasks,
         modes=modes,
+        readiness_report_ref=readiness_ref,
+        readiness_status=readiness.status.value,
         seeds=seeds,
         pricing_table=pricing_table,
         provider_env=provider_env,
@@ -383,6 +442,150 @@ def parse_csv(text: str) -> list[str]:
 def load_pricing_table(ref: str) -> BenchmarkPricingTable:
     payload = json.loads((ROOT / validate_ref(ref, "value_benchmark.pricing_table")).read_text(encoding="utf-8"))
     return BenchmarkPricingTable.from_dict(require_mapping(payload, "benchmark_pricing_table"))
+def resolve_model_for_readiness(*, provider_mode: str, provider_config_source: str, model: str) -> tuple[str, str]:
+    try:
+        return resolve_model(provider_mode=provider_mode, provider_config_source=provider_config_source, model=model), ""
+    except Exception as exc:
+        return "", f"model resolution unavailable: {type(exc).__name__}"
+
+
+def build_value_benchmark_readiness(
+    *,
+    args: argparse.Namespace,
+    task_items: list[dict[str, str]],
+    tasks: list[BenchmarkTask],
+    modes: list[BenchmarkMode],
+    pricing_table: BenchmarkPricingTable,
+    model: str,
+    model_error: str = "",
+) -> BenchmarkReadinessReport:
+    checks = [
+        _readiness_provider_check(args=args, model=model, model_error=model_error),
+        _readiness_pricing_check(pricing_table=pricing_table, model=model, pricing_table_ref=args.pricing_table),
+        _readiness_hidden_acceptance_check(tasks),
+    ]
+    if BenchmarkMode.MISSIONFORGE_RUNTIME_ONLY in modes:
+        checks.append(_readiness_runtime_only_fixture_check(task_items))
+    if BenchmarkMode.MISSIONFORGE_FULL_PRODUCT_FLOW in modes:
+        checks.append(_readiness_full_product_flow_check())
+    return build_readiness_report(benchmark_run_id=args.run_id, modes=modes, checks=checks)
+
+
+def write_readiness_report(run_id: str, report: BenchmarkReadinessReport) -> str:
+    ref = f"benchmarks/runs/{validate_benchmark_run_id(run_id)}/readiness/readiness_report.json"
+    return JsonWorkspaceStore(ROOT).write_json(ref, report.to_dict())
+
+
+def _readiness_provider_check(*, args: argparse.Namespace, model: str, model_error: str) -> BenchmarkReadinessCheck:
+    if model_error:
+        return BenchmarkReadinessCheck(
+            check_id="provider_config",
+            status=BenchmarkReadinessStatus.UNAVAILABLE,
+            reason=model_error,
+        )
+    if args.provider_mode == "faux":
+        return BenchmarkReadinessCheck(
+            check_id="provider_config",
+            status=BenchmarkReadinessStatus.READY,
+            reason="faux provider mode is configured",
+        )
+    try:
+        ensure_provider_available(
+            provider_mode=args.provider_mode,
+            provider_config_source=args.provider_config_source,
+            model=model,
+            metadata={"stage": args.stage, "run_id": args.run_id},
+        )
+    except Exception as exc:
+        return BenchmarkReadinessCheck(
+            check_id="provider_config",
+            status=BenchmarkReadinessStatus.UNAVAILABLE,
+            reason=f"provider config unavailable: {type(exc).__name__}",
+        )
+    return BenchmarkReadinessCheck(
+        check_id="provider_config",
+        status=BenchmarkReadinessStatus.READY,
+        reason="provider configuration is available",
+    )
+
+
+def _readiness_pricing_check(*, pricing_table: BenchmarkPricingTable, model: str, pricing_table_ref: str) -> BenchmarkReadinessCheck:
+    if not model:
+        return BenchmarkReadinessCheck(
+            check_id="pricing_model",
+            status=BenchmarkReadinessStatus.UNAVAILABLE,
+            reason="benchmark model is unavailable",
+        )
+    if pricing_table.price_for(model) is None:
+        return BenchmarkReadinessCheck(
+            check_id="pricing_model",
+            status=BenchmarkReadinessStatus.UNAVAILABLE,
+            reason=f"pricing table does not contain selected model {model}",
+        )
+    return BenchmarkReadinessCheck(
+        check_id="pricing_model",
+        status=BenchmarkReadinessStatus.READY,
+        reason="pricing table contains selected model",
+        evidence_refs=[validate_ref(pricing_table_ref, "pricing_model.evidence_ref")],
+    )
+
+
+
+
+def _readiness_hidden_acceptance_check(tasks: list[BenchmarkTask]) -> BenchmarkReadinessCheck:
+    evidence_refs: list[str] = []
+    missing: list[str] = []
+    for task in tasks:
+        hidden_refs = [ref for ref in task.acceptance_refs if ref.endswith("hidden_checks.json")]
+        if not hidden_refs:
+            missing.append(task.task_id)
+            continue
+        for ref in hidden_refs:
+            if not (ROOT / ref).is_file():
+                missing.append(task.task_id)
+            else:
+                evidence_refs.append(ref)
+    if missing:
+        return BenchmarkReadinessCheck(
+            check_id="hidden_acceptance",
+            status=BenchmarkReadinessStatus.BLOCKED,
+            reason=f"hidden acceptance is missing for tasks: {', '.join(sorted(set(missing)))}",
+            evidence_refs=sorted(set(evidence_refs)),
+        )
+    return BenchmarkReadinessCheck(
+        check_id="hidden_acceptance",
+        status=BenchmarkReadinessStatus.READY,
+        reason="hidden acceptance packs are present and evaluator-only",
+        evidence_refs=sorted(set(evidence_refs)),
+    )
+
+
+def _readiness_runtime_only_fixture_check(task_items: list[dict[str, str]]) -> BenchmarkReadinessCheck:
+    missing = sorted(item["task_id"] for item in task_items if not item.get("runtime_request_ref"))
+    evidence_refs = sorted(item["runtime_request_ref"] for item in task_items if item.get("runtime_request_ref"))
+    if missing:
+        return BenchmarkReadinessCheck(
+            check_id="runtime_only_fixtures",
+            status=BenchmarkReadinessStatus.BLOCKED,
+            reason=f"runtime-only request refs are missing for tasks: {', '.join(missing)}",
+            evidence_refs=evidence_refs,
+        )
+    return BenchmarkReadinessCheck(
+        check_id="runtime_only_fixtures",
+        status=BenchmarkReadinessStatus.READY,
+        reason="runtime-only request refs are present",
+        evidence_refs=evidence_refs,
+    )
+
+
+def _readiness_full_product_flow_check() -> BenchmarkReadinessCheck:
+    return BenchmarkReadinessCheck(
+        check_id="full_product_flow",
+        status=BenchmarkReadinessStatus.READY,
+        reason="SkillFoundry TaskContract integration and product gate are importable",
+    )
+
+
 
 
 def resolve_model(*, provider_mode: str, provider_config_source: str, model: str) -> str:
@@ -429,6 +632,7 @@ def prepare_runtime_only_fixtures(
     task_items: list[dict[str, str]],
     modes: list[BenchmarkMode],
 ) -> dict[str, str]:
+    safe_run_id = validate_benchmark_run_id(run_id)
     if BenchmarkMode.MISSIONFORGE_RUNTIME_ONLY not in modes:
         return {}
     mission_refs: dict[str, str] = {}
@@ -439,7 +643,7 @@ def prepare_runtime_only_fixtures(
         request = SkillFoundryRequest.from_dict(
             require_mapping(json.loads((ROOT / request_ref).read_text(encoding="utf-8")), "skillfoundry_request")
         )
-        fixture_ref = f"benchmarks/runs/{run_id}/runtime_only_fixture/{item['task_id']}"
+        fixture_ref = f"benchmarks/runs/{safe_run_id}/runtime_only_fixture/{item['task_id']}"
         fixture_root = ROOT / fixture_ref
         fixture_root.mkdir(parents=True, exist_ok=True)
         compiled = SkillFoundryMissionCompiler().compile_request(request, workspace=fixture_root)
@@ -479,6 +683,8 @@ def write_execution_summary(
     result: Any | None,
     runtime_mission_refs: Mapping[str, str],
     leak_hits: list[str],
+    readiness_report_ref: str,
+    readiness_status: str,
 ) -> str:
     ref = f"benchmarks/runs/{args.run_id}/execution_summary.json"
     payload = {
@@ -497,6 +703,8 @@ def write_execution_summary(
         "manifest_metadata": dict(manifest.get("metadata", {})) if isinstance(manifest.get("metadata", {}), Mapping) else {},
         "result_refs": result.to_dict() if result is not None else {},
         "leak_hits": list(leak_hits),
+        "readiness_report_ref": validate_ref(readiness_report_ref, "execution_summary.readiness_report_ref"),
+        "readiness_status": readiness_status,
         "dry_run": bool(args.dry_run),
     }
     if args.provider_mode == "live":

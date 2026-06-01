@@ -90,7 +90,7 @@ def compile_frontdesk_intent(
     workspace: str | Path,
     bundle_id: str,
 ) -> ProductCompileResult:
-    """Compile a FrontDeskIntentBundle into SkillFoundry MissionIR artifacts."""
+    """Compatibility compiler from FrontDeskIntentBundle into legacy MissionIR artifacts."""
 
     request_or_clarification = build_skillfoundry_request(bundle, bundle_id=bundle_id)
     if isinstance(request_or_clarification, ProductClarificationRequest):
@@ -116,9 +116,44 @@ def compile_frontdesk_intent(
         reason="compiled SkillFoundry product artifacts from FrontDeskIntentBundle",
     )
 
+def compile_frontdesk_task_contract(
+    bundle: FrontDeskIntentBundle,
+    *,
+    workspace: str | Path,
+    bundle_id: str,
+) -> ProductTaskContractCompileResult:
+    """Default compiler from FrontDeskIntentBundle into TaskContract runtime refs."""
+
+    request_or_clarification = build_skillfoundry_request(bundle, bundle_id=bundle_id)
+    if isinstance(request_or_clarification, ProductClarificationRequest):
+        return ProductTaskContractCompileResult(
+            product_id="skillfoundry",
+            status=ProductCompileStatus.NEEDS_CLARIFICATION,
+            intent_bundle_ref=bundle.intent_bundle_ref,
+            missing_slot_ids=list(request_or_clarification.missing_slot_ids),
+            clarification_questions=list(request_or_clarification.questions),
+            reason=request_or_clarification.reason,
+        )
+    result = compile_skillfoundry_task_contract(request_or_clarification, workspace=workspace)
+    return ProductTaskContractCompileResult(
+        product_id="skillfoundry",
+        status=ProductCompileStatus.COMPILED,
+        intent_bundle_ref=bundle.intent_bundle_ref,
+        run_workspace_ref=result.run_workspace_ref,
+        task_contract_ref=result.task_contract_ref,
+        workspace_policy_ref=result.workspace_policy_ref,
+        permission_manifest_ref=result.permission_manifest_ref,
+        product_request_ref=result.product_request_ref,
+        product_contract_ref=result.product_contract_ref,
+        hard_check_refs=list(result.hard_check_refs),
+        evidence_refs=[result.compile_report_ref],
+        reason="compiled SkillFoundry TaskContract runtime refs from FrontDeskIntentBundle",
+    )
+
+
 
 class SkillFoundryFrontDeskIntegration:
-    """ProductIntegration adapter for programmatic FrontDesk.compile_product calls."""
+    """FrontDesk adapter; TaskContract compilation is the default new-runtime path."""
 
     product_id = "skillfoundry"
 
@@ -144,31 +179,7 @@ class SkillFoundryFrontDeskIntegration:
         *,
         workspace: str | Path = ".",
     ) -> ProductTaskContractCompileResult:
-        request_or_clarification = build_skillfoundry_request(bundle, bundle_id=self.bundle_id)
-        if isinstance(request_or_clarification, ProductClarificationRequest):
-            return ProductTaskContractCompileResult(
-                product_id="skillfoundry",
-                status=ProductCompileStatus.NEEDS_CLARIFICATION,
-                intent_bundle_ref=bundle.intent_bundle_ref,
-                missing_slot_ids=list(request_or_clarification.missing_slot_ids),
-                clarification_questions=list(request_or_clarification.questions),
-                reason=request_or_clarification.reason,
-            )
-        result = compile_skillfoundry_task_contract(request_or_clarification, workspace=workspace)
-        return ProductTaskContractCompileResult(
-            product_id="skillfoundry",
-            status=ProductCompileStatus.COMPILED,
-            intent_bundle_ref=bundle.intent_bundle_ref,
-            run_workspace_ref=result.run_workspace_ref,
-            task_contract_ref=result.task_contract_ref,
-            workspace_policy_ref=result.workspace_policy_ref,
-            permission_manifest_ref=result.permission_manifest_ref,
-            product_request_ref=result.product_request_ref,
-            product_contract_ref=result.product_contract_ref,
-            hard_check_refs=list(result.hard_check_refs),
-            evidence_refs=[result.compile_report_ref],
-            reason="compiled SkillFoundry TaskContract runtime refs from FrontDeskIntentBundle",
-        )
+        return compile_frontdesk_task_contract(bundle, workspace=workspace, bundle_id=self.bundle_id)
 
 
 def _bridge_missing_slots(bundle: FrontDeskIntentBundle) -> list[str]:

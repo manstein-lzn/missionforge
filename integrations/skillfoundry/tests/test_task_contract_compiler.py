@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from typing import Any, cast
 
 from missionforge.contracts import ContractValidationError
 from missionforge import (
@@ -33,10 +34,18 @@ from missionforge.frontdesk import (
 from missionforge_skillfoundry import (
     SkillFoundryFrontDeskIntegration,
     SkillFoundryTaskContractCompileResult,
+    compile_frontdesk_task_contract,
     compile_skillfoundry_task_contract,
     load_skillfoundry_task_contract,
 )
 from missionforge_skillfoundry.task_contract_compiler import SKILLFOUNDRY_HARD_CHECK_RESULT_REF
+from missionforge.adapters.pi_agent_runtime import (
+    PI_AGENT_OUTPUT_SCHEMA_VERSION,
+    PiAgentCommandResult,
+    PiAgentExecutorNode,
+    PiAgentRuntimeAdapter,
+    PiAgentRuntimeConfig,
+)
 
 from test_product_contract import sample_request
 
@@ -117,6 +126,14 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             self.assertTrue(result.task_contract_ref)
             self.assertFalse(result.to_dict().get("mission_ir_ref"))
 
+    def test_public_frontdesk_task_contract_function_is_default_compile_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            result = compile_frontdesk_task_contract(_frontdesk_bundle(), workspace=tempdir, bundle_id="release-review")
+
+            self.assertEqual(result.status, ProductCompileStatus.COMPILED)
+            self.assertTrue(result.task_contract_ref)
+            self.assertFalse(result.to_dict().get("mission_ir_ref"))
+
     def test_frontdesk_integration_returns_clarification_without_task_contract(self) -> None:
         integration = SkillFoundryFrontDeskIntegration(bundle_id="release-review")
 
@@ -151,6 +168,150 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             )
             self.assertTrue((root / compile_result.run_workspace_ref / "ledgers/decision_ledger.jsonl").exists())
 
+
+    def test_skillfoundry_task_contract_runs_through_pi_runtime_executor_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            compile_result = compile_skillfoundry_task_contract(sample_request(), workspace=root)
+            task_contract, workspace_policy, permission_manifest = load_skillfoundry_task_contract(root, compile_result)
+            _write_hard_check(root, compile_result.run_workspace_ref)
+            runner = _SkillFoundryPiRuntimeRunner()
+            executor = PiAgentExecutorNode(
+                workspace_root=root / compile_result.run_workspace_ref,
+                adapter=PiAgentRuntimeAdapter(
+                    PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                    runner=runner,
+                ),
+            )
+
+            result = AgenticFlowRunner(root).run(
+                run_id="skillfoundry-pi-runtime-demo",
+                contract=task_contract,
+                workspace_policy=workspace_policy,
+                permission_manifest=permission_manifest,
+                executor=executor,
+                judge=_AcceptingSkillFoundryJudge(),
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=list(compile_result.hard_check_refs),
+            )
+
+            self.assertEqual(result.status, AgenticFlowStatus.ACCEPTED)
+            self.assertEqual(result.accepted_artifact_refs, ["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"])
+            self.assertTrue((root / compile_result.run_workspace_ref / "attempts/skillfoundry-pi-runtime-demo-execution-packet/pi_agent_input.json").exists())
+            self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["package", "attempts", "reports", "ledgers"])
+
+    def test_pi_runtime_executor_boundary_preserves_changed_refs_for_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            compile_result = compile_skillfoundry_task_contract(sample_request(), workspace=root)
+            task_contract, workspace_policy, permission_manifest = load_skillfoundry_task_contract(root, compile_result)
+            _write_hard_check(root, compile_result.run_workspace_ref)
+            executor = PiAgentExecutorNode(
+                workspace_root=root / compile_result.run_workspace_ref,
+                adapter=PiAgentRuntimeAdapter(
+                    PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                    runner=_SkillFoundryPiRuntimeRunner(extra_changed_refs=["ledgers/decision_ledger.jsonl"]),
+                ),
+            )
+
+            with self.assertRaisesRegex(ContractValidationError, "runtime-owned ref"):
+                AgenticFlowRunner(root).run(
+                    run_id="skillfoundry-pi-runtime-denied-change",
+                    contract=task_contract,
+                    workspace_policy=workspace_policy,
+                    permission_manifest=permission_manifest,
+                    executor=executor,
+                    judge=_AcceptingSkillFoundryJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=list(compile_result.hard_check_refs),
+                )
+
+
+class _SkillFoundryPiRuntimeRunner:
+    def __init__(self, *, extra_changed_refs: list[str] | None = None) -> None:
+        self.captured_input: dict[str, Any] = {}
+        self.extra_changed_refs = list(extra_changed_refs or [])
+
+    def run(self, command, *, input_path: Path, cwd: Path, timeout_seconds: int, env) -> PiAgentCommandResult:
+        self.captured_input = json.loads(input_path.read_text(encoding="utf-8"))
+        contract_payload = cast(dict[str, Any], self.captured_input["contract"])
+        expected_outputs = [str(ref) for ref in contract_payload["expected_outputs"]]
+        for ref in expected_outputs:
+            path = cwd / ref
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if ref.endswith(".json"):
+                path.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "skillfoundry.bundle.v1",
+                            "bundle_id": "release-review",
+                            "bundle_profile": "prompt_only",
+                            "entrypoint": "SKILL.md",
+                            "capability_surface": {},
+                            "runtime_assets": [],
+                            "data_assets": [],
+                            "references": [],
+                            "environment": {},
+                            "permissions": {},
+                            "verification": {},
+                            "distribution": {},
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            else:
+                path.write_text("# Release Notes Review Skill\n", encoding="utf-8")
+        output_ref = str(self.captured_input["output_ref"])
+        session_ref = str(self.captured_input["session_ref"])
+        events_ref = str(self.captured_input["events_ref"])
+        metrics_ref = str(self.captured_input["metrics_ref"])
+        savepoints_ref = str(self.captured_input["savepoints_ref"])
+        metrics = {"tool_call_count": 1, "total_tokens": 11, "tool_error_count": 0}
+        _write_ref(cwd, session_ref, "{}\n")
+        _write_ref(cwd, events_ref, "{}\n")
+        _write_ref(cwd, metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
+        _write_ref(cwd, savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
+        _write_ref(
+            cwd,
+            output_ref,
+            json.dumps(
+                {
+                    "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
+                    "work_unit_id": self.captured_input["work_unit_id"],
+                    "status": "completed",
+                    "produced_artifacts": expected_outputs,
+                    "changed_refs": [*expected_outputs, *self.extra_changed_refs],
+                    "commands_run": [],
+                    "tests_run": [],
+                    "failures": [],
+                    "worker_claims": ["assistant_final_text_present:length=20"],
+                    "verifier_evidence": expected_outputs,
+                    "new_unknowns": [],
+                    "recommended_next_steps": [],
+                    "verification_status": "not_run",
+                    "input_ref": self.captured_input["input_ref"],
+                    "output_ref": output_ref,
+                    "session_ref": session_ref,
+                    "events_ref": events_ref,
+                    "metrics_ref": metrics_ref,
+                    "savepoints_ref": savepoints_ref,
+                    "duration_ms": 1,
+                    "metrics": metrics,
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+        )
+        return PiAgentCommandResult(returncode=0)
+
+
+def _write_ref(root: Path, ref: str, text: str) -> None:
+    path = root / ref
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 class _SkillFoundryPackageExecutor:
     def execute(

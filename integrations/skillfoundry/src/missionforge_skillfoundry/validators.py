@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from missionforge.contracts import (
     ContractValidationError,
     assert_refs_only_payload,
+    require_bool,
     require_mapping,
     require_non_empty_str,
     require_str_list,
@@ -91,10 +92,10 @@ class BundleValidationCheck:
         data = require_mapping(payload, "bundle_validation_check")
         check = cls(
             check_id=require_non_empty_str(data.get("check_id"), "bundle_validation_check.check_id"),
-            passed=bool(data.get("passed")),
+            passed=require_bool(data.get("passed"), "bundle_validation_check.passed"),
             message=require_non_empty_str(data.get("message"), "bundle_validation_check.message"),
             evidence_refs=require_str_list(data.get("evidence_refs", []), "bundle_validation_check.evidence_refs"),
-            blocking=bool(data.get("blocking", True)),
+            blocking=require_bool(data.get("blocking", True), "bundle_validation_check.blocking"),
         )
         check.validate()
         return check

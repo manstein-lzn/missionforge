@@ -454,7 +454,7 @@ def build_repair_ticket(
     if repair_brief.execution_report_ref != result.refs.execution_report_ref:
         raise ContractValidationError("repair_ticket repair brief execution report ref does not match result")
 
-    ticket_payload = {
+    ticket_payload: dict[str, Any] = {
         "schema_version": REPAIR_TICKET_SCHEMA_VERSION,
         "ticket_id": _ticket_id(result, expected_result_ref),
         "run_id": result.run_id,
@@ -474,9 +474,24 @@ def build_repair_ticket(
         "status": RepairTicketStatus.READY.value,
     }
     ticket = RepairTicket(
+        schema_version=REPAIR_TICKET_SCHEMA_VERSION,
+        ticket_id=_ticket_id(result, expected_result_ref),
         ticket_hash=stable_json_hash(ticket_payload),
+        run_id=result.run_id,
+        contract_id=contract.contract_id,
+        contract_hash=contract.contract_hash,
+        contract_ref=result.refs.contract_ref,
+        source_result_ref=expected_result_ref,
+        source_judge_report_ref=result.refs.judge_report_ref,
+        source_repair_brief_ref=result.repair_brief_ref,
+        execution_packet_ref=result.refs.execution_packet_ref,
+        execution_report_ref=repair_brief.execution_report_ref,
+        judge_packet_ref=repair_brief.judge_packet_ref,
+        judge_report_ref=repair_brief.judge_report_ref,
+        target_artifact_refs=list(repair_brief.target_artifact_refs),
+        evidence_refs=list(repair_brief.evidence_refs),
+        worker_brief_ref=result.refs.worker_brief_ref,
         status=RepairTicketStatus.READY,
-        **{key: value for key, value in ticket_payload.items() if key != "status"},
     )
     return _write_or_replay_ticket(workspace, ticket)
 
@@ -580,7 +595,7 @@ def build_repair_execution_directive(
     )
     _write_or_match_json(workspace, execution_packet_ref, execution_packet.to_dict(), "repair_execution_packet")
 
-    payload_without_hash = {
+    payload_without_hash: dict[str, Any] = {
         "schema_version": REPAIR_EXECUTION_DIRECTIVE_SCHEMA_VERSION,
         "directive_id": _repair_execution_directive_id(
             repair_ticket_ref=ticket_ref,
@@ -601,9 +616,25 @@ def build_repair_execution_directive(
         "status": RepairExecutionDirectiveStatus.READY.value,
     }
     directive = RepairExecutionDirective(
+        schema_version=REPAIR_EXECUTION_DIRECTIVE_SCHEMA_VERSION,
+        directive_id=_repair_execution_directive_id(
+            repair_ticket_ref=ticket_ref,
+            repair_ticket_hash=ticket.ticket_hash,
+        ),
         directive_hash=stable_json_hash(payload_without_hash),
+        run_id=ticket.run_id,
+        contract_id=ticket.contract_id,
+        contract_hash=ticket.contract_hash,
+        repair_ticket_ref=ticket_ref,
+        repair_ticket_hash=ticket.ticket_hash,
+        source_result_ref=ticket.source_result_ref,
+        source_repair_brief_ref=ticket.source_repair_brief_ref,
+        worker_brief_ref=ticket.worker_brief_ref,
+        execution_packet_ref=execution_packet_ref,
+        execution_report_ref=execution_report_ref,
+        target_artifact_refs=list(ticket.target_artifact_refs),
+        context_refs=_unique_refs([ticket_ref, ticket.source_result_ref, ticket.source_repair_brief_ref]),
         status=RepairExecutionDirectiveStatus.READY,
-        **{key: value for key, value in payload_without_hash.items() if key != "status"},
     )
     return _write_or_replay_repair_execution_directive(workspace, directive)
 

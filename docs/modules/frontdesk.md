@@ -7,10 +7,11 @@ surface.
 
 It turns natural-language intent, user answers, host-provided facts, optional
 product-scoped inquiry metadata, and governed artifact refs into a reviewable
-`FrontDeskIntentBundle`. Product integrations or the generic fallback compiler
-then turn that bundle into MissionIR. This keeps users from hand-writing
-MissionIR while preventing MissionForge core from learning product-specific
-backend rules.
+`FrontDeskIntentBundle`. Product integrations then turn that bundle into the
+default `TaskContract` runtime shape; the generic fallback compiler can still
+produce MissionIR as a compatibility path. This keeps users from hand-writing
+runtime contracts while preventing MissionForge core from learning
+product-specific backend rules.
 
 FrontDesk authoring intelligence is mandatory. The service layer may collect
 conversation turns, inspect refs, and scout workspace/profile metadata without
@@ -36,10 +37,17 @@ user intent + source refs
   -> semantic lock and mission brief
   -> product inquiry slot filling when context is present
   -> FrontDeskIntentBundle
-  -> ProductIntegration or GenericProductIntegration
-  -> ProductContract and MissionIR
-  -> user, policy, or product compiler approval
-  -> freeze_mission
+  -> ProductIntegration
+  -> TaskContract + WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> AgenticFlow / PiWorker runtime
+```
+
+Compatibility-only generic fallback:
+
+```text
+FrontDeskIntentBundle
+  -> GenericProductIntegration
+  -> MissionIR
   -> MissionRuntime
 ```
 
@@ -57,7 +65,7 @@ FrontDesk owns the pre-runtime authoring workflow:
   and product compiler inputs;
 - FrontDeskIntentBundle generation;
 - generic MissionIR draft generation only as fallback compatibility;
-- intent and mapping audit before product compile or generic freeze;
+- intent and mapping audit before product TaskContract compile or generic freeze;
 - user or policy approval records;
 - freeze manifest and handoff refs;
 - optional operator commands for authoring, inspection, freezing, and running.
@@ -70,7 +78,7 @@ authoring require LLM-authored artifacts and fail closed with
 FrontDesk is generic. It helps discover intent for software work,
 documentation work, data work, research work, operational tasks, and external
 products such as SkillFoundry. Product-specific meaning enters through
-ProductInquiryProfile data, ProductIntegration packages, MissionIR fields,
+ProductInquiryProfile data, ProductIntegration packages, TaskContract fields,
 ProfilePacks, validators, product gates, and evidence refs, not through
 FrontDesk or runtime branches.
 
@@ -95,17 +103,28 @@ FrontDesk sits before the frozen runtime contract.
 ```text
 FrontDeskAuthoringSession
   -> FrontDeskIntentBundle
-  -> ProductIntegration or GenericProductIntegration
+  -> ProductIntegration
+  -> TaskContract / ProductTaskContractCompileResult
+  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> AgenticFlowResult / product runtime result
+```
+
+Legacy compatibility:
+
+```text
+FrontDeskAuthoringSession
+  -> FrontDeskIntentBundle
+  -> GenericProductIntegration
   -> DraftMissionIR
-  -> AuthoringApproval / ProductCompileResult
   -> FrozenMissionContract
   -> MissionRun
 ```
 
-The runtime still consumes only `MissionIR` or frozen contract state. PiWorker
-still consumes bounded `WorkUnitContract` objects. Product-aware FrontDesk
-output is useful only after Product Integration compiles it, deterministic
-validation passes, and freeze succeeds.
+The new runtime path consumes TaskContract-derived role packets. PiWorker
+execution still consumes bounded runtime input with permission manifests.
+Product-aware FrontDesk output is useful only after Product Integration compiles
+it, deterministic validation passes, and the contract/projection refs are
+written.
 
 ## Core Principle
 

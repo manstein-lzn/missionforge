@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from ..contracts import ContractValidationError, ensure_json_value, require_mapping, require_non_empty_str
+from ..contracts import ContractValidationError, ensure_json_value, require_bool, require_mapping, require_non_empty_str
 from .schema import MissionBrief, MissionSemanticLock, reject_raw_authoring_fields
 
 
@@ -33,7 +33,7 @@ class ClarificationQuestion:
             question_id=require_non_empty_str(data.get("question_id"), "clarification_question.question_id"),
             text=require_non_empty_str(data.get("text"), "clarification_question.text"),
             reason=require_non_empty_str(data.get("reason"), "clarification_question.reason"),
-            blocks_freeze=bool(data.get("blocks_freeze", True)),
+            blocks_freeze=require_bool(data.get("blocks_freeze", True), "clarification_question.blocks_freeze"),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -12,6 +12,7 @@ import subprocess
 import time
 from typing import Any, Mapping, Protocol, Sequence
 
+from ..agent_packets import AgentExecutionPacket, AgentExecutionReport, AgentExecutionStatus
 from ..adapters.contracts import AdapterResult
 from ..contracts import (
     ContractValidationError,
@@ -144,6 +145,7 @@ class PiAgentCommandRunner(Protocol):
         env: Mapping[str, str],
     ) -> PiAgentCommandResult:
         """Run the PI Agent runtime process."""
+        ...
 
 
 class SubprocessPiAgentCommandRunner:
@@ -277,6 +279,62 @@ class PiAgentRunResult:
             require_str_list(getattr(self, field_name), f"pi_agent_run_result.{field_name}")
         require_int_at_least(self.duration_ms, "pi_agent_run_result.duration_ms", 0)
         ensure_json_value(require_mapping(self.metrics, "pi_agent_run_result.metrics"), "pi_agent_run_result.metrics")
+
+
+@dataclass(frozen=True)
+class PiAgentExecutorNode:
+    """AgenticFlow executor node backed by the dedicated PI Agent runtime adapter."""
+
+    workspace_root: str | Path
+    adapter: "PiAgentRuntimeAdapter" = field(default_factory=lambda: PiAgentRuntimeAdapter())
+
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: object,
+    ) -> AgentExecutionReport:
+        packet.validate()
+        work_unit = WorkUnitContract(
+            work_unit_id=packet.packet_id,
+            mission_id=packet.contract_id,
+            iteration=1,
+            next_objective=f"Produce expected artifacts for {packet.contract_id}.",
+            allowed_scope=list(packet.writable_refs),
+            visible_refs=_dedupe_refs(
+                [
+                    packet.contract_ref,
+                    packet.worker_brief_ref,
+                    packet.workspace_policy_ref,
+                    packet.permission_manifest_ref,
+                    *packet.allowed_input_refs,
+                ]
+            ),
+            expected_outputs=list(packet.expected_artifact_refs),
+            exit_criteria=["Write all expected artifact refs and report through PI Agent runtime."],
+            stop_conditions=["Stop if the PI Agent runtime reports failed or blocked."],
+        )
+        result = self.adapter.run(work_unit, workspace=self.workspace_root, evidence_store=InMemoryEvidenceStore())
+        work_report = result.execution_report
+        status = _agent_execution_status(work_report.status)
+        metric_ref = work_report.metrics.get("metrics_ref")
+        metric_refs = [metric_ref] if isinstance(metric_ref, str) and metric_ref else []
+        report = AgentExecutionReport(
+            report_id=f"agent-{work_report.report_id}",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=status,
+            produced_artifact_refs=list(work_report.produced_artifacts),
+            changed_refs=_dedupe_refs(list(work_report.changed_refs)),
+            evidence_refs=[],
+            metric_refs=metric_refs,
+        )
+        report.validate()
+        return report
 
 
 class PiAgentRuntimeAdapter:
@@ -838,6 +896,14 @@ def _record_adapter_event(
         source_refs=source_refs,
     )
     return evidence_ref.evidence_id
+
+
+def _agent_execution_status(status: str) -> AgentExecutionStatus:
+    if status == "completed":
+        return AgentExecutionStatus.COMPLETED
+    if status == "blocked":
+        return AgentExecutionStatus.BLOCKED
+    return AgentExecutionStatus.FAILED
 
 
 def _pi_agent_refs(work_unit_id: str) -> dict[str, str]:

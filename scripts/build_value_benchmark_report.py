@@ -122,11 +122,29 @@ def load_run_record(run_id: str) -> dict[str, Any]:
     run_root = ROOT / run_ref
     if not run_root.is_dir():
         raise ContractValidationError(f"benchmark run not found: {run_ref}")
-    aggregate = read_json_path(run_root / "aggregate.json")
-    mode_comparisons = read_json_path(run_root / "mode_comparisons.json")
-    table_data = read_json_path(run_root / "table_data.json")
-    multiseed = read_json_path(run_root / "multiseed_result.json")
     execution_summary = read_json_path(run_root / "execution_summary.json") if (run_root / "execution_summary.json").is_file() else {}
+    readiness_report = read_json_path(run_root / "readiness/readiness_report.json") if (run_root / "readiness/readiness_report.json").is_file() else {}
+    readiness_status = str(readiness_report.get("status", "")) if readiness_report else ""
+    aggregate_path = run_root / "aggregate.json"
+    mode_comparison_path = run_root / "mode_comparisons.json"
+    table_data_path = run_root / "table_data.json"
+    multiseed_path = run_root / "multiseed_result.json"
+    primary_artifacts = [aggregate_path, mode_comparison_path, table_data_path, multiseed_path]
+    if all(path.is_file() for path in primary_artifacts):
+        aggregate = read_json_path(aggregate_path)
+        mode_comparisons = read_json_path(mode_comparison_path)
+        table_data = read_json_path(table_data_path)
+        multiseed = read_json_path(multiseed_path)
+    elif readiness_report and readiness_status not in {"ready", ""} and not any(path.is_file() for path in primary_artifacts):
+        aggregate = readiness_skipped_aggregate(run_id, execution_summary)
+        mode_comparisons = readiness_skipped_mode_comparisons(run_id)
+        table_data = readiness_skipped_table_data(run_id)
+        multiseed = readiness_skipped_multiseed(run_id, run_ref)
+    elif readiness_report and readiness_status == "ready":
+        raise ContractValidationError(f"ready benchmark run is missing primary result artifacts: {run_ref}")
+    else:
+        missing = [path.name for path in primary_artifacts if not path.is_file()]
+        raise ContractValidationError(f"benchmark run is missing primary result artifacts {missing}: {run_ref}")
     return {
         "run_id": run_id,
         "run_ref": run_ref,
@@ -141,8 +159,60 @@ def load_run_record(run_id: str) -> dict[str, Any]:
         "table_data": table_data,
         "multiseed": multiseed,
         "execution_summary": execution_summary,
+        "readiness_report_ref": f"{run_ref}/readiness/readiness_report.json" if readiness_report else "",
+        "readiness_report": readiness_report,
     }
 
+
+def readiness_skipped_aggregate(run_id: str, execution_summary: Mapping[str, Any]) -> dict[str, Any]:
+    task_ids = execution_summary.get("task_ids", []) if execution_summary else []
+    return {
+        "schema_version": "missionforge.benchmark_aggregate.v1",
+        "benchmark_run_id": run_id,
+        "task_count": len(task_ids) if isinstance(task_ids, list) else 0,
+        "trial_count": 0,
+        "accepted_count": 0,
+        "comparable_trial_count": 0,
+        "mode_summaries": {},
+        "failure_taxonomy_counts": {"readiness_not_ready": 1},
+        "summary_refs": [],
+    }
+
+
+def readiness_skipped_mode_comparisons(run_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": "missionforge.benchmark_mode_comparison.v1",
+        "benchmark_run_id": run_id,
+        "baseline_mode": "direct_piworker_chat",
+        "effect_size_rows": [],
+        "winner_by_success_rate": "",
+        "winner_by_cost_per_acceptance": "",
+        "winner_by_time_to_acceptance": "",
+        "note": "benchmark execution was skipped by readiness gate",
+    }
+
+
+def readiness_skipped_table_data(run_id: str) -> dict[str, Any]:
+    return {
+        "schema_version": "missionforge.benchmark_table_data.v1",
+        "benchmark_run_id": run_id,
+        "mode_rows": [],
+        "task_rows": [],
+    }
+
+
+def readiness_skipped_multiseed(run_id: str, run_ref: str) -> dict[str, Any]:
+    return {
+        "schema_version": "missionforge.benchmark_multiseed_result.v1",
+        "manifest_ref": f"{run_ref}/manifest.json",
+        "aggregate_ref": "",
+        "mode_comparison_ref": "",
+        "table_data_ref": "",
+        "report_ref": "",
+        "summary_refs": [],
+        "hidden_acceptance_result_refs": [],
+        "non_comparable_trial_refs": [],
+    }
 
 def select_primary_run(run_records: list[dict[str, Any]], primary_run_id: str) -> dict[str, Any]:
     if primary_run_id:
@@ -173,6 +243,8 @@ def build_run_index(run_records: list[dict[str, Any]]) -> dict[str, Any]:
                 "accepted_count": aggregate.get("accepted_count", 0),
                 "comparable_trial_count": aggregate.get("comparable_trial_count", 0),
                 "aggregate_ref": record["aggregate_ref"],
+                "readiness_report_ref": record.get("readiness_report_ref", ""),
+                "readiness_status": require_mapping(record.get("readiness_report", {}), "readiness_report").get("status", "not_available") if record.get("readiness_report") else "not_available",
                 "mode_comparison_ref": record["mode_comparison_ref"],
                 "table_data_ref": record["table_data_ref"],
                 "execution_summary_ref": record["execution_summary_ref"],
@@ -870,25 +942,29 @@ def claims_we_can_make(
     blind_review_waived: bool,
 ) -> list[str]:
     aggregate = primary["aggregate"]
+    readiness_report = require_mapping(primary.get("readiness_report", {}), "primary.readiness_report") if primary.get("readiness_report") else {}
+    readiness_status = str(readiness_report.get("status", "not_available"))
     claims = [
         "- The benchmark produced refs-first comparable summaries for the primary run.",
         "- Direct PiWorker and MissionForge modes were evaluated by the same aggregate/report contracts.",
     ]
     comparisons = primary["mode_comparisons"]
-    claims.append(
-        f"- In Stage 4, {stage4_success_result(aggregate)}; cost winner was `{comparisons.get('winner_by_cost_per_acceptance', '')}` and time winner was `{comparisons.get('winner_by_time_to_acceptance', '')}`."
-    )
-    if stability_summary.get("status") == "available":
-        claims.append(f"- Stage 5 stability result: {stability_summary.get('interpretation', '')}")
-        direct_row = _stability_mode_row(stability_summary, "direct_piworker_chat")
-        full_row = _stability_mode_row(stability_summary, "missionforge_full_product_flow")
-        if direct_row and full_row:
-            claims.append(
-                "- In Stage 5, direct PiWorker chat had higher accepted-deliverable rate, lower projected cost per accepted deliverable, and lower p95 time than MissionForge full product flow."
-            )
+    if readiness_status not in {"ready", "not_available"}:
+        claims.append(f"- Full benchmark execution was gated by readiness status `{readiness_status}`; no full-flow winner claim is made.")
+    else:
+        claims.append(
+            f"- In Stage 4, {stage4_success_result(aggregate)}; cost winner was `{comparisons.get('winner_by_cost_per_acceptance', '')}` and time winner was `{comparisons.get('winner_by_time_to_acceptance', '')}`."
+        )
+        if stability_summary.get("status") == "available":
+            claims.append(f"- Stage 5 stability result: {stability_summary.get('interpretation', '')}")
+            direct_row = _stability_mode_row(stability_summary, "direct_piworker_chat")
+            full_row = _stability_mode_row(stability_summary, "missionforge_full_product_flow")
+            claim = _stage5_direct_advantage_claim(direct_row, full_row)
+            if claim:
+                claims.append(claim)
     if bool(leakage.get("passed", False)):
         claims.append("- The publishable report scan found no configured raw prompt/provider/secret leakage markers.")
-    if all_costs_available(aggregate):
+    if all_costs_available(aggregate) and readiness_status in {"ready", "not_available"}:
         claims.append("- Cost comparison uses available pricing-table or provider-reported cost sources.")
     if blind_review_waived:
         claims.append("- Blind review was explicitly waived; deterministic checks and ProductGate evidence are the authority.")
@@ -898,6 +974,10 @@ def claims_we_can_make(
 def claims_we_cannot_make(*, primary: Mapping[str, Any], leakage: Mapping[str, Any], blind_review_waived: bool) -> list[str]:
     aggregate = primary["aggregate"]
     claims: list[str] = []
+    readiness_report = require_mapping(primary.get("readiness_report", {}), "primary.readiness_report") if primary.get("readiness_report") else {}
+    readiness_status = str(readiness_report.get("status", "not_available"))
+    if readiness_status not in {"ready", "not_available"}:
+        claims.append(f"- Full-flow benchmark prerequisites were `{readiness_status}`; unavailable or blocked prerequisites are not product failures.")
     if aggregate.get("task_count", 0) < 5:
         claims.append("- The primary run has fewer than five tasks, so broad task-family conclusions remain weak.")
     if not all_costs_available(aggregate):
@@ -925,6 +1005,23 @@ def _stability_mode_row(stability_summary: Mapping[str, Any], mode: str) -> Mapp
             return require_mapping(row, f"stability_summary.{mode}")
     return {}
 
+
+
+def _stage5_direct_advantage_claim(direct_row: Mapping[str, Any], full_row: Mapping[str, Any]) -> str:
+    direct_success = float(direct_row.get("success_rate", 0.0))
+    full_success = float(full_row.get("success_rate", 0.0))
+    direct_cost = float(direct_row.get("cost_per_accepted_deliverable_usd", 0.0))
+    full_cost = float(full_row.get("cost_per_accepted_deliverable_usd", 0.0))
+    if not _stability_cost_available(direct_row) or not _stability_cost_available(full_row):
+        return ""
+    direct_p95_time = float(direct_row.get("p95_time_to_accepted_deliverable_ms", 0.0))
+    full_p95_time = float(full_row.get("p95_time_to_accepted_deliverable_ms", 0.0))
+    if direct_success > full_success and direct_cost < full_cost and direct_p95_time < full_p95_time:
+        return "- In Stage 5, direct PiWorker chat had higher accepted-deliverable rate, lower projected cost per accepted deliverable, and lower p95 time than MissionForge full product flow."
+    return ""
+
+def _stability_cost_available(row: Mapping[str, Any]) -> bool:
+    return int(row.get("estimated_cost_available_count", 0)) > 0 and str(row.get("cost_source", "unavailable")) != "unavailable"
 
 def all_costs_available(aggregate: Mapping[str, Any]) -> bool:
     for values in aggregate.get("mode_summaries", {}).values():

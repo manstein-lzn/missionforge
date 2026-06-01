@@ -10,6 +10,7 @@ from missionforge.contracts import (
     ContractValidationError,
     VerificationStatus,
     assert_refs_only_payload,
+    require_bool,
     require_mapping,
     require_non_empty_str,
     require_str_list,
@@ -168,7 +169,7 @@ class ProductGradeReport:
                 data.get("bundle_validation_report_ref"),
                 "product_grade_report.bundle_validation_report_ref",
             ),
-            product_grade=bool(data.get("product_grade")),
+            product_grade=require_bool(data.get("product_grade"), "product_grade_report.product_grade"),
             recommended_registry_status=RegistryStatus(
                 require_non_empty_str(
                     data.get("recommended_registry_status"),

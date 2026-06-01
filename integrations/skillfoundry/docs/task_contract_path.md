@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-31
 
-Status: S5 external integration path for MissionForge's simplified agentic
+Status: default external integration path for MissionForge's simplified agentic
 runtime.
 
 ## Purpose
@@ -18,9 +18,9 @@ FrontDeskIntentBundle
   -> AgenticFlowRunner
 ```
 
-This path is additive. The existing MissionIR compiler remains available for
-legacy tests and migration comparison, but new simplified-runtime work should
-prefer the TaskContract path.
+This is the default path for new SkillFoundry-on-MissionForge work. The existing
+MissionIR compiler remains available only as a compatibility and migration
+comparison surface.
 
 ## Product Boundary
 
@@ -39,12 +39,21 @@ requirements must not be added to `src/missionforge`.
 
 ## Compiler Surface
 
-The main API is:
+The main request-level API is:
 
 ```python
 compile_skillfoundry_task_contract(request, workspace=...)
 load_skillfoundry_task_contract(workspace, result)
 ```
+
+The FrontDesk-level default API is:
+
+```python
+FrontDesk.compile_product_task_contract(session_ref, SkillFoundryFrontDeskIntegration(...))
+```
+
+`FrontDesk.compile_product(...)` and `compile_frontdesk_intent(...)` remain
+legacy MissionIR compatibility APIs.
 
 `compile_skillfoundry_task_contract` writes refs under:
 
@@ -77,23 +86,23 @@ authoritative product input.
 
 ## Agentic Flow Fixture
 
-The integration tests run the compiled contract through `AgenticFlowRunner`
-with offline executor and judge fakes:
+The integration tests run the compiled contract through `AgenticFlowRunner` in
+two modes:
 
-- executor writes required `package/...` artifacts;
-- hard-check evidence is written by the test fixture;
-- judge accepts only from `JudgePacket` refs and passed hard checks;
-- result, checkpoint, and ledger remain refs-first.
+- an offline executor/judge fixture that proves the product-neutral contract
+  shape;
+- a faux Pi runtime executor boundary backed by `PiAgentRuntimeAdapter`, followed
+  by an independent judge fixture.
 
-This proves the product can use the new path without changing MissionForge
-core. It does not replace the future live PiWorker executor/judge integration.
+Both paths keep artifacts under the declared workspace refs, require hard-check
+evidence, and leave final acceptance to the judge packet/report path.
 
 ## Remaining Work
 
 - connect real SkillFoundry hard-check/product-grade reports as hard-check refs;
+- replace the in-process judge fixture with a PiWorker judge adapter when live
+  judge credentials are available;
 - add repair and revision handling on top of `JudgeReport.repair` and
   `JudgeReport.revision_required`;
-- migrate the product runtime facade away from `MissionIR` after the new path
-  has equivalent product-grade coverage;
 - rerun value benchmarks with direct chat, runtime-only TaskContract flow, and
   full product flow.

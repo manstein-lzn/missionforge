@@ -64,7 +64,12 @@ test("bash requires explicit command permission and exposes only allowlisted env
     const tools = createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: {
-        ...samplePermissionManifest(),
+        ...samplePermissionManifest({
+          readable_refs: [],
+          writable_refs: [],
+          denied_refs: [],
+          network_policy: "enabled",
+        }),
         allowed_commands: [command],
         env_allowlist: ["PATH", "VISIBLE_ENV"],
       },
@@ -86,6 +91,24 @@ test("bash requires explicit command permission and exposes only allowlisted env
       restoreEnv("VISIBLE_ENV", previousVisible);
       restoreEnv("SECRET_ENV", previousSecret);
     }
+  });
+});
+
+test("bash is disabled when manifest has ref-scoped or network-deny permissions", async () => {
+  await withWorkspace(async (root) => {
+    const command = "node -e \"process.stdout.write('ok')\"";
+    assert.throws(
+      () =>
+        createMissionForgeTools({
+          workspaceRoot: root,
+          permissionManifest: {
+            ...samplePermissionManifest(),
+            allowed_commands: [command],
+          },
+          toolTimeoutSeconds: 30,
+        }),
+      /bash cannot enforce ref-scoped or network-deny permissions/,
+    );
   });
 });
 
