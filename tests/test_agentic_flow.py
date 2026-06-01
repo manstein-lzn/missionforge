@@ -10,6 +10,7 @@ from missionforge import (
     AgentExecutionReport,
     AgentExecutionStatus,
     AgentWorkspace,
+    AgenticFlowRefs,
     AgenticFlowRunner,
     AgenticFlowStatus,
     ContractValidationError,
@@ -24,6 +25,8 @@ from missionforge import (
     WorkspacePolicy,
     stable_json_hash,
 )
+from missionforge.adapters.pi_agent_runtime import PiAgentExecutorNode, PiAgentJudgeNode, PiAgentRuntimeConfig
+from missionforge.adapters.task_contract_runtime import TaskContractFlowPreset, create_default_task_contract_flow
 
 
 def sample_contract() -> TaskContract:
@@ -509,6 +512,19 @@ class AgenticFlowTests(unittest.TestCase):
             checkpoint = json.loads(Path(f"{base}/checkpoints/latest.json").read_text(encoding="utf-8"))
             self.assertEqual(checkpoint["status"], "accepted")
             self.assertEqual(checkpoint["ref_map"]["judge_report_ref"], "reports/judge_report.json")
+
+
+    def test_default_task_contract_flow_preset_assembles_piworker_nodes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            preset = create_default_task_contract_flow(
+                tmpdir,
+                piworker_config=PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+            )
+            self.assertIsInstance(preset, TaskContractFlowPreset)
+            self.assertIsInstance(preset.runner, AgenticFlowRunner)
+            self.assertIsInstance(preset.executor, PiAgentExecutorNode)
+            self.assertIsInstance(preset.judge, PiAgentJudgeNode)
+            self.assertEqual(Path(preset.runner.root), Path(tmpdir))
 
     def test_passed_hard_checks_require_explicit_refs(self) -> None:
         with TemporaryDirectory() as tmpdir:

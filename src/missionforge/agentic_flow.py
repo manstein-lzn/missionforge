@@ -874,5 +874,7 @@ def _optional_ref(value: Any, field_name: str) -> str | None:
     return validate_ref(value, field_name)
 
 
+
+
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

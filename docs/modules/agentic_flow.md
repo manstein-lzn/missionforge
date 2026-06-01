@@ -98,6 +98,11 @@ not contaminated by FrontDesk or product-specific behavior.
 `AgentJudgeNode`
 : Protocol for the judge role. The judge receives a `JudgePacket`, its packet
   ref, and a judge-scoped workspace capability.
+`TaskContractFlowPreset`, `create_default_task_contract_flow`
+:: Convenience assembly for the TaskContract-native lane. It lives in
+  `missionforge.adapters.task_contract_runtime`, packages an `AgenticFlowRunner`
+  with PiWorker-backed executor and judge nodes, and keeps node selection
+  explicit and testable.
 
 `ScopedAgentWorkspace`
 : In-process offline facade that routes node reads and writes through
