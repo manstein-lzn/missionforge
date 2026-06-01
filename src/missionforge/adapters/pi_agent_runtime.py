@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import os
 from pathlib import Path
@@ -12,7 +12,14 @@ import subprocess
 import time
 from typing import Any, Mapping, Protocol, Sequence
 
-from ..agent_packets import AgentExecutionPacket, AgentExecutionReport, AgentExecutionStatus
+from ..agent_packets import (
+    AgentExecutionPacket,
+    AgentExecutionReport,
+    AgentExecutionStatus,
+    JudgePacket,
+    JudgeReport,
+    validate_judge_report_for_packet,
+)
 from ..adapters.contracts import AdapterResult
 from ..contracts import (
     ContractValidationError,
@@ -22,6 +29,7 @@ from ..contracts import (
     require_mapping,
     require_non_empty_str,
     require_str_list,
+    stable_json_hash,
     validate_ref,
 )
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
@@ -320,10 +328,12 @@ class PiAgentExecutorNode:
         status = _agent_execution_status(work_report.status)
         metric_ref = work_report.metrics.get("metrics_ref")
         metric_refs = [metric_ref] if isinstance(metric_ref, str) and metric_ref else []
+        packet_hash = stable_json_hash(packet.to_dict())
         report = AgentExecutionReport(
             report_id=f"agent-{work_report.report_id}",
             packet_id=packet.packet_id,
             packet_ref=packet_ref,
+            packet_hash=packet_hash,
             contract_id=packet.contract_id,
             contract_hash=packet.contract_hash,
             contract_ref=packet.contract_ref,
@@ -335,6 +345,80 @@ class PiAgentExecutorNode:
         )
         report.validate()
         return report
+
+
+@dataclass(frozen=True)
+class PiAgentJudgeNode:
+    """AgenticFlow judge node backed by the dedicated PI Agent runtime adapter."""
+
+    workspace_root: str | Path
+    adapter: "PiAgentRuntimeAdapter" = field(default_factory=lambda: PiAgentRuntimeAdapter())
+
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: object,
+    ) -> JudgeReport:
+        packet.validate()
+        root = Path(self.workspace_root).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        packet_path = _resolve_workspace_ref(root, packet_ref)
+        _write_json(packet_path, packet.to_dict())
+        packet_hash = stable_json_hash(packet.to_dict())
+        spec_ref = _judge_node_spec_ref(packet.packet_id)
+        _write_json(
+            _resolve_workspace_ref(root, spec_ref),
+            _judge_node_spec_payload(packet=packet, packet_ref=packet_ref, packet_hash=packet_hash),
+        )
+        visible_refs = _dedupe_refs(
+            [
+                spec_ref,
+                packet_ref,
+                packet.contract_ref,
+                packet.judge_rubric_ref,
+                packet.execution_packet_ref,
+                packet.execution_report_ref,
+                *packet.artifact_refs,
+                *packet.evidence_refs,
+                *packet.hard_check_refs,
+            ]
+        )
+        work_unit = WorkUnitContract(
+            work_unit_id=packet.packet_id,
+            mission_id=packet.contract_id,
+            iteration=1,
+            next_objective=f"Judge execution evidence for {packet.contract_id} and write JudgeReport JSON only.",
+            allowed_scope=[packet.report_ref],
+            visible_refs=visible_refs,
+            expected_outputs=[packet.report_ref],
+            exit_criteria=["JudgeReport JSON exists and matches the judge packet."],
+            stop_conditions=["Do not modify executor artifacts, contract refs, packets, hard checks, or evidence refs."],
+        )
+        result = self.adapter.run(work_unit, workspace=root, evidence_store=InMemoryEvidenceStore())
+        work_report = result.execution_report
+        if work_report.status != "completed":
+            raise ContractValidationError("pi-agent judge node did not complete successfully")
+        report_path = _resolve_workspace_ref(root, packet.report_ref)
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, Mapping):
+                raise ContractValidationError("judge report artifact must be a JSON object")
+            judge_report = JudgeReport.from_dict(payload)
+        except ContractValidationError:
+            raise
+        except Exception as exc:
+            raise ContractValidationError(f"judge report artifact is invalid: {exc}") from exc
+        if judge_report.packet_hash is None:
+            judge_report = replace(judge_report, packet_hash=packet_hash)
+        validate_judge_report_for_packet(
+            judge_report,
+            packet,
+            packet_ref=packet_ref,
+            packet_hash=packet_hash,
+        )
+        return judge_report
 
 
 class PiAgentRuntimeAdapter:
@@ -896,6 +980,58 @@ def _record_adapter_event(
         source_refs=source_refs,
     )
     return evidence_ref.evidence_id
+
+
+def _judge_node_spec_ref(packet_id: str) -> str:
+    safe_packet_id = require_non_empty_str(packet_id, "judge_packet.packet_id")
+    return f"attempts/{safe_packet_id}/judge_node_spec.json"
+
+
+def _judge_node_spec_payload(*, packet: JudgePacket, packet_ref: str, packet_hash: str) -> dict[str, Any]:
+    return {
+        "schema_version": "missionforge.pi_agent_judge_node_spec.v1",
+        "role": "judge_piworker",
+        "packet_ref": validate_ref(packet_ref, "judge_node_spec.packet_ref"),
+        "packet_hash": packet_hash,
+        "report_ref": packet.report_ref,
+        "contract_ref": packet.contract_ref,
+        "judge_rubric_ref": packet.judge_rubric_ref,
+        "execution_packet_ref": packet.execution_packet_ref,
+        "execution_report_ref": packet.execution_report_ref,
+        "hard_check_status": packet.hard_check_status.value,
+        "artifact_refs": list(packet.artifact_refs),
+        "evidence_refs": list(packet.evidence_refs),
+        "hard_check_refs": list(packet.hard_check_refs),
+        "rules": [
+            "Read the judge packet, judge rubric, execution report, hard checks, evidence refs, and artifact refs before deciding.",
+            "Do not edit executor artifacts, contracts, packets, evidence refs, or hard-check refs.",
+            "Write exactly one JudgeReport JSON object at report_ref.",
+            "Use accepted only when execution and artifacts satisfy the judge rubric and hard_check_status is passed.",
+            "Use rejected when execution or artifacts are not acceptable and no same-contract repair is appropriate.",
+            "Use repair only for same-contract implementation gaps and include repair_brief_ref.",
+            "Use revision_required only when the contract itself must change and include revision_request_ref.",
+        ],
+        "judge_report_schema": {
+            "schema_version": "judge_report.v1",
+            "role": "judge_piworker",
+            "required_fields": [
+                "report_id",
+                "schema_version",
+                "role",
+                "packet_id",
+                "packet_ref",
+                "packet_hash",
+                "contract_id",
+                "contract_hash",
+                "contract_ref",
+                "decision",
+                "hard_check_status",
+                "rationale_refs",
+                "evidence_refs",
+                "accepted_artifact_refs",
+            ],
+        },
+    }
 
 
 def _agent_execution_status(status: str) -> AgentExecutionStatus:

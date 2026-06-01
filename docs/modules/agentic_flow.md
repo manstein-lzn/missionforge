@@ -37,6 +37,10 @@ not contaminated by FrontDesk or product-specific behavior.
 - `AgentExecutionPacket`, `AgentExecutionReport`, `JudgePacket`, and
   `JudgeReport` are validated with the existing cross-object validators from
   `agent_packets.py`.
+- Execution packets content-bind the worker brief, workspace policy, and
+  permission manifest hashes.
+- Execution reports and judge reports are stamped with the packet hash they
+  answer, and judge packets content-bind the execution packet/report hashes.
 - Executor output can never grant final acceptance.
 - Judge acceptance requires passed hard checks and completed execution.
 - Passed hard checks must cite explicit hard-check refs.
@@ -108,6 +112,11 @@ not contaminated by FrontDesk or product-specific behavior.
 
 These protocols are test seams and future PiWorker integration seams. They are
 not a public multi-worker marketplace.
+
+The live PiWorker-backed judge seam currently lives in
+`missionforge.adapters.pi_agent_runtime.PiAgentJudgeNode`; this module remains
+the offline composition layer and still accepts any judge-node implementation
+through its protocol.
 
 ## Workspace Shape
 

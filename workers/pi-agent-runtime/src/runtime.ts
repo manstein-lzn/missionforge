@@ -140,10 +140,15 @@ function buildSystemPrompt(input: RuntimeInput): string {
     "You are MissionForge's dedicated PI Agent runtime worker.",
     "Act as a complete coding agent. Use the available tools only inside the declared permission manifest.",
     "MissionForge owns verification; your completion claims are evidence only.",
+    "Do not call a tool that is not available in this runtime. If shell access is not provided, use read/write/edit only.",
+    "Write only the declared expected or optional artifact refs. Do not create extra files.",
+    "When a visible node spec describes exact JSON schemas, write those exact schema_version values, enum values, and required fields.",
     `Work unit: ${input.work_unit_id}`,
     `Mission: ${input.mission_id}`,
     `Objective: ${input.contract.next_objective}`,
     `Expected outputs: ${input.contract.expected_outputs.join(", ")}`,
+    `Writable refs: ${input.permission_manifest.writable_refs.join(", ")}`,
+    `Visible refs: ${input.contract.visible_refs.join(", ")}`,
     `Exit criteria: ${input.contract.exit_criteria.join("; ")}`,
     `Stop conditions: ${input.contract.stop_conditions.join("; ")}`,
   ];
@@ -188,8 +193,10 @@ function buildUserPrompt(input: RuntimeInput): string {
   }
   return [
     "Complete this MissionForge work unit.",
+    `First read the visible refs: ${input.contract.visible_refs.join(", ") || "<none>"}`,
     `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
-    "Use permitted tools to inspect, edit, run commands, and verify as needed.",
+    "If the visible refs include a node spec, follow its schema_hints exactly before writing artifacts.",
+    "Use permitted tools to inspect, edit, and write as needed. Do not use bash unless a bash tool is present and the exact command is allowed.",
   ].join("\n");
 }
 

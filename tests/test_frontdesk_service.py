@@ -5,10 +5,21 @@ import unittest
 from pathlib import Path
 
 from missionforge import ContractValidationError, FrontDesk
+from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
 from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
 
 class FrontDeskServiceTests(unittest.TestCase):
+    def test_frontdesk_can_be_built_with_default_piworker(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            frontdesk = FrontDesk.with_default_piworker(
+                workspace=tempdir,
+                piworker_config=PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+            )
+
+            self.assertIsInstance(frontdesk.worker, PiAgentRuntimeAdapter)
+            self.assertEqual(frontdesk.worker.config.command, ("pi-agent-runtime",))
+
     def test_draft_fails_closed_without_llm_node(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             frontdesk = FrontDesk(workspace=tempdir)

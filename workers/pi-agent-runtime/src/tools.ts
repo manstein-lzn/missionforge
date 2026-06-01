@@ -22,8 +22,7 @@ export interface MissionForgeToolOptions {
 export function createMissionForgeTools(options: MissionForgeToolOptions): AgentTool<any>[] {
   const cwd = options.workspaceRoot;
   const enforcer = new ToolPermissionEnforcer(cwd, options.permissionManifest);
-  const bashOps = createLocalBashOperations();
-  return [
+  const tools: AgentTool<any>[] = [
     createReadTool(cwd, {
       operations: {
         readFile: (absolutePath) => readFile(enforcer.ensureReadPath(absolutePath)),
@@ -31,23 +30,6 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
           await readFile(enforcer.ensureReadPath(absolutePath), { flag: "r" });
         },
       },
-    }),
-    createBashTool(cwd, {
-      operations: {
-        exec: (command, execCwd, execOptions) => {
-          const allowedCommand = enforcer.ensureCommand(command);
-          return bashOps.exec(allowedCommand, guardPath(cwd, execCwd), {
-            ...execOptions,
-            env: enforcer.filterEnv(execOptions.env),
-            timeout: execOptions.timeout ?? options.toolTimeoutSeconds,
-          });
-        },
-      },
-      spawnHook: (context) => ({
-        ...context,
-        cwd: guardPath(cwd, context.cwd),
-        env: enforcer.filterEnv(context.env),
-      }),
     }),
     createEditTool(cwd, {
       operations: {
@@ -67,6 +49,29 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
       },
     }),
   ];
+  if (options.permissionManifest.allowed_commands.length > 0) {
+    const bashOps = createLocalBashOperations();
+    tools.push(
+      createBashTool(cwd, {
+        operations: {
+          exec: (command, execCwd, execOptions) => {
+            const allowedCommand = enforcer.ensureCommand(command);
+            return bashOps.exec(allowedCommand, guardPath(cwd, execCwd), {
+              ...execOptions,
+              env: enforcer.filterEnv(execOptions.env),
+              timeout: execOptions.timeout ?? options.toolTimeoutSeconds,
+            });
+          },
+        },
+        spawnHook: (context) => ({
+          ...context,
+          cwd: guardPath(cwd, context.cwd),
+          env: enforcer.filterEnv(context.env),
+        }),
+      }),
+    );
+  }
+  return tools;
 }
 
 export function guardPath(workspaceRoot: string, path: string): string {

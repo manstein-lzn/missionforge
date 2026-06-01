@@ -14,7 +14,7 @@ from missionforge.agent_packets import (
     validate_judge_packet_for_execution,
     validate_judge_report_for_packet,
 )
-from missionforge.contracts import ContractValidationError
+from missionforge.contracts import ContractValidationError, stable_json_hash
 
 
 def execution_packet_payload() -> dict[str, object]:
@@ -166,6 +166,27 @@ class AgentPacketTests(unittest.TestCase):
                 packet_ref="packets/execution_packet.json",
             )
 
+        packet_hash = stable_json_hash(packet.to_dict())
+        hash_payload = execution_report_payload()
+        hash_payload["packet_hash"] = packet_hash
+        hash_bound_report = AgentExecutionReport.from_dict(hash_payload)
+        validate_execution_report_for_packet(
+            hash_bound_report,
+            packet,
+            packet_ref="packets/execution_packet.json",
+            packet_hash=packet_hash,
+        )
+
+        bad_hash_payload = execution_report_payload()
+        bad_hash_payload["packet_hash"] = "sha256:" + "b" * 64
+        bad_hash_report = AgentExecutionReport.from_dict(bad_hash_payload)
+        with self.assertRaisesRegex(ContractValidationError, "packet_hash"):
+            validate_execution_report_for_packet(
+                bad_hash_report,
+                packet,
+                packet_ref="packets/execution_packet.json",
+                packet_hash=packet_hash,
+            )
     def test_judge_packet_round_trip(self) -> None:
         packet = JudgePacket.from_dict(judge_packet_payload())
 
@@ -259,6 +280,28 @@ class AgentPacketTests(unittest.TestCase):
                 packet_ref="packets/judge_packet.json",
             )
 
+        packet_hash = stable_json_hash(packet.to_dict())
+        hash_payload = judge_report_payload()
+        hash_payload["packet_hash"] = packet_hash
+        hash_bound_report = JudgeReport.from_dict(hash_payload)
+        validate_judge_report_for_packet(
+            hash_bound_report,
+            packet,
+            packet_ref="packets/judge_packet.json",
+            packet_hash=packet_hash,
+        )
+
+        bad_hash_payload = judge_report_payload()
+        bad_hash_payload["packet_hash"] = "sha256:" + "b" * 64
+        bad_hash_report = JudgeReport.from_dict(bad_hash_payload)
+        with self.assertRaisesRegex(ContractValidationError, "packet_hash"):
+            validate_judge_report_for_packet(
+                bad_hash_report,
+                packet,
+                packet_ref="packets/judge_packet.json",
+                packet_hash=packet_hash,
+            )
+
     def test_judge_packet_binds_to_execution_packet_and_report_artifacts(self) -> None:
         execution_packet = AgentExecutionPacket.from_dict(execution_packet_payload())
         execution_report = AgentExecutionReport.from_dict(execution_report_payload())
@@ -296,6 +339,35 @@ class AgentPacketTests(unittest.TestCase):
                 execution_report_ref="reports/execution_report.json",
             )
 
+        execution_packet_hash = stable_json_hash(execution_packet.to_dict())
+        execution_report_hash = stable_json_hash(execution_report.to_dict())
+        hash_packet_payload = judge_packet_payload()
+        hash_packet_payload["execution_packet_hash"] = execution_packet_hash
+        hash_packet_payload["execution_report_hash"] = execution_report_hash
+        hash_bound_packet = JudgePacket.from_dict(hash_packet_payload)
+        validate_judge_packet_for_execution(
+            hash_bound_packet,
+            execution_packet,
+            execution_report,
+            execution_packet_ref="packets/execution_packet.json",
+            execution_report_ref="reports/execution_report.json",
+            execution_packet_hash=execution_packet_hash,
+            execution_report_hash=execution_report_hash,
+        )
+
+        bad_hash_packet_payload = judge_packet_payload()
+        bad_hash_packet_payload["execution_packet_hash"] = "sha256:" + "b" * 64
+        bad_hash_packet = JudgePacket.from_dict(bad_hash_packet_payload)
+        with self.assertRaisesRegex(ContractValidationError, "execution_packet_hash"):
+            validate_judge_packet_for_execution(
+                bad_hash_packet,
+                execution_packet,
+                execution_report,
+                execution_packet_ref="packets/execution_packet.json",
+                execution_report_ref="reports/execution_report.json",
+                execution_packet_hash=execution_packet_hash,
+                execution_report_hash=execution_report_hash,
+            )
 
 if __name__ == "__main__":
     unittest.main()

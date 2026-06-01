@@ -35,6 +35,9 @@ PiWorker-centered execution path.
 - accepted decisions require passed hard checks;
 - judge report hard-check status must match the judge packet;
 - judge packet artifact refs must come from the executor report;
+- execution reports may carry `packet_hash`, and judge packets/reports may carry
+  hashes for the packet/report artifacts they bind to;
+  hash mismatches fail validation when hashes are supplied;
 - accepted decisions cannot include repair or revision refs;
 - packet/report payloads are refs-only and reject raw prompts, transcripts,
   secrets, stdout/stderr bodies, and artifact bodies.

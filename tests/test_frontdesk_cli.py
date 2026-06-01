@@ -6,9 +6,49 @@ import tempfile
 import unittest
 
 from missionforge.adapters.cli import MissionCLI, MissionCommandResult
+from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter
+from missionforge.frontdesk.cli import _frontdesk_worker_from_args
 
 
 class FrontDeskCLITests(unittest.TestCase):
+    def test_cli_can_construct_default_frontdesk_piworker(self) -> None:
+        parser = MissionCLI().run_command
+        result = parser(
+            [
+                "frontdesk",
+                "inspect",
+                "--workspace",
+                ".",
+                "--session",
+                "frontdesk/session.json",
+                "--use-default-piworker",
+                "--piworker-provider-mode",
+                "faux",
+                "--piworker-timeout-seconds",
+                "12",
+            ]
+        )
+
+        self.assertEqual(result.error.code if result.error else "", "missing_state")
+
+    def test_frontdesk_worker_arg_factory_builds_pi_agent_runtime(self) -> None:
+        from argparse import Namespace
+
+        worker = _frontdesk_worker_from_args(
+            Namespace(
+                use_default_piworker=True,
+                piworker_provider_mode="faux",
+                piworker_provider_config_source="env",
+                piworker_model="missionforge-faux",
+                piworker_timeout_seconds=12,
+            )
+        )
+
+        self.assertIsInstance(worker, PiAgentRuntimeAdapter)
+        self.assertEqual(worker.config.provider_mode, "faux")
+        self.assertEqual(worker.config.model, "missionforge-faux")
+        self.assertEqual(worker.config.timeout_seconds, 12)
+
     def test_frontdesk_draft_fails_closed_without_llm_node(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             cli = MissionCLI()

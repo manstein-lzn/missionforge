@@ -57,6 +57,18 @@ test("file tools enforce read, write, and denied refs", async () => {
   });
 });
 
+test("bash tool is hidden when no command is allowed", async () => {
+  await withWorkspace(async (root) => {
+    const tools = createMissionForgeTools({
+      workspaceRoot: root,
+      permissionManifest: samplePermissionManifest(),
+      toolTimeoutSeconds: 30,
+    });
+
+    assert.equal(tools.some((candidate) => candidate.name === "bash"), false);
+  });
+});
+
 test("bash requires explicit command permission and exposes only allowlisted env", async () => {
   await withWorkspace(async (root) => {
     const command =

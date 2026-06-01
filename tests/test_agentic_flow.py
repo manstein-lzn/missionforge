@@ -22,6 +22,7 @@ from missionforge import (
     TaskContract,
     TaskRevisionRequest,
     WorkspacePolicy,
+    stable_json_hash,
 )
 
 
@@ -478,6 +479,14 @@ class AgenticFlowTests(unittest.TestCase):
             self.assertTrue(_exists(f"{base}/packets/judge_packet.json"))
             self.assertTrue(_exists(f"{base}/reports/execution_report.json"))
             self.assertTrue(_exists(f"{base}/reports/judge_report.json"))
+            execution_packet = json.loads(Path(f"{base}/packets/execution_packet.json").read_text(encoding="utf-8"))
+            execution_report = json.loads(Path(f"{base}/reports/execution_report.json").read_text(encoding="utf-8"))
+            judge_packet = json.loads(Path(f"{base}/packets/judge_packet.json").read_text(encoding="utf-8"))
+            judge_report = json.loads(Path(f"{base}/reports/judge_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(execution_report["packet_hash"], stable_json_hash(execution_packet))
+            self.assertEqual(judge_packet["execution_packet_hash"], stable_json_hash(execution_packet))
+            self.assertEqual(judge_packet["execution_report_hash"], stable_json_hash(execution_report))
+            self.assertEqual(judge_report["packet_hash"], stable_json_hash(judge_packet))
             self.assertTrue(_exists(f"{base}/checkpoints/latest.json"))
             self.assertEqual(_line_count(f"{base}/ledgers/decision_ledger.jsonl"), 4)
             entries = [

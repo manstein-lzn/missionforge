@@ -684,6 +684,32 @@ def _command_parser() -> argparse.ArgumentParser:
     validate.add_argument("--log-ref", default=None, help="Workspace-relative validation log ref.")
     validate.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
+    def add_frontdesk_piworker_flags(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--use-default-piworker",
+            action="store_true",
+            help="Run FrontDesk intelligence nodes with the default PiWorker adapter instead of failing closed.",
+        )
+        command.add_argument(
+            "--piworker-provider-mode",
+            default="faux",
+            choices=sorted({"faux", "live"}),
+            help="Provider mode for --use-default-piworker.",
+        )
+        command.add_argument(
+            "--piworker-provider-config-source",
+            default="env",
+            choices=sorted({"env", "codex_current", "explicit"}),
+            help="Provider config source for --use-default-piworker.",
+        )
+        command.add_argument("--piworker-model", default=None, help="Optional model id for --use-default-piworker.")
+        command.add_argument(
+            "--piworker-timeout-seconds",
+            type=int,
+            default=300,
+            help="Timeout for each FrontDesk PiWorker node.",
+        )
+
     frontdesk = subparsers.add_parser("frontdesk", help="Author MissionIR with FrontDesk.")
     frontdesk_subparsers = frontdesk.add_subparsers(dest="frontdesk_command", required=True)
     fd_start = frontdesk_subparsers.add_parser("start", help="Start a FrontDesk session.")
@@ -691,16 +717,19 @@ def _command_parser() -> argparse.ArgumentParser:
     fd_start.add_argument("--text", required=True, help="Initial user intent.")
     fd_start.add_argument("--session-id", default="frontdesk-session", help="FrontDesk session id.")
     fd_start.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    add_frontdesk_piworker_flags(fd_start)
     fd_answer = frontdesk_subparsers.add_parser("answer", help="Append a FrontDesk answer.")
     fd_answer.add_argument("--workspace", default=".", help="Workspace root.")
     fd_answer.add_argument("--session", required=True, help="FrontDesk session ref.")
     fd_answer.add_argument("--text", required=True, help="User answer text.")
     fd_answer.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    add_frontdesk_piworker_flags(fd_answer)
     for name in ("inspect", "scout", "grill", "cover-semantics", "plan", "map", "draft", "intent", "audit", "freeze", "run"):
         fd_command = frontdesk_subparsers.add_parser(name, help=f"FrontDesk {name}.")
         fd_command.add_argument("--workspace", default=".", help="Workspace root.")
         fd_command.add_argument("--session", required=True, help="FrontDesk session ref.")
         fd_command.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+        add_frontdesk_piworker_flags(fd_command)
     fd_compile_product = frontdesk_subparsers.add_parser(
         "compile-product",
         help="Compile a FrontDesk intent bundle through a product integration reference.",
@@ -713,6 +742,7 @@ def _command_parser() -> argparse.ArgumentParser:
         help="Opaque integration ref. Core supports only 'generic'; product packages provide their own CLI.",
     )
     fd_compile_product.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    add_frontdesk_piworker_flags(fd_compile_product)
     fd_review_plan = frontdesk_subparsers.add_parser("review-plan", help="Review a FrontDesk solution plan.")
     fd_review_plan.add_argument("--workspace", default=".", help="Workspace root.")
     fd_review_plan.add_argument("--session", required=True, help="FrontDesk session ref.")
@@ -731,11 +761,13 @@ def _command_parser() -> argparse.ArgumentParser:
     )
     fd_review_plan.add_argument("--note", default="", help="Optional review note.")
     fd_review_plan.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    add_frontdesk_piworker_flags(fd_review_plan)
     fd_approve = frontdesk_subparsers.add_parser("approve", help="Approve a FrontDesk draft.")
     fd_approve.add_argument("--workspace", default=".", help="Workspace root.")
     fd_approve.add_argument("--session", required=True, help="FrontDesk session ref.")
     fd_approve.add_argument("--approved-by", required=True, help="Approver id.")
     fd_approve.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+    add_frontdesk_piworker_flags(fd_approve)
     return parser
 
 

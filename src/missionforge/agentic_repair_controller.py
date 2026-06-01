@@ -582,6 +582,7 @@ def build_repair_execution_directive(
             "worker_brief.permission_manifest_ref",
         ),
         report_ref=execution_report_ref,
+        worker_brief_hash=stable_json_hash(loaded_worker_brief.to_dict()),
         expected_artifact_refs=list(ticket.target_artifact_refs),
         allowed_input_refs=_unique_refs(
             [

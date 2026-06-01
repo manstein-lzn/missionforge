@@ -6,7 +6,9 @@ from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
+from ..adapters.pi_agent_runtime import PiAgentRuntimeConfig
 from ..contracts import ContractValidationError
+from ..piworker_runtime import create_default_piworker_adapter
 from .schema import ApprovalAuthority
 from .generic_integration import GenericProductIntegration
 from .service import FrontDesk
@@ -16,7 +18,7 @@ from .spec_grill_schema import PlanReviewDecision
 def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
     """Execute one parsed FrontDesk CLI command and return refs-only data."""
 
-    frontdesk = FrontDesk(workspace=Path(args.workspace))
+    frontdesk = FrontDesk(workspace=Path(args.workspace), worker=_frontdesk_worker_from_args(args))
     action = args.frontdesk_command
     if action == "start":
         session = frontdesk.start(args.text, session_id=args.session_id)
@@ -116,3 +118,16 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
             "artifact_refs": list(mission_result.artifact_refs),
         }, [session.session_ref, *mission_result.evidence_refs, *mission_result.artifact_refs]
     raise ContractValidationError(f"unsupported frontdesk command: {action}")
+
+
+def _frontdesk_worker_from_args(args: Namespace):
+    if not bool(getattr(args, "use_default_piworker", False)):
+        return None
+    return create_default_piworker_adapter(
+        PiAgentRuntimeConfig(
+            provider_mode=getattr(args, "piworker_provider_mode", "faux"),
+            provider_config_source=getattr(args, "piworker_provider_config_source", "env"),
+            model=getattr(args, "piworker_model", None) or None,
+            timeout_seconds=int(getattr(args, "piworker_timeout_seconds", 300)),
+        )
+    )

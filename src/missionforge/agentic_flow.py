@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 import json
@@ -35,6 +35,7 @@ from .contracts import (
     require_mapping,
     require_non_empty_str,
     require_str_list,
+    stable_json_hash,
     validate_ref,
 )
 from .permissions import ref_is_under
@@ -395,10 +396,13 @@ class AgenticFlowRunner:
             denied_write_refs=_judge_denied_write_refs(self.refs, contract, hard_refs),
         )
 
-        runtime_workspace.write_json(self.refs.contract_ref, contract.to_dict())
+        contract_payload = contract.to_dict()
+        workspace_policy_payload = workspace_policy.to_dict()
+        permission_manifest_payload = permission_manifest.to_dict()
+        runtime_workspace.write_json(self.refs.contract_ref, contract_payload)
         runtime_workspace.write_text(f"{_without_json_suffix(self.refs.contract_ref)}.hash", contract.contract_hash + "\n")
-        runtime_workspace.write_json(contract.workspace_policy_ref, workspace_policy.to_dict())
-        runtime_workspace.write_json(contract.permission_manifest_ref, permission_manifest.to_dict())
+        runtime_workspace.write_json(contract.workspace_policy_ref, workspace_policy_payload)
+        runtime_workspace.write_json(contract.permission_manifest_ref, permission_manifest_payload)
 
         worker_brief = project_worker_brief(
             contract,
@@ -416,8 +420,10 @@ class AgenticFlowRunner:
             evidence_refs=[self.refs.execution_report_ref],
             hard_check_refs=hard_refs,
         )
-        runtime_workspace.write_json(self.refs.worker_brief_ref, worker_brief.to_dict())
-        runtime_workspace.write_json(contract.judge_rubric_ref, judge_rubric.to_dict())
+        worker_brief_payload = worker_brief.to_dict()
+        judge_rubric_payload = judge_rubric.to_dict()
+        runtime_workspace.write_json(self.refs.worker_brief_ref, worker_brief_payload)
+        runtime_workspace.write_json(contract.judge_rubric_ref, judge_rubric_payload)
         _ensure_existing_refs(runtime_workspace, hard_refs, "hard_check_refs")
 
         expected_artifact_refs = _expected_artifact_refs(contract)
@@ -431,11 +437,16 @@ class AgenticFlowRunner:
             workspace_policy_ref=contract.workspace_policy_ref,
             permission_manifest_ref=contract.permission_manifest_ref,
             report_ref=self.refs.execution_report_ref,
+            worker_brief_hash=stable_json_hash(worker_brief_payload),
+            workspace_policy_hash=stable_json_hash(workspace_policy_payload),
+            permission_manifest_hash=stable_json_hash(permission_manifest_payload),
             expected_artifact_refs=expected_artifact_refs,
             allowed_input_refs=worker_brief.allowed_input_refs,
             writable_refs=worker_brief.writable_refs,
         )
-        runtime_workspace.write_json(self.refs.execution_packet_ref, execution_packet.to_dict())
+        execution_packet_payload = execution_packet.to_dict()
+        execution_packet_hash = stable_json_hash(execution_packet_payload)
+        runtime_workspace.write_json(self.refs.execution_packet_ref, execution_packet_payload)
         self._append_ledger(
             runtime_workspace,
             run_id,
@@ -449,13 +460,18 @@ class AgenticFlowRunner:
             packet_ref=self.refs.execution_packet_ref,
             workspace=executor_workspace,
         )
+        if execution_report.packet_hash is None:
+            execution_report = replace(execution_report, packet_hash=execution_packet_hash)
         validate_execution_report_for_packet(
             execution_report,
             execution_packet,
             packet_ref=self.refs.execution_packet_ref,
+            packet_hash=execution_packet_hash,
         )
         _ensure_executor_report_authorized(execution_report, executor_workspace, runtime_workspace, workspace_policy)
-        runtime_workspace.write_json(self.refs.execution_report_ref, execution_report.to_dict())
+        execution_report_payload = execution_report.to_dict()
+        execution_report_hash = stable_json_hash(execution_report_payload)
+        runtime_workspace.write_json(self.refs.execution_report_ref, execution_report_payload)
         self._append_ledger(
             runtime_workspace,
             run_id,
@@ -475,6 +491,9 @@ class AgenticFlowRunner:
             execution_report_ref=self.refs.execution_report_ref,
             report_ref=self.refs.judge_report_ref,
             hard_check_status=hard_status,
+            judge_rubric_hash=stable_json_hash(judge_rubric_payload),
+            execution_packet_hash=execution_packet_hash,
+            execution_report_hash=execution_report_hash,
             artifact_refs=list(execution_report.produced_artifact_refs),
             evidence_refs=_unique_refs([self.refs.execution_report_ref, *execution_report.evidence_refs]),
             hard_check_refs=hard_refs,
@@ -485,8 +504,12 @@ class AgenticFlowRunner:
             execution_report,
             execution_packet_ref=self.refs.execution_packet_ref,
             execution_report_ref=self.refs.execution_report_ref,
+            execution_packet_hash=execution_packet_hash,
+            execution_report_hash=execution_report_hash,
         )
-        runtime_workspace.write_json(self.refs.judge_packet_ref, judge_packet.to_dict())
+        judge_packet_payload = judge_packet.to_dict()
+        judge_packet_hash = stable_json_hash(judge_packet_payload)
+        runtime_workspace.write_json(self.refs.judge_packet_ref, judge_packet_payload)
         self._append_ledger(
             runtime_workspace,
             run_id,
@@ -500,10 +523,13 @@ class AgenticFlowRunner:
             packet_ref=self.refs.judge_packet_ref,
             workspace=scoped_judge_workspace,
         )
+        if judge_report.packet_hash is None:
+            judge_report = replace(judge_report, packet_hash=judge_packet_hash)
         validate_judge_report_for_packet(
             judge_report,
             judge_packet,
             packet_ref=self.refs.judge_packet_ref,
+            packet_hash=judge_packet_hash,
         )
         if (
             judge_report.decision is JudgeReportDecision.ACCEPTED

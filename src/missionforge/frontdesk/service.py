@@ -144,6 +144,22 @@ class FrontDesk:
         if worker is not None:
             self._validate_piworker_adapter(worker)
 
+    @classmethod
+    def with_default_piworker(
+        cls,
+        workspace: str | Path = ".",
+        *,
+        registry: ProfileRegistry | None = None,
+        piworker_config: Any | None = None,
+    ) -> "FrontDesk":
+        from ..piworker_runtime import create_default_piworker_adapter
+
+        return cls(
+            workspace=workspace,
+            registry=registry,
+            worker=create_default_piworker_adapter(piworker_config),
+        )
+
     def start(self, text: str, *, session_id: str = "frontdesk-session") -> FrontDeskAuthoringSession:
         require_non_empty_str(text, "frontdesk.start.text")
         session = FrontDeskAuthoringSession.new(session_id).transition(FrontDeskStatus.ELICITING)

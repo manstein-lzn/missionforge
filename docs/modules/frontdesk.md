@@ -17,9 +17,12 @@ FrontDesk authoring intelligence is mandatory. The service layer may collect
 conversation turns, inspect refs, and scout workspace/profile metadata without
 a live authoring worker. It must fail closed before need grilling, solution
 architecture, MissionIR mapping, or intent bundle authoring when no LLM/PiWorker
-node has produced the required FrontDesk artifacts. Deterministic code may
-preserve explicit evidence and validate schemas; it must not pretend to
-understand user needs.
+node has produced the required FrontDesk artifacts. Programmatic callers can opt
+in with `FrontDesk.with_default_piworker(...)`; CLI callers can opt in per
+command with `--use-default-piworker`, which constructs the default
+`PiAgentRuntimeAdapter`. Without that explicit opt-in, deterministic code may
+preserve evidence and validate schemas but must not pretend to understand user
+needs.
 
 FrontDesk is a product-grade authoring surface, not a runtime shortcut and not
 an MVP shell.
@@ -73,7 +76,10 @@ FrontDesk owns the pre-runtime authoring workflow:
 `start`, `answer`, `inspect`, and metadata `scout` are not intelligence nodes
 and can run offline. `grill`, `draft`, `plan`, `map`, and intent bundle
 authoring require LLM-authored artifacts and fail closed with
-`configure_frontdesk_llm` when those artifacts are absent.
+`configure_frontdesk_llm` when those artifacts are absent. CLI commands only run
+the default PiWorker authoring worker when `--use-default-piworker` is supplied;
+the flag also exposes provider mode/source/model/timeout options for live or
+faux Pi Agent runtime execution.
 
 FrontDesk is generic. It helps discover intent for software work,
 documentation work, data work, research work, operational tasks, and external

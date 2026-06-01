@@ -13,6 +13,7 @@ from .contracts import (
     require_mapping,
     require_non_empty_str,
     require_str_list,
+    stable_json_hash,
     validate_ref,
 )
 
@@ -61,7 +62,6 @@ class HardCheckStatus(StrEnum):
 @dataclass(frozen=True)
 class AgentExecutionPacket:
     """Executor-facing packet derived from a WorkerBrief and permissions."""
-
     packet_id: str
     contract_id: str
     contract_hash: str
@@ -70,6 +70,9 @@ class AgentExecutionPacket:
     workspace_policy_ref: str
     permission_manifest_ref: str
     report_ref: str
+    worker_brief_hash: str | None = None
+    workspace_policy_hash: str | None = None
+    permission_manifest_hash: str | None = None
     expected_artifact_refs: list[str] = field(default_factory=list)
     allowed_input_refs: list[str] = field(default_factory=list)
     writable_refs: list[str] = field(default_factory=list)
@@ -100,6 +103,18 @@ class AgentExecutionPacket:
                 "agent_execution_packet.permission_manifest_ref",
             ),
             report_ref=validate_ref(data.get("report_ref"), "agent_execution_packet.report_ref"),
+            worker_brief_hash=_optional_hash(
+                data.get("worker_brief_hash"),
+                "agent_execution_packet.worker_brief_hash",
+            ),
+            workspace_policy_hash=_optional_hash(
+                data.get("workspace_policy_hash"),
+                "agent_execution_packet.workspace_policy_hash",
+            ),
+            permission_manifest_hash=_optional_hash(
+                data.get("permission_manifest_hash"),
+                "agent_execution_packet.permission_manifest_hash",
+            ),
             expected_artifact_refs=_ref_list(
                 data.get("expected_artifact_refs", []),
                 "agent_execution_packet.expected_artifact_refs",
@@ -123,6 +138,9 @@ class AgentExecutionPacket:
         validate_ref(self.worker_brief_ref, "agent_execution_packet.worker_brief_ref")
         validate_ref(self.workspace_policy_ref, "agent_execution_packet.workspace_policy_ref")
         validate_ref(self.permission_manifest_ref, "agent_execution_packet.permission_manifest_ref")
+        _optional_hash(self.worker_brief_hash, "agent_execution_packet.worker_brief_hash")
+        _optional_hash(self.workspace_policy_hash, "agent_execution_packet.workspace_policy_hash")
+        _optional_hash(self.permission_manifest_hash, "agent_execution_packet.permission_manifest_hash")
         validate_ref(self.report_ref, "agent_execution_packet.report_ref")
         _validate_unique_refs(self.expected_artifact_refs, "agent_execution_packet.expected_artifact_refs")
         _validate_unique_refs(self.allowed_input_refs, "agent_execution_packet.allowed_input_refs")
@@ -143,8 +161,11 @@ class AgentExecutionPacket:
             "contract_hash": self.contract_hash,
             "contract_ref": self.contract_ref,
             "worker_brief_ref": self.worker_brief_ref,
+            "worker_brief_hash": self.worker_brief_hash,
             "workspace_policy_ref": self.workspace_policy_ref,
+            "workspace_policy_hash": self.workspace_policy_hash,
             "permission_manifest_ref": self.permission_manifest_ref,
+            "permission_manifest_hash": self.permission_manifest_hash,
             "report_ref": self.report_ref,
             "expected_artifact_refs": list(self.expected_artifact_refs),
             "allowed_input_refs": list(self.allowed_input_refs),
@@ -169,6 +190,7 @@ class AgentExecutionReport:
     metric_refs: list[str] = field(default_factory=list)
     repair_request_ref: str | None = None
     revision_request_ref: str | None = None
+    packet_hash: str | None = None
     role: AgentRole = AgentRole.EXECUTOR
     schema_version: str = AGENT_EXECUTION_REPORT_SCHEMA_VERSION
 
@@ -186,6 +208,7 @@ class AgentExecutionReport:
             role=require_enum(data.get("role", AgentRole.EXECUTOR.value), AgentRole, "agent_execution_report.role"),
             packet_id=require_non_empty_str(data.get("packet_id"), "agent_execution_report.packet_id"),
             packet_ref=validate_ref(data.get("packet_ref"), "agent_execution_report.packet_ref"),
+            packet_hash=_optional_hash(data.get("packet_hash"), "agent_execution_report.packet_hash"),
             contract_id=require_non_empty_str(data.get("contract_id"), "agent_execution_report.contract_id"),
             contract_hash=require_non_empty_str(data.get("contract_hash"), "agent_execution_report.contract_hash"),
             contract_ref=validate_ref(data.get("contract_ref"), "agent_execution_report.contract_ref"),
@@ -215,6 +238,7 @@ class AgentExecutionReport:
         require_non_empty_str(self.report_id, "agent_execution_report.report_id")
         require_non_empty_str(self.packet_id, "agent_execution_report.packet_id")
         validate_ref(self.packet_ref, "agent_execution_report.packet_ref")
+        _optional_hash(self.packet_hash, "agent_execution_report.packet_hash")
         require_non_empty_str(self.contract_id, "agent_execution_report.contract_id")
         _validate_hash(self.contract_hash, "agent_execution_report.contract_hash")
         validate_ref(self.contract_ref, "agent_execution_report.contract_ref")
@@ -234,6 +258,7 @@ class AgentExecutionReport:
             "role": self.role.value,
             "packet_id": self.packet_id,
             "packet_ref": self.packet_ref,
+            "packet_hash": self.packet_hash,
             "contract_id": self.contract_id,
             "contract_hash": self.contract_hash,
             "contract_ref": self.contract_ref,
@@ -260,6 +285,9 @@ class JudgePacket:
     execution_report_ref: str
     report_ref: str
     hard_check_status: HardCheckStatus = HardCheckStatus.MISSING
+    judge_rubric_hash: str | None = None
+    execution_packet_hash: str | None = None
+    execution_report_hash: str | None = None
     artifact_refs: list[str] = field(default_factory=list)
     evidence_refs: list[str] = field(default_factory=list)
     hard_check_refs: list[str] = field(default_factory=list)
@@ -281,8 +309,17 @@ class JudgePacket:
             contract_hash=require_non_empty_str(data.get("contract_hash"), "judge_packet.contract_hash"),
             contract_ref=validate_ref(data.get("contract_ref"), "judge_packet.contract_ref"),
             judge_rubric_ref=validate_ref(data.get("judge_rubric_ref"), "judge_packet.judge_rubric_ref"),
+            judge_rubric_hash=_optional_hash(data.get("judge_rubric_hash"), "judge_packet.judge_rubric_hash"),
             execution_packet_ref=validate_ref(data.get("execution_packet_ref"), "judge_packet.execution_packet_ref"),
+            execution_packet_hash=_optional_hash(
+                data.get("execution_packet_hash"),
+                "judge_packet.execution_packet_hash",
+            ),
             execution_report_ref=validate_ref(data.get("execution_report_ref"), "judge_packet.execution_report_ref"),
+            execution_report_hash=_optional_hash(
+                data.get("execution_report_hash"),
+                "judge_packet.execution_report_hash",
+            ),
             report_ref=validate_ref(data.get("report_ref"), "judge_packet.report_ref"),
             hard_check_status=require_enum(
                 data.get("hard_check_status", HardCheckStatus.MISSING.value),
@@ -304,8 +341,11 @@ class JudgePacket:
         _validate_hash(self.contract_hash, "judge_packet.contract_hash")
         validate_ref(self.contract_ref, "judge_packet.contract_ref")
         validate_ref(self.judge_rubric_ref, "judge_packet.judge_rubric_ref")
+        _optional_hash(self.judge_rubric_hash, "judge_packet.judge_rubric_hash")
         validate_ref(self.execution_packet_ref, "judge_packet.execution_packet_ref")
+        _optional_hash(self.execution_packet_hash, "judge_packet.execution_packet_hash")
         validate_ref(self.execution_report_ref, "judge_packet.execution_report_ref")
+        _optional_hash(self.execution_report_hash, "judge_packet.execution_report_hash")
         validate_ref(self.report_ref, "judge_packet.report_ref")
         require_enum(self.hard_check_status, HardCheckStatus, "judge_packet.hard_check_status")
         _validate_unique_refs(self.artifact_refs, "judge_packet.artifact_refs")
@@ -322,8 +362,11 @@ class JudgePacket:
             "contract_hash": self.contract_hash,
             "contract_ref": self.contract_ref,
             "judge_rubric_ref": self.judge_rubric_ref,
+            "judge_rubric_hash": self.judge_rubric_hash,
             "execution_packet_ref": self.execution_packet_ref,
+            "execution_packet_hash": self.execution_packet_hash,
             "execution_report_ref": self.execution_report_ref,
+            "execution_report_hash": self.execution_report_hash,
             "report_ref": self.report_ref,
             "hard_check_status": self.hard_check_status.value,
             "artifact_refs": list(self.artifact_refs),
@@ -349,6 +392,7 @@ class JudgeReport:
     accepted_artifact_refs: list[str] = field(default_factory=list)
     repair_brief_ref: str | None = None
     revision_request_ref: str | None = None
+    packet_hash: str | None = None
     role: AgentRole = AgentRole.JUDGE
     schema_version: str = JUDGE_REPORT_SCHEMA_VERSION
 
@@ -365,6 +409,7 @@ class JudgeReport:
             role=require_enum(data.get("role", AgentRole.JUDGE.value), AgentRole, "judge_report.role"),
             packet_id=require_non_empty_str(data.get("packet_id"), "judge_report.packet_id"),
             packet_ref=validate_ref(data.get("packet_ref"), "judge_report.packet_ref"),
+            packet_hash=_optional_hash(data.get("packet_hash"), "judge_report.packet_hash"),
             contract_id=require_non_empty_str(data.get("contract_id"), "judge_report.contract_id"),
             contract_hash=require_non_empty_str(data.get("contract_hash"), "judge_report.contract_hash"),
             contract_ref=validate_ref(data.get("contract_ref"), "judge_report.contract_ref"),
@@ -395,6 +440,7 @@ class JudgeReport:
         require_non_empty_str(self.report_id, "judge_report.report_id")
         require_non_empty_str(self.packet_id, "judge_report.packet_id")
         validate_ref(self.packet_ref, "judge_report.packet_ref")
+        _optional_hash(self.packet_hash, "judge_report.packet_hash")
         require_non_empty_str(self.contract_id, "judge_report.contract_id")
         _validate_hash(self.contract_hash, "judge_report.contract_hash")
         validate_ref(self.contract_ref, "judge_report.contract_ref")
@@ -422,6 +468,7 @@ class JudgeReport:
             "role": self.role.value,
             "packet_id": self.packet_id,
             "packet_ref": self.packet_ref,
+            "packet_hash": self.packet_hash,
             "contract_id": self.contract_id,
             "contract_hash": self.contract_hash,
             "contract_ref": self.contract_ref,
@@ -440,6 +487,7 @@ def validate_execution_report_for_packet(
     packet: AgentExecutionPacket,
     *,
     packet_ref: str,
+    packet_hash: str | None = None,
 ) -> None:
     """Validate that an executor report belongs to its execution packet."""
 
@@ -450,6 +498,11 @@ def validate_execution_report_for_packet(
         raise ContractValidationError("agent_execution_report packet_id does not match packet")
     if report.packet_ref != expected_packet_ref:
         raise ContractValidationError("agent_execution_report packet_ref does not match packet ref")
+    _validate_optional_binding_hash(
+        report.packet_hash,
+        _effective_hash(packet_hash, packet.to_dict()),
+        "agent_execution_report packet_hash does not match packet",
+    )
     _require_same_contract(report, packet, "agent_execution_report")
 
 
@@ -458,6 +511,7 @@ def validate_judge_report_for_packet(
     packet: JudgePacket,
     *,
     packet_ref: str,
+    packet_hash: str | None = None,
 ) -> None:
     """Validate that a judge report belongs to its judge packet."""
 
@@ -468,6 +522,11 @@ def validate_judge_report_for_packet(
         raise ContractValidationError("judge_report packet_id does not match packet")
     if report.packet_ref != expected_packet_ref:
         raise ContractValidationError("judge_report packet_ref does not match packet ref")
+    _validate_optional_binding_hash(
+        report.packet_hash,
+        _effective_hash(packet_hash, packet.to_dict()),
+        "judge_report packet_hash does not match packet",
+    )
     _require_same_contract(report, packet, "judge_report")
     if report.hard_check_status is not packet.hard_check_status:
         raise ContractValidationError("judge_report hard_check_status does not match packet")
@@ -485,6 +544,8 @@ def validate_judge_packet_for_execution(
     *,
     execution_packet_ref: str,
     execution_report_ref: str,
+    execution_packet_hash: str | None = None,
+    execution_report_hash: str | None = None,
 ) -> None:
     """Validate that a judge packet is bound to executor artifacts and reports."""
 
@@ -493,12 +554,23 @@ def validate_judge_packet_for_execution(
         execution_report,
         execution_packet,
         packet_ref=execution_packet_ref,
+        packet_hash=execution_packet_hash,
     )
     expected_report_ref = validate_ref(execution_report_ref, "execution_report_ref")
     if judge_packet.execution_packet_ref != validate_ref(execution_packet_ref, "execution_packet_ref"):
         raise ContractValidationError("judge_packet execution_packet_ref does not match execution packet ref")
     if judge_packet.execution_report_ref != expected_report_ref:
         raise ContractValidationError("judge_packet execution_report_ref does not match execution report ref")
+    _validate_optional_binding_hash(
+        judge_packet.execution_packet_hash,
+        _effective_hash(execution_packet_hash, execution_packet.to_dict()),
+        "judge_packet execution_packet_hash does not match execution packet",
+    )
+    _validate_optional_binding_hash(
+        judge_packet.execution_report_hash,
+        _effective_hash(execution_report_hash, execution_report.to_dict()),
+        "judge_packet execution_report_hash does not match execution report",
+    )
     _require_same_contract(judge_packet, execution_packet, "judge_packet")
     _require_same_contract(judge_packet, execution_report, "judge_packet")
     for ref in judge_packet.artifact_refs:
@@ -518,8 +590,11 @@ _EXECUTION_PACKET_FIELDS = {
     "contract_hash",
     "contract_ref",
     "worker_brief_ref",
+    "worker_brief_hash",
     "workspace_policy_ref",
+    "workspace_policy_hash",
     "permission_manifest_ref",
+    "permission_manifest_hash",
     "report_ref",
     "expected_artifact_refs",
     "allowed_input_refs",
@@ -532,6 +607,7 @@ _AGENT_EXECUTION_REPORT_FIELDS = {
     "role",
     "packet_id",
     "packet_ref",
+    "packet_hash",
     "contract_id",
     "contract_hash",
     "contract_ref",
@@ -552,8 +628,11 @@ _JUDGE_PACKET_FIELDS = {
     "contract_hash",
     "contract_ref",
     "judge_rubric_ref",
+    "judge_rubric_hash",
     "execution_packet_ref",
+    "execution_packet_hash",
     "execution_report_ref",
+    "execution_report_hash",
     "report_ref",
     "hard_check_status",
     "artifact_refs",
@@ -567,6 +646,7 @@ _JUDGE_REPORT_FIELDS = {
     "role",
     "packet_id",
     "packet_ref",
+    "packet_hash",
     "contract_id",
     "contract_hash",
     "contract_ref",
@@ -645,6 +725,20 @@ def _validate_hash(value: Any, field_name: str) -> str:
         raise ContractValidationError(f"{field_name} must be a sha256 hex digest")
     return hash_value
 
+
+def _optional_hash(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _validate_hash(value, field_name)
+
+
+def _effective_hash(explicit_hash: str | None, payload: Mapping[str, Any]) -> str:
+    return explicit_hash if explicit_hash is not None else stable_json_hash(dict(payload))
+
+
+def _validate_optional_binding_hash(actual: str | None, expected: str, message: str) -> None:
+    if actual is not None and actual != expected:
+        raise ContractValidationError(message)
 
 def _require_same_contract(left: Any, right: Any, field_name: str) -> None:
     if left.contract_id != right.contract_id:

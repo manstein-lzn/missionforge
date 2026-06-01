@@ -7,14 +7,18 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from missionforge.adapters.pi_agent_provider_config import load_codex_current_provider
 from missionforge.adapters.pi_agent_runtime import (
     PI_AGENT_OUTPUT_SCHEMA_VERSION,
     PiAgentCommandResult,
+    PiAgentExecutorNode,
+    PiAgentJudgeNode,
     PiAgentRuntimeAdapter,
     PiAgentRuntimeConfig,
     SubprocessPiAgentCommandRunner,
 )
-from missionforge.contracts import ContractValidationError
+from missionforge.agent_packets import AgentExecutionPacket, AgentExecutionStatus, HardCheckStatus, JudgePacket, JudgeReportDecision
+from missionforge.contracts import ContractValidationError, stable_json_hash
 from missionforge.evidence_store import InMemoryEvidenceStore
 from missionforge.work_unit import WorkUnitContract
 
@@ -31,6 +35,68 @@ def sample_work_unit() -> WorkUnitContract:
         exit_criteria=["Verifier runs."],
         stop_conditions=["Halt control is active."],
     )
+
+
+def sample_judge_packet() -> JudgePacket:
+    return JudgePacket.from_dict(
+        {
+            "packet_id": "judge-packet-001",
+            "schema_version": "judge_packet.v1",
+            "role": "judge_piworker",
+            "contract_id": "contract-001",
+            "contract_hash": "sha256:" + "a" * 64,
+            "contract_ref": "contract/task_contract.json",
+            "judge_rubric_ref": "projections/judge_rubric.json",
+            "execution_packet_ref": "packets/execution_packet.json",
+            "execution_report_ref": "reports/execution_report.json",
+            "report_ref": "reports/judge_report.json",
+            "hard_check_status": "passed",
+            "artifact_refs": ["artifacts/final.md"],
+            "evidence_refs": ["reports/tool_events.jsonl"],
+            "hard_check_refs": ["reports/hard_checks.json"],
+        }
+    )
+
+
+def execution_packet_payload() -> dict[str, object]:
+    return {
+        "packet_id": "WU-000001",
+        "schema_version": "agent_execution_packet.v1",
+        "role": "executor_piworker",
+        "contract_id": "contract-001",
+        "contract_hash": "sha256:" + "a" * 64,
+        "contract_ref": "contract/task_contract.json",
+        "worker_brief_ref": "projections/worker_brief.json",
+        "worker_brief_hash": None,
+        "workspace_policy_ref": "policy/workspace_policy.json",
+        "workspace_policy_hash": None,
+        "permission_manifest_ref": "policy/permission_manifest.json",
+        "permission_manifest_hash": None,
+        "report_ref": "reports/execution_report.json",
+        "expected_artifact_refs": ["artifacts/final.md"],
+        "allowed_input_refs": ["contract/task_contract.json", "projections/judge_rubric.json"],
+        "writable_refs": ["artifacts", "reports"],
+    }
+
+
+def execution_report_payload() -> dict[str, object]:
+    packet = execution_packet_payload()
+    return {
+        "report_id": "execution-report-001",
+        "schema_version": "agent_execution_report.v1",
+        "role": "executor_piworker",
+        "packet_id": packet["packet_id"],
+        "packet_ref": "packets/execution_packet.json",
+        "packet_hash": stable_json_hash(packet),
+        "contract_id": packet["contract_id"],
+        "contract_hash": packet["contract_hash"],
+        "contract_ref": packet["contract_ref"],
+        "status": "completed",
+        "produced_artifact_refs": ["artifacts/final.md"],
+        "changed_refs": ["artifacts/final.md", "reports/execution_report.json"],
+        "evidence_refs": ["reports/execution_report.json"],
+        "metric_refs": ["reports/execution_metrics.json"],
+    }
 
 
 @dataclass
@@ -108,6 +174,104 @@ class RecordingRunner:
             if self.write_savepoints:
                 _write_text(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
             _write_text(cwd / output_ref, json.dumps(payload, sort_keys=True, indent=2) + "\n")
+        return self.result
+
+
+@dataclass
+class JudgeRecordingRunner:
+    result: PiAgentCommandResult = PiAgentCommandResult(returncode=0)
+    output_payload: dict[str, object] | None = None
+    report_payload: dict[str, object] | None = None
+    write_output: bool = True
+    captured_env: dict[str, str] | None = None
+    captured_input: dict[str, object] | None = None
+
+    def run(self, command, *, input_path: Path, cwd: Path, timeout_seconds: int, env) -> PiAgentCommandResult:
+        self.captured_env = dict(env)
+        self.captured_input = json.loads(input_path.read_text(encoding="utf-8"))
+        if self.write_output:
+            output_ref = str(self.captured_input["output_ref"])
+            session_ref = str(self.captured_input["session_ref"])
+            events_ref = str(self.captured_input["events_ref"])
+            metrics_ref = str(self.captured_input["metrics_ref"])
+            savepoints_ref = str(self.captured_input["savepoints_ref"])
+            spec_ref = str(self.captured_input["contract"]["visible_refs"][0])
+            spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
+            report_ref = str(spec["report_ref"])
+            packet_ref = str(spec["packet_ref"])
+            packet_hash = str(spec["packet_hash"])
+            contract_ref = str(spec["contract_ref"])
+            contract_payload = json.loads((cwd / contract_ref).read_text(encoding="utf-8"))
+            contract_hash = str(contract_payload["contract_hash"])
+            contract_id = str(self.captured_input["mission_id"])
+            packet_id = str(self.captured_input["work_unit_id"])
+            metrics = {
+                "tool_call_count": 1,
+                "total_tokens": 9,
+                "input_tokens": 6,
+                "output_tokens": 3,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "input_cost_usd": 0.0,
+                "output_cost_usd": 0.0,
+                "cache_read_cost_usd": 0.0,
+                "cache_write_cost_usd": 0.0,
+                "provider_reported_cost_usd": 0.0,
+                "tool_error_count": 0,
+                "tool_latency_ms_total": 8,
+                "tool_latency_ms_by_name": {"read": 8},
+                "command_count": 0,
+                "test_command_count": 0,
+                "command_failure_count": 0,
+                "time_to_first_tool_ms": 1,
+                "time_to_first_artifact_ms": 2,
+            }
+            accepted_artifact_refs = list(spec["artifact_refs"])
+            report_payload = self.report_payload or {
+                "schema_version": "judge_report.v1",
+                "report_id": "judge-report-001",
+                "packet_id": packet_id,
+                "packet_ref": packet_ref,
+                "packet_hash": packet_hash,
+                "contract_id": contract_id,
+                "contract_hash": contract_hash,
+                "contract_ref": contract_ref,
+                "decision": "accepted",
+                "hard_check_status": "passed",
+                "rationale_refs": ["reports/judge_rationale.md"],
+                "evidence_refs": ["reports/execution_report.json"],
+                "accepted_artifact_refs": accepted_artifact_refs,
+            }
+            output_payload = self.output_payload or {
+                "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
+                "work_unit_id": packet_id,
+                "status": "completed",
+                "produced_artifacts": [report_ref],
+                "changed_refs": [report_ref, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],
+                "commands_run": ["fake-pi-agent"],
+                "tests_run": [],
+                "failures": [],
+                "worker_claims": ["judge_claim_present:length=24"],
+                "verifier_evidence": [report_ref, events_ref, metrics_ref, savepoints_ref],
+                "new_unknowns": [],
+                "recommended_next_steps": ["Record judge decision."],
+                "verification_status": "not_run",
+                "input_ref": str(self.captured_input["input_ref"]),
+                "output_ref": output_ref,
+                "session_ref": session_ref,
+                "events_ref": events_ref,
+                "metrics_ref": metrics_ref,
+                "savepoints_ref": savepoints_ref,
+                "duration_ms": 1,
+                "metrics": metrics,
+            }
+            (cwd / report_ref).parent.mkdir(parents=True, exist_ok=True)
+            (cwd / report_ref).write_text(json.dumps(report_payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+            _write_text(cwd / session_ref, "{}\n")
+            _write_text(cwd / events_ref, "{}\n")
+            _write_text(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
+            _write_text(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
+            _write_text(cwd / output_ref, json.dumps(output_payload, sort_keys=True, indent=2) + "\n")
         return self.result
 
 
@@ -382,6 +546,217 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertTrue((root / "attempts/WU-000001/pi_agent_session.jsonl").exists())
             self.assertTrue((root / "attempts/WU-000001/pi_agent_metrics.json").exists())
             self.assertTrue((root / "attempts/WU-000001/pi_agent_savepoints.jsonl").exists())
+
+    def test_pi_agent_executor_node_preserves_packet_hash(self) -> None:
+        runner = RecordingRunner()
+        adapter = PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=runner)
+        packet = AgentExecutionPacket(
+            packet_id="WU-000001",
+            contract_id="contract-001",
+            contract_hash="sha256:" + "a" * 64,
+            contract_ref="contract/task_contract.json",
+            worker_brief_ref="projections/worker_brief.json",
+            workspace_policy_ref="policy/workspace_policy.json",
+            permission_manifest_ref="policy/permission_manifest.json",
+            report_ref="reports/execution_report.json",
+            expected_artifact_refs=["package/SKILL.md"],
+            allowed_input_refs=["contract/task_contract.json", "projections/worker_brief.json"],
+            writable_refs=["package", "reports"],
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            report = PiAgentExecutorNode(workspace_root=tempdir, adapter=adapter).execute(
+                packet,
+                packet_ref="packets/execution_packet.json",
+                workspace=object(),
+            )
+
+        self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
+        self.assertEqual(report.produced_artifact_refs, ["package/SKILL.md"])
+        self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
+
+    def test_pi_agent_judge_node_preserves_packet_hash_and_report_ref(self) -> None:
+        runner = JudgeRecordingRunner()
+        adapter = PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=runner)
+        packet = sample_judge_packet()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            (root / "contract").mkdir(parents=True, exist_ok=True)
+            (root / "projections").mkdir(parents=True, exist_ok=True)
+            (root / "packets").mkdir(parents=True, exist_ok=True)
+            (root / "reports").mkdir(parents=True, exist_ok=True)
+            (root / "artifacts").mkdir(parents=True, exist_ok=True)
+            (root / "contract/task_contract.json").write_text(
+                '{"schema_version":"task_contract.v1","contract_id":"contract-001","contract_hash":"sha256:'
+                + "a" * 64
+                + '"}\n',
+                encoding="utf-8",
+            )
+            (root / "projections/judge_rubric.json").write_text("{}\n", encoding="utf-8")
+            (root / "packets/execution_packet.json").write_text(
+                json.dumps(execution_packet_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/execution_report.json").write_text(
+                json.dumps(execution_report_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/hard_checks.json").write_text('{"status":"passed"}\n', encoding="utf-8")
+            (root / "reports/tool_events.jsonl").write_text("{}\n", encoding="utf-8")
+            (root / "artifacts/final.md").write_text("# final\n", encoding="utf-8")
+
+            report = PiAgentJudgeNode(workspace_root=tempdir, adapter=adapter).judge(
+                packet,
+                packet_ref="packets/judge_packet.json",
+                workspace=object(),
+            )
+
+            self.assertEqual(report.decision, JudgeReportDecision.ACCEPTED)
+            self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
+            self.assertTrue((root / "reports/judge_report.json").exists())
+            self.assertIsNotNone(runner.captured_input)
+            self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["reports/judge_report.json"])
+            self.assertEqual(runner.captured_input["contract"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
+
+    def test_pi_agent_judge_node_rejects_failed_hard_checks(self) -> None:
+        packet = sample_judge_packet()
+        packet_payload = packet.to_dict()
+        packet_payload["hard_check_status"] = "failed"
+        failed_packet = JudgePacket.from_dict(packet_payload)
+        runner = JudgeRecordingRunner(
+            report_payload={
+                "schema_version": "judge_report.v1",
+                "report_id": "judge-report-001",
+                "packet_id": "judge-packet-001",
+                "packet_ref": "packets/judge_packet.json",
+                "packet_hash": stable_json_hash(failed_packet.to_dict()),
+                "contract_id": "contract-001",
+                "contract_hash": "sha256:" + "a" * 64,
+                "contract_ref": "contract/task_contract.json",
+                "decision": "rejected",
+                "hard_check_status": "failed",
+                "rationale_refs": ["reports/judge_rationale.md"],
+                "evidence_refs": ["reports/execution_report.json"],
+                "accepted_artifact_refs": [],
+            }
+        )
+        adapter = PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=runner)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            (root / "contract").mkdir(parents=True, exist_ok=True)
+            (root / "projections").mkdir(parents=True, exist_ok=True)
+            (root / "packets").mkdir(parents=True, exist_ok=True)
+            (root / "reports").mkdir(parents=True, exist_ok=True)
+            (root / "artifacts").mkdir(parents=True, exist_ok=True)
+            (root / "contract/task_contract.json").write_text(
+                '{"schema_version":"task_contract.v1","contract_id":"contract-001","contract_hash":"sha256:'
+                + "a" * 64
+                + '"}\n',
+                encoding="utf-8",
+            )
+            (root / "projections/judge_rubric.json").write_text("{}\n", encoding="utf-8")
+            (root / "packets/execution_packet.json").write_text(
+                json.dumps(execution_packet_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/execution_report.json").write_text(
+                json.dumps(execution_report_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/hard_checks.json").write_text('{"status":"failed"}\n', encoding="utf-8")
+            (root / "reports/tool_events.jsonl").write_text("{}\n", encoding="utf-8")
+            (root / "artifacts/final.md").write_text("# final\n", encoding="utf-8")
+
+            report = PiAgentJudgeNode(workspace_root=tempdir, adapter=adapter).judge(
+                failed_packet,
+                packet_ref="packets/judge_packet.json",
+                workspace=object(),
+            )
+
+        self.assertEqual(report.decision, JudgeReportDecision.REJECTED)
+        self.assertEqual(report.hard_check_status, HardCheckStatus.FAILED)
+
+    @unittest.skipUnless(
+        os.environ.get("MISSIONFORGE_JUDGE_LIVE_SMOKE") == "1",
+        "set MISSIONFORGE_JUDGE_LIVE_SMOKE=1 to run the live Judge PiWorker smoke",
+    )
+    def test_live_codex_current_judge_accepts_tiny_artifact_without_secret_leak(self) -> None:
+        provider = load_codex_current_provider()
+        self.assertEqual(provider["wire_api"], "responses")
+        config = PiAgentRuntimeConfig(
+            timeout_seconds=int(os.environ.get("MISSIONFORGE_PI_AGENT_LIVE_TIMEOUT_SECONDS", "240")),
+            provider_mode="live",
+            provider_config_source="codex_current",
+            metadata={"phase": "judge_live_smoke"},
+        )
+        packet = sample_judge_packet()
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            (root / "contract").mkdir(parents=True, exist_ok=True)
+            (root / "projections").mkdir(parents=True, exist_ok=True)
+            (root / "packets").mkdir(parents=True, exist_ok=True)
+            (root / "reports").mkdir(parents=True, exist_ok=True)
+            (root / "artifacts").mkdir(parents=True, exist_ok=True)
+            (root / "contract/task_contract.json").write_text(
+                '{"schema_version":"task_contract.v1","contract_id":"contract-001","contract_hash":"sha256:'
+                + "a" * 64
+                + '"}\n',
+                encoding="utf-8",
+            )
+            (root / "projections/judge_rubric.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "judge_rubric.v1",
+                        "role": "judge_piworker",
+                        "rubric_id": "judge-live-smoke",
+                        "contract_id": "contract-001",
+                        "contract_ref": "contract/task_contract.json",
+                        "hard_check_refs": ["reports/hard_checks.json"],
+                        "accepted_artifact_refs": ["artifacts/final.md"],
+                        "decision_policy": {
+                            "accept": [
+                                "execution_report.status == completed",
+                                "hard_check_status == passed",
+                                "artifacts/final.md exists",
+                                "artifacts/final.md contains MissionForge FrontDesk live smoke passed",
+                            ],
+                            "reject": ["otherwise"],
+                        },
+                    },
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (root / "packets/execution_packet.json").write_text(
+                json.dumps(execution_packet_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/execution_report.json").write_text(
+                json.dumps(execution_report_payload(), sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (root / "reports/hard_checks.json").write_text('{"status":"passed"}\n', encoding="utf-8")
+            (root / "reports/tool_events.jsonl").write_text("{}\n", encoding="utf-8")
+            (root / "artifacts/final.md").write_text("MissionForge FrontDesk live smoke passed\n", encoding="utf-8")
+
+            report = PiAgentJudgeNode(workspace_root=tempdir, adapter=PiAgentRuntimeAdapter(config)).judge(
+                packet,
+                packet_ref="packets/judge_packet.json",
+                workspace=object(),
+            )
+            serialized_workspace = "\n".join(
+                path.read_text(encoding="utf-8", errors="replace") for path in root.rglob("*") if path.is_file()
+            )
+
+        self.assertEqual(report.decision, JudgeReportDecision.ACCEPTED)
+        self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
+        self.assertNotIn("OPENAI_API_KEY", serialized_workspace)
+        self.assertNotIn("MISSIONFORGE_PI_AGENT_API_KEY", serialized_workspace)
 
     def test_subprocess_runner_builds_default_runtime_when_dist_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
