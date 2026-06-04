@@ -8,8 +8,36 @@ test("parseRuntimeInput accepts valid input", () => {
   const input = parseRuntimeInput(sampleInput());
   assert.equal(input.schema_version, "missionforge.pi_agent_runtime_input.v1");
   assert.equal(input.work_unit_id, "WU-000001");
+  assert.equal(input.piworker_call.call_id, "WU-000001");
+  assert.deepEqual(input.piworker_call.expected_output_refs, ["attempts/WU-000001/artifact.txt"]);
   assert.equal(input.permission_manifest.schema_version, "permission_manifest.v1");
   assert.deepEqual(input.permission_manifest.writable_refs, ["attempts/WU-000001"]);
+});
+
+test("parseRuntimeInput accepts legacy input without PiWorkerCall", () => {
+  const payload = sampleInput({ piworker_call: null });
+  const input = parseRuntimeInput(payload);
+  assert.equal(input.piworker_call, null);
+});
+
+test("parseRuntimeInput rejects PiWorkerCall authority mismatch", () => {
+  const payload = sampleInput({
+    piworker_call: {
+      ...sampleInput().piworker_call,
+      contract_id: "other-mission",
+    },
+  });
+  assert.throws(() => parseRuntimeInput(payload), /contract_id must match mission_id/);
+});
+
+test("parseRuntimeInput rejects PiWorkerCall output outside writable refs", () => {
+  const payload = sampleInput({
+    piworker_call: {
+      ...sampleInput().piworker_call,
+      expected_output_refs: ["outside/artifact.txt"],
+    },
+  });
+  assert.throws(() => parseRuntimeInput(payload), /inside writable_refs/);
 });
 
 test("parseRuntimeInput rejects escaping refs", () => {

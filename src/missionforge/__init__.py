@@ -22,6 +22,14 @@ from .agentic_flow import (
     AgenticFlowRunner,
     AgenticFlowStatus,
 )
+from .agentic_ledger import (
+    DecisionLedgerEventKind,
+    FinalPackage,
+    RunReplayStatus,
+    RunReplaySummary,
+    TaskContractDecisionLedgerEntry,
+    replay_decision_ledger,
+)
 from .agentic_repair import (
     RepairBrief,
     TaskRevisionAuthority,
@@ -124,6 +132,20 @@ from .json_store import JsonArtifactStore, JsonEventLogStore, JsonRunStore, Json
 from .metric_store import MetricStore
 from .metrics import MetricEvent, MetricProjection, MetricTrustLevel, project_metric_events
 from .permissions import PermissionDecision, PermissionEnforcer, PermissionOperation, ref_is_under
+from .piworker_call import (
+    PiWorkerCall,
+    PiWorkerCallResult,
+    PiWorkerCallResultStatus,
+    PiWorkerCallRole,
+)
+from .piworker_runtime import (
+    PiWorkerRuntimeFactory,
+    TaskContractFlowPreset,
+    create_default_piworker_adapter,
+    create_default_task_contract_flow,
+    run_repair_directive_with_default_piworker,
+    run_revision_draft_with_default_piworker,
+)
 from .profiles import CapabilityProfile, ProfileExpansion, ProfilePack, ProfileRegistry, VerificationProfile
 from .product_gate import ProductGateFinding, ProductGateResult, ProductGateSeverity, ProductGateSpec, ProductGateStatus
 from .product_integration import (
@@ -211,6 +233,7 @@ __all__ = [
     "CoreNeedBrief",
     "CoreNeedOpenQuestion",
     "DecisionLedgerEntry",
+    "DecisionLedgerEventKind",
     "DecisionTree",
     "DeterministicProposalProvider",
     "EvidenceLedger",
@@ -233,6 +256,7 @@ __all__ = [
     "FrontDeskState",
     "FrontDeskStatus",
     "FrontDeskWorkspace",
+    "FinalPackage",
     "HarnessDispatchResult",
     "HardCheckStatus",
     "ExpandedMission",
@@ -294,6 +318,11 @@ __all__ = [
     "ProfileRecommendation",
     "ProfileRecommendationSet",
     "PlanReviewRecord",
+    "PiWorkerCall",
+    "PiWorkerCallResult",
+    "PiWorkerCallResultStatus",
+    "PiWorkerCallRole",
+    "PiWorkerRuntimeFactory",
     "ProductArtifactRefs",
     "ProductClarificationQuestion",
     "ProductClarificationRequest",
@@ -330,6 +359,8 @@ __all__ = [
     "RuntimeFeedbackAction",
     "RuntimeFeedbackRecommendation",
     "RuntimeFeedbackSourceKind",
+    "RunReplayStatus",
+    "RunReplaySummary",
     "RunWorkspace",
     "RunStore",
     "SanitizedSourceSet",
@@ -339,6 +370,8 @@ __all__ = [
     "SteeringProposal",
     "SteeringProposalKind",
     "TaskContract",
+    "TaskContractDecisionLedgerEntry",
+    "TaskContractFlowPreset",
     "TaskContractRevision",
     "TaskRevisionAuthority",
     "TaskRevisionDecision",
@@ -370,12 +403,17 @@ __all__ = [
     "build_worker_brief",
     "build_run_audit",
     "build_repair_ticket",
+    "create_default_piworker_adapter",
+    "create_default_task_contract_flow",
     "expand_mission",
     "freeze_mission",
     "project_judge_rubric",
     "project_metric_events",
     "project_worker_brief",
     "ref_is_under",
+    "replay_decision_ledger",
+    "run_repair_directive_with_default_piworker",
+    "run_revision_draft_with_default_piworker",
     "run_validator",
     "stable_json_hash",
     "validate_ref",

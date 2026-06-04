@@ -71,8 +71,7 @@ test("bash tool is hidden when no command is allowed", async () => {
 
 test("bash requires explicit command permission and exposes only allowlisted env", async () => {
   await withWorkspace(async (root) => {
-    const command =
-      "node -e \"process.stdout.write([process.env.VISIBLE_ENV || '', process.env.SECRET_ENV || ''].join('|'))\"";
+    const command = "printf '%s|%s' \"${VISIBLE_ENV:-}\" \"${SECRET_ENV:-}\"";
     const tools = createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: {

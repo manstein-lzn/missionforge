@@ -22,7 +22,7 @@ PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s int
 
 The default SkillFoundry compile path emits TaskContract, WorkspacePolicy, and
 PermissionManifest refs under `runs/{bundle_id}/`; MissionIR APIs are retained
-for migration and benchmark comparison only.
+for migration compatibility only.
 
 Planning:
 

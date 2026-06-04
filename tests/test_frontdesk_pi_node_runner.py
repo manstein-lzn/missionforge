@@ -7,6 +7,7 @@ import unittest
 
 from missionforge import ContractValidationError
 from missionforge.frontdesk.pi_node_runner import FrontDeskPiNodeRunner
+from missionforge.piworker_call import PiWorkerCallResult
 from missionforge.work_unit import ExecutionReport, WorkUnitContract, WorkerResult
 from missionforge.workers import WorkerAdapterResult
 
@@ -61,7 +62,11 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
 
         self.assertEqual(contract.work_unit.allowed_scope, ["frontdesk/need_grilling_report.json"])
         self.assertEqual(contract.work_unit.expected_outputs, ["frontdesk/need_grilling_report.json"])
+        self.assertEqual(contract.work_unit.visible_refs[0], "frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json")
         self.assertIn("frontdesk/workspace_facts.json", contract.work_unit.visible_refs)
+        self.assertEqual(contract.call.role.value, "frontdesk_author_piworker")
+        self.assertEqual(contract.call.expected_output_refs, contract.work_unit.expected_outputs)
+        self.assertEqual(contract.call.writable_refs, contract.work_unit.allowed_scope)
 
     def test_rejects_non_frontdesk_outputs(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "frontdesk/"):
@@ -128,6 +133,13 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             self.assertTrue((Path(tempdir) / execution_ref).exists())
             self.assertIn("frontdesk/need_grilling_report.json", result.execution_record.output_hashes)
             self.assertIn("frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json", result.execution_record.input_hashes)
+            call_result_ref = "frontdesk/pi_nodes/fd-pi/need_griller/piworker_call_result.json"
+            self.assertEqual(result.execution_record.piworker_call_result_ref, call_result_ref)
+            call_result = PiWorkerCallResult.from_dict(
+                json.loads((Path(tempdir) / call_result_ref).read_text(encoding="utf-8"))
+            )
+            call_result.validate_against_call(result.contract.call)
+            self.assertEqual(call_result.output_refs, ["frontdesk/need_grilling_report.json"])
 
     def test_need_griller_node_spec_contains_schema_and_conversation_guidance(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -252,6 +264,30 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ContractValidationError, "output hash"):
+                runner.require_ai_authored(
+                    workspace=tempdir,
+                    ref="frontdesk/need_grilling_report.json",
+                    node_name="need_griller",
+                    session_id="fd-pi",
+                )
+
+    def test_require_ai_authored_rejects_tampered_call_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            runner = FrontDeskPiNodeRunner()
+            runner.run_node(
+                node_name="need_griller",
+                session_id="fd-pi",
+                visible_refs=["frontdesk/conversation.jsonl"],
+                expected_outputs=["frontdesk/need_grilling_report.json"],
+                worker=_ScriptedPiWorker(),
+                workspace=tempdir,
+            )
+            (Path(tempdir) / "frontdesk/pi_nodes/fd-pi/need_griller/piworker_call_result.json").write_text(
+                "{\"changed\": true}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ContractValidationError, "call result hash is stale"):
                 runner.require_ai_authored(
                     workspace=tempdir,
                     ref="frontdesk/need_grilling_report.json",

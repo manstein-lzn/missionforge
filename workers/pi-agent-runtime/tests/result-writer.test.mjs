@@ -9,10 +9,11 @@ import { sampleInput, withWorkspace } from "./helpers.mjs";
 
 test("runtime output includes changed exact allowed optional artifacts", async () => {
   await withWorkspace(async (root) => {
+    const baseInput = sampleInput();
     const input = parseRuntimeInput(
       sampleInput({
         contract: {
-          ...sampleInput().contract,
+          ...baseInput.contract,
           allowed_scope: [
             "frontdesk/decision_tree.json",
             "frontdesk/need_grilling_report.json",
@@ -20,6 +21,16 @@ test("runtime output includes changed exact allowed optional artifacts", async (
             "frontdesk/unplanned",
           ],
           expected_outputs: ["frontdesk/decision_tree.json", "frontdesk/need_grilling_report.json"],
+        },
+        piworker_call: {
+          ...baseInput.piworker_call,
+          writable_refs: [
+            "frontdesk/decision_tree.json",
+            "frontdesk/need_grilling_report.json",
+            "frontdesk/core_need_brief.json",
+            "frontdesk/unplanned",
+          ],
+          expected_output_refs: ["frontdesk/decision_tree.json", "frontdesk/need_grilling_report.json"],
         },
       }),
     );

@@ -31,6 +31,7 @@ export interface RuntimeInput {
   events_ref: string;
   metrics_ref: string;
   savepoints_ref: string;
+  piworker_call: PiWorkerCall | null;
   contract: WorkUnitContract;
   permission_manifest: PermissionManifest;
   runtime: {
@@ -41,6 +42,27 @@ export interface RuntimeInput {
   };
   repair: RepairInput;
   resume: ResumeInput;
+}
+
+export interface PiWorkerCall {
+  schema_version: "piworker_call.v1";
+  call_id: string;
+  role: "frontdesk_author_piworker" | "executor_piworker" | "judge_piworker" | "repair_piworker" | "revision_drafter_piworker";
+  contract_id: string;
+  contract_hash: string;
+  contract_ref: string;
+  objective: string;
+  visible_refs: string[];
+  writable_refs: string[];
+  expected_output_refs: string[];
+  permission_manifest_ref: string | null;
+  source_packet_ref: string | null;
+  source_packet_hash: string | null;
+  evidence_refs: string[];
+  output_schema_ref: string | null;
+  validation_policy_ref: string | null;
+  runtime_budget: JsonObject;
+  metadata: JsonObject;
 }
 
 export interface PermissionManifest {
@@ -119,6 +141,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     events_ref: requireRef(data.events_ref, "events_ref"),
     metrics_ref: requireRef(data.metrics_ref, "metrics_ref"),
     savepoints_ref: requireRef(data.savepoints_ref, "savepoints_ref"),
+    piworker_call: data.piworker_call === undefined || data.piworker_call === null ? null : parsePiWorkerCall(data.piworker_call),
     contract,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
     runtime: parseRuntime(data.runtime),
@@ -131,6 +154,19 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
   if (result.mission_id !== contract.mission_id) {
     throw new Error("input.mission_id must match contract.mission_id");
+  }
+  if (result.piworker_call !== null) {
+    if (result.piworker_call.call_id !== result.work_unit_id) {
+      throw new Error("input.piworker_call.call_id must match work_unit_id");
+    }
+    if (result.piworker_call.contract_id !== result.mission_id) {
+      throw new Error("input.piworker_call.contract_id must match mission_id");
+    }
+    for (const ref of result.piworker_call.expected_output_refs) {
+      if (!contract.expected_outputs.includes(ref)) {
+        throw new Error("input.piworker_call expected output must be present in contract.expected_outputs");
+      }
+    }
   }
   return result;
 }
@@ -284,6 +320,67 @@ function parseWorkUnitContract(value: unknown): WorkUnitContract {
   };
 }
 
+function parsePiWorkerCall(value: unknown): PiWorkerCall {
+  const data = requireObject(value, "piworker_call");
+  const schemaVersion = requireString(data.schema_version, "piworker_call.schema_version");
+  if (schemaVersion !== "piworker_call.v1") {
+    throw new Error(`Unsupported piworker_call.schema_version: ${schemaVersion}`);
+  }
+  const role = requireString(data.role, "piworker_call.role") as PiWorkerCall["role"];
+  if (
+    ![
+      "frontdesk_author_piworker",
+      "executor_piworker",
+      "judge_piworker",
+      "repair_piworker",
+      "revision_drafter_piworker",
+    ].includes(role)
+  ) {
+    throw new Error("piworker_call.role is invalid");
+  }
+  const call: PiWorkerCall = {
+    schema_version: "piworker_call.v1",
+    call_id: requireString(data.call_id, "piworker_call.call_id"),
+    role,
+    contract_id: requireString(data.contract_id, "piworker_call.contract_id"),
+    contract_hash: requireSha256(data.contract_hash, "piworker_call.contract_hash"),
+    contract_ref: requireRef(data.contract_ref, "piworker_call.contract_ref"),
+    objective: requireString(data.objective, "piworker_call.objective"),
+    visible_refs: requireRefList(data.visible_refs ?? [], "piworker_call.visible_refs"),
+    writable_refs: requireRefList(data.writable_refs ?? [], "piworker_call.writable_refs"),
+    expected_output_refs: requireRefList(data.expected_output_refs ?? [], "piworker_call.expected_output_refs"),
+    permission_manifest_ref:
+      data.permission_manifest_ref === undefined || data.permission_manifest_ref === null
+        ? null
+        : requireRef(data.permission_manifest_ref, "piworker_call.permission_manifest_ref"),
+    source_packet_ref:
+      data.source_packet_ref === undefined || data.source_packet_ref === null
+        ? null
+        : requireRef(data.source_packet_ref, "piworker_call.source_packet_ref"),
+    source_packet_hash:
+      data.source_packet_hash === undefined || data.source_packet_hash === null
+        ? null
+        : requireSha256(data.source_packet_hash, "piworker_call.source_packet_hash"),
+    evidence_refs: requireRefList(data.evidence_refs ?? [], "piworker_call.evidence_refs"),
+    output_schema_ref:
+      data.output_schema_ref === undefined || data.output_schema_ref === null
+        ? null
+        : requireRef(data.output_schema_ref, "piworker_call.output_schema_ref"),
+    validation_policy_ref:
+      data.validation_policy_ref === undefined || data.validation_policy_ref === null
+        ? null
+        : requireRef(data.validation_policy_ref, "piworker_call.validation_policy_ref"),
+    runtime_budget: data.runtime_budget === undefined ? {} : requireObject(data.runtime_budget, "piworker_call.runtime_budget"),
+    metadata: data.metadata === undefined ? {} : requireObject(data.metadata, "piworker_call.metadata"),
+  };
+  for (const ref of call.expected_output_refs) {
+    if (!call.writable_refs.some((rootRef) => ref === rootRef || ref.startsWith(`${rootRef}/`))) {
+      throw new Error("piworker_call expected output must be inside writable_refs");
+    }
+  }
+  return call;
+}
+
 function parseRuntime(value: unknown): RuntimeInput["runtime"] {
   const data = requireObject(value, "runtime");
   const model = data.model === undefined || data.model === null ? null : requireString(data.model, "runtime.model");
@@ -366,6 +463,14 @@ function requireString(value: unknown, field: string): string {
     throw new Error(`${field} must be a non-empty string`);
   }
   return value;
+}
+
+function requireSha256(value: unknown, field: string): string {
+  const text = requireString(value, field);
+  if (!/^sha256:[0-9a-f]{64}$/.test(text)) {
+    throw new Error(`${field} must be a sha256 hash`);
+  }
+  return text;
 }
 
 function requirePositiveInteger(value: unknown, field: string): number {

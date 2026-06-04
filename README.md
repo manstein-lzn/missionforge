@@ -1,177 +1,261 @@
 # MissionForge
 
-MissionForge is converging toward a simplified PiWorker-centered agent runtime:
-PiWorker performs semantic work, while MissionForge core enforces contracts,
-workspace boundaries, permissions, refs, ledgers, role separation, and explicit
-revision.
+MissionForge is a minimal delegation kernel around Pi.
 
-It is intentionally not a SkillFoundry rewrite. SkillFoundry should become one
-application on top of MissionForge. MissionForge owns the generic substrate:
+Pi runs the intelligent agent loop. MissionForge freezes the task contract,
+bounds tools and workspace access, records refs-first evidence, validates
+outputs, routes independent judgment, and makes repair or revision explicit.
+
+The current core formula is:
 
 ```text
-FrontDeskIntentBundle + ProductIntegration + TaskContract
-  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
-  -> PiWorker execution + independent PiWorker judgment
-  -> FinalPackage + DecisionLedger + Artifacts + MetricLedger
+MissionForge = Pi Agent loop + hard MissionForge boundary + deterministic validation
 ```
 
-## Design Stance
+MissionForge is not a broad workflow framework, a provider marketplace, or a
+product-specific automation system. It is a thin, inspectable shell for safely
+delegating work to an unreliable but capable model.
 
-- Mission semantics live in Mission IR and profile data, not task-name branches.
-- The runtime core does not depend on LangGraph. LangGraph is an optional host.
-- The only first-class LLM worker target is PiWorker. Other LLM workers are not
-  a planned extension point.
-- The PiWorker design is inspired by the MIT-licensed PI GitHub project. The
-  initial skeleton does not vendor PI code; any future copied or adapted PI
-  code must retain required attribution.
-- Context and evidence are first-class runtime objects, not chat memory.
-- Executor self-report is never acceptance evidence.
-- Semantic acceptance may be produced by an independent Judge PiWorker role
-  using a frozen contract, judge rubric, artifact refs, and evidence refs.
-- Repair must preserve the frozen contract. Contract changes require explicit
-  revision.
-- Steering proposals must be schema-validated, boundary-validated, and
-  authority-validated before runtime commits state.
-- Core code must not contain benchmark or product names such as Codexarium.
-- Documentation starts and ends every module: each module has a module design
-  document before implementation, and that document is updated when behavior
-  changes.
+## Default Runtime Shape
 
-## Design Program
+New work should use the TaskContract-native path:
 
-MissionForge starts with formal architecture design, not code migration and not
-a narrow MVP. The first repository state should clarify:
+```text
+FrontDeskIntentBundle
+  -> ProductIntegration
+  -> TaskContract
+  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> PiWorkerCall(role=executor_piworker)
+  -> PiAgentRuntimeInput
+  -> workers/pi-agent-runtime
+  -> PiWorkerCallResult + AgentExecutionReport
+  -> hard checks
+  -> PiWorkerCall(role=judge_piworker)
+  -> JudgeReport
+  -> accepted | repair | revision_required | rejected
+  -> FinalPackage | RepairBrief | TaskRevisionRequest
+  -> append-only DecisionLedger
+```
 
-- the stable Mission IR contract
-- the runtime state model
-- the context/evidence ledger boundary
-- the controlled steering proposal boundary
-- the work-unit harness protocol
-- the verifier and repair protocol
-- the worker adapter boundary
-- the optional host, observation, and control adapter boundary
+The important distinction is authority:
 
-Implementation starts only after these boundaries are explicit enough to keep
-task-specific semantics out of runtime code.
+- `TaskContract` is durable task truth.
+- `PiWorkerCall` is the only intelligent invocation boundary.
+- `PiAgentRuntimeInput` is the direct Pi runtime input.
+- `PiWorkerCallResult` is boundary evidence, not acceptance.
+- `JudgeReport` is the semantic decision surface.
+- `FinalPackage` and `DecisionLedger` are the operator handoff and replay
+  surface.
 
-## Development Plan
+`WorkUnitContract` still exists as a compatibility projection for older code
+and for the current Node sidecar prompt builder. It should not be treated as
+the conceptual runtime API for new MissionForge work.
 
-Implementation should be driven through the hardened development documents:
+## What MissionForge Guarantees
 
-- [MissionForge Agentic Constitution](docs/MISSIONFORGE_AGENTIC_CONSTITUTION.md):
-  simplified PiWorker-centered laws, preserved principles, and boundaries.
-- [MissionForge Final System Shape](docs/MISSIONFORGE_FINAL_SYSTEM_SHAPE.md):
-  target architecture with FrontDesk, Product Integration, TaskContract,
-  WorkerBrief, JudgeRubric, PermissionManifest, Executor PiWorker, and Judge
-  PiWorker.
-- [Simplified Agent Runtime Implementation Plan](docs/MISSIONFORGE_SIMPLIFIED_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md):
-  staged development plan for converging from the current runtime to the
-  simplified architecture.
-- [Development Goal Protocol](docs/DEVELOPMENT_GOAL_PROTOCOL.md): `/goal`
-  operating contract, verification discipline, safe-point control, and
-  completion rules.
-- [Component Development Plan](docs/COMPONENT_DEVELOPMENT_PLAN.md): six-phase
-  component backlog from contract kernel through adapter preparation.
-- [Component Acceptance Matrix](docs/COMPONENT_ACCEPTANCE_MATRIX.md): phase gate
-  checklists and cross-cutting invariants.
-- [Follow-On Goals](docs/FOLLOW_ON_GOALS.md): post-runtime-kernel goal
-  contracts for adapter boundary preflight, faux PiWorker, product integration
-  extraction, and optional host shells.
-- [Product Integration Boundary](docs/PRODUCT_INTEGRATION_BOUNDARY.md):
-  adapter cleanliness rule that keeps product-specific task semantics outside
-  the `missionforge` Python package.
-- [Phase 11 Operator Productization Plan](docs/PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md):
-  CLI, inspection, diagnosis, resume, review, and validation workflows on top
-  of the Phase 10 durable runtime state.
-- [Phase 11 Operator Productization Goals](docs/PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md):
-  `/goal`-ready implementation slices for the Phase 11 operator surface.
-- [Phase 12-16 Decoupling Roadmap](docs/PHASE12_TO_16_DECOUPLING_ROADMAP.md):
-  metric ledger, runtime decomposition, PiWorker boundary, mission
-  revision, and store-interface phases.
-- [Phase 15 Revision Runtime Repair Plan](docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md):
-  follow-up plan for making recorded mission revisions become the active
-  runtime contract state on resume and subsequent work.
-- [Implementation Status And Next Phases](docs/IMPLEMENTATION_STATUS_AND_NEXT_PHASES.md):
-  current implementation audit, remaining coupling risks, and recommended
-  Phase 17-21 hardening path.
+MissionForge code owns hard boundaries:
 
-## Package Layout
+- frozen `TaskContract` authority and content hashes;
+- refs-only packets, reports, ledgers, and final packages;
+- readable refs, writable refs, denied refs, and runtime-owned refs;
+- command, network, environment, and unsupported hard-policy checks;
+- executor/judge role separation;
+- no executor self-acceptance;
+- explicit same-contract repair;
+- explicit contract revision before task truth changes;
+- secret and raw transcript/provider/stdout/stderr/artifact-body exclusion from
+  durable operational truth.
+
+PiWorker nodes own semantic work:
+
+- FrontDesk requirement discovery;
+- executor artifact production;
+- independent judging;
+- repair execution;
+- revision drafting.
+
+## Repository Layout
 
 ```text
 src/missionforge/
+  agent_packets.py          Executor and judge packets/reports
+  agentic_flow.py           Minimal TaskContract executor -> judge flow
+  agentic_ledger.py         DecisionLedger, FinalPackage, replay summary
+  agentic_repair.py         RepairBrief and TaskRevisionRequest contracts
+  agentic_repair_controller.py
+                            RepairTicket and RepairExecutionDirective
+  agentic_revision_controller.py
+                            RevisionPendingRecord and RevisionAppliedRecord
+  piworker_call.py          Single intelligent RPC boundary
+  piworker_runtime.py       Narrow Pi runtime construction and repair/revision bridge
+  task_contract.py          TaskContract, WorkspacePolicy, PermissionManifest
+  task_projection.py        WorkerBrief and JudgeRubric projections
+  workspace_runtime.py      Workspace ref enforcement
   adapters/
-    cli.py       Optional CLI/Python host shell around MissionRuntime
-    contracts.py Adapter boundary, invocation, diagnostic, and result contracts
-    observation.py Optional read-only run view and ControlRequest writer
-    steering_llm.py Optional controlled steering LLM adapter
-    piworker.py  Deterministic faux PiWorker adapter contracts and fixture run
-  contracts.py   Shared enums, errors, safe refs, hashing, validation helpers
-  evidence.py    Evidence and artifact ref contracts
-  freeze.py      Mission expansion and frozen contract hashing
-  harness.py     Proposal validation and work-unit harness
-  ir.py          Mission IR dataclasses and validation
-  json_store.py  Default workspace-relative JSON/JSONL store backend
-  metric_store.py Run-local metric event/projection storage
-  metrics.py     MetricEvent and MetricProjection contracts
-  mission.py     Mission contract compatibility surface
-  piworker_runtime.py Narrow PiWorker/PI Agent runtime construction boundary
-  profiles.py    Capability and verification profile expansion
-  revision.py    Mission revision contracts and conservative workflow
-  revision_store.py Run-local mission revision artifact storage
-  runner.py      Public MissionRuntime/MissionResult boundary
-  runtime.py     Deterministic runtime vertical slice
-  runtime_attempts.py RuntimeAttempt assembly helper
-  runtime_state_writer.py Durable runtime state writer
-  steering.py    Controlled steering contract objects
-  steering_store.py Run-local controlled steering artifact refs
-  stores.py      RunStore/ArtifactStore/EventLogStore protocols
-  verifier.py    Verification routing
-  verification.py Validator and verification result contracts
-  work_unit.py   Work-unit and execution report contracts
-  workers.py     Worker protocol boundary used by PiWorker-compatible adapters
+    pi_agent_runtime.py     Pi Agent runtime adapter and PiAgentRuntimeInput
+  frontdesk/
+    pi_node_runner.py       FrontDesk PiWorker authoring boundary
+
+workers/pi-agent-runtime/
+  src/contract.ts           Node-side runtime input/output parser
+  src/runtime.ts            Pi Agent loop sidecar
+  src/tools.ts              Permission-aware file/bash tools
+
+integrations/skillfoundry/
+  External product integration that compiles product meaning into
+  TaskContract-shaped MissionForge inputs.
+
 docs/
-  ARCHITECTURE.md
-  MISSION_IR.md
-  DESIGN_PROGRAM.md
-  DEVELOPMENT_PROTOCOL.md
-  DEVELOPMENT_GOAL_PROTOCOL.md
-  PRODUCT_INTEGRATION_BOUNDARY.md
-  COMPONENT_DEVELOPMENT_PLAN.md
-  COMPONENT_ACCEPTANCE_MATRIX.md
-  FOLLOW_ON_GOALS.md
-  PHASE11_OPERATOR_PRODUCTIZATION_PLAN.md
-  PHASE11_OPERATOR_PRODUCTIZATION_GOALS.md
-  PHASE12_TO_16_DECOUPLING_ROADMAP.md
+  PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md
+  TASKCONTRACT_NATIVE_CUTOVER_PLAN.md
   modules/
-    adapter_contracts.md
-    controlled_steering.md
-    metrics.md
-    store.md
-integrations/
-  skillfoundry/
-    External product integration that compiles SkillFoundry/FrontDesk refs
-    into MissionIR without being part of the missionforge Python package.
 ```
 
-## Development
+Benchmark/value-benchmark code has been removed from the active product lane.
+MissionForge core is now focused on the PiWorker kernel and one real external
+integration, SkillFoundry.
+
+## Quick Start For Development
 
 Use the Node version declared in `.nvmrc` for `workers/pi-agent-runtime`.
 
-```bash
-./scripts/validate.sh
-```
-
-For a faster local rerun after `workers/pi-agent-runtime/node_modules` is
-already installed:
+Run the full local validation suite:
 
 ```bash
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 ```
 
-## Operator Commands
+Use the integration validator for SkillFoundry:
 
-Phase 11 exposes deterministic refs-only operator commands through the optional
-CLI adapter:
+```bash
+./scripts/validate_integrations.sh skillfoundry
+```
+
+If dependencies need a clean install, run without `MISSIONFORGE_SKIP_NPM_CI`:
+
+```bash
+./scripts/validate.sh
+```
+
+## Using The Default TaskContract Flow
+
+Programmatic callers should assemble the default TaskContract-native Pi lane
+through the narrow factory:
+
+```python
+from missionforge import create_default_task_contract_flow
+from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeConfig
+
+preset = create_default_task_contract_flow(
+    "/tmp/missionforge-run",
+    piworker_config=PiAgentRuntimeConfig(),
+)
+
+result = preset.runner.run(
+    run_id="run-001",
+    contract=task_contract,
+    workspace_policy=workspace_policy,
+    permission_manifest=permission_manifest,
+    executor=preset.executor,
+    judge=preset.judge,
+    hard_check_status=hard_check_status,
+    hard_check_refs=hard_check_refs,
+)
+```
+
+The caller supplies a frozen `TaskContract`, `WorkspacePolicy`, and
+`PermissionManifest`. Product-specific meaning should be compiled outside
+`src/missionforge`, then passed in through these contracts and refs.
+
+The run writes refs such as:
+
+```text
+contract/task_contract.json
+projections/worker_brief.json
+projections/judge_rubric.json
+packets/execution_packet.json
+reports/execution_report.json
+packets/judge_packet.json
+reports/judge_report.json
+ledgers/decision_ledger.jsonl
+packages/final_package.json
+checkpoints/latest.json
+```
+
+Replay the ledger without reading Pi chat memory:
+
+```python
+from missionforge import replay_decision_ledger
+
+summary = replay_decision_ledger(
+    "/tmp/missionforge-run/runs/run-001",
+    decision_ledger_ref="ledgers/decision_ledger.jsonl",
+)
+```
+
+## Repair And Revision
+
+Repair preserves the same frozen contract hash. A judge repair decision creates
+a `RepairBrief`, which can be bound into a `RepairTicket`, then into a
+`RepairExecutionDirective`, then executed through the same PiWorker boundary:
+
+```python
+from missionforge import run_repair_directive_with_default_piworker
+
+call_result = run_repair_directive_with_default_piworker(
+    directive,
+    workspace="/tmp/missionforge-run/runs/run-001",
+    contract_ref="contract/task_contract.json",
+    permission_manifest_ref="policy/permission_manifest.json",
+    writable_refs=["artifacts", "reports"],
+)
+```
+
+Revision changes task truth only after an explicit pending record, authority
+decision, revised contract, and applied record:
+
+```python
+from missionforge import run_revision_draft_with_default_piworker
+
+draft_result = run_revision_draft_with_default_piworker(
+    pending,
+    workspace="/tmp/missionforge-run/runs/run-001",
+    permission_manifest_ref="policy/permission_manifest.json",
+    writable_refs=["revisions/revision-request-001"],
+    expected_output_ref="revisions/revision-request-001/revised_task_contract.json",
+)
+```
+
+## Public API Guidance
+
+Use these as the primary MissionForge kernel surface:
+
+- `TaskContract`
+- `WorkspacePolicy`
+- `PermissionManifest`
+- `WorkerBrief`
+- `JudgeRubric`
+- `AgenticFlowRunner`
+- `create_default_task_contract_flow`
+- `PiWorkerCall`
+- `PiWorkerCallResult`
+- `FinalPackage`
+- `TaskContractDecisionLedgerEntry`
+- `replay_decision_ledger`
+- `run_repair_directive_with_default_piworker`
+- `run_revision_draft_with_default_piworker`
+
+Adapter internals such as `PiAgentRuntimeAdapter` are intentionally not
+exported from the package root. Import them directly only when building or
+testing adapter-specific behavior.
+
+MissionIR and the older deterministic runtime remain in the repository as
+compatibility/high-detail surfaces. New product work should prefer
+TaskContract-native PiWorker calls.
+
+## Operator Surface
+
+The optional CLI adapter emits refs-only command envelopes:
 
 ```bash
 python -m missionforge.adapters.cli run --workspace . --mission-ref missions/input.mission.json
@@ -183,31 +267,20 @@ python -m missionforge.adapters.cli review record --workspace . --run run-sample
 python -m missionforge.adapters.cli validate
 ```
 
-Each command emits a `missionforge.command_result.v1` envelope. Command output
-must cite refs instead of embedding raw transcripts, provider payloads, prompts,
-stdout/stderr bodies, artifact bodies, or secrets.
+Operator output is observation and control. It does not grant semantic
+acceptance by itself.
 
-## Controlled Steering
+## Design Documents
 
-Controlled steering is implemented as an opt-in protocol over the deterministic
-runtime. Core contracts live in `missionforge.steering`, run-local steering
-artifacts live under `runs/{mission_run_id}/steering/`, and optional live LLM
-integration is adapter-only. Runtime completion still comes from verifier
-status, not proposal confidence, worker self-report, reviewer prose, CLI, RPC,
-or dashboard output.
+Start here:
 
-The default runtime path remains deterministic and offline. Proposal mode is
-enabled only by injecting providers into `RuntimeEngine` or `MissionRuntime`.
+- [Pi-Based Minimal Kernel Development Plan](docs/PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md)
+- [TaskContract Native Cutover Plan](docs/TASKCONTRACT_NATIVE_CUTOVER_PLAN.md)
+- [Module: PiWorker](docs/modules/piworker.md)
+- [Module: Agentic Flow](docs/modules/agentic_flow.md)
+- [Module: FrontDesk](docs/modules/frontdesk.md)
+- [Product Integration Boundary](docs/PRODUCT_INTEGRATION_BOUNDARY.md)
 
-## Product Integrations
-
-MissionForge core adapters are protocol, process, host, worker, or provider
-boundaries. They must not contain product-specific task semantics.
-
-Product integrations live outside the `missionforge` Python package. The
-SkillFoundry migration bridge is now under `integrations/skillfoundry/` and
-depends on MissionForge rather than being imported by it.
-
-```bash
-./scripts/validate_integrations.sh skillfoundry
-```
+The short version: Pi is the intelligent loop. MissionForge is the deterministic
+contract, permission, evidence, validation, judge, repair, revision, and replay
+kernel around it.

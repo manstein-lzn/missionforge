@@ -1,6 +1,0 @@
-{
-  "blind_review_waived": true,
-  "reviewer_packets": [],
-  "schema_version": "missionforge.value_benchmark_reviewer_packet_index.v1",
-  "waiver_rationale": "Blind review is waived because this report claims only deterministic acceptance, ProductGate closure, cost projection, time, stability, and leakage outcomes."
-}

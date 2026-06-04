@@ -1,3 +1,0 @@
-我不是想要一个一次性的脚本。我有一套反复推进复杂工程任务的方法，平时都是靠我和 AI 来回沟通慢慢压出来，但每次重新开始都很浪费。我希望把它沉淀成一个本地 Codex skill 包，之后遇到类似复杂项目时可以直接复用这套推进方式。
-
-第一版不需要联网，也不要读取凭证，不要把我们的原始对话或任何 provider payload 写到包里。输出最好就是一个能本地安装和检查的 skill package，至少有 package/SKILL.md、package/skillfoundry.bundle.json 和 package/README.md。

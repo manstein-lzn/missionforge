@@ -1,1 +1,0 @@
-I do not really know how to describe the tool I want. The problem is that my requests to AI start messy, then the useful part only appears after several rounds. I want a local skill that makes the AI press me for the real need, separate guesses from confirmed requirements, and turn the result into a usable implementation brief. Keep it local and do not save raw chat logs.

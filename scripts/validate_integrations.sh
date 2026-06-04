@@ -6,11 +6,18 @@ cd "$ROOT"
 
 TARGET="${1:-all}"
 
+run_skillfoundry() {
+  echo "==> Testing SkillFoundry integration"
+  PYTHONPATH=src:integrations/skillfoundry/src \
+    python3 -m unittest discover -s integrations/skillfoundry/tests
+}
+
 case "$TARGET" in
-  all|skillfoundry)
-    echo "==> Testing SkillFoundry integration"
-    PYTHONPATH=src:integrations/skillfoundry/src \
-      python3 -m unittest discover -s integrations/skillfoundry/tests
+  all)
+    run_skillfoundry
+    ;;
+  skillfoundry)
+    run_skillfoundry
     ;;
   *)
     echo "unsupported integration target: $TARGET" >&2

@@ -28,6 +28,11 @@ from .agentic_repair import (
     validate_repair_brief_for_judge,
     validate_revision_request_for_judge,
 )
+from .agentic_ledger import (
+    TaskContractDecisionLedgerEntry,
+    DecisionLedgerEventKind,
+    build_final_package,
+)
 from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
@@ -156,6 +161,7 @@ class AgenticFlowRefs:
     judge_packet_ref: str = "packets/judge_packet.json"
     judge_report_ref: str = "reports/judge_report.json"
     decision_ledger_ref: str = "ledgers/decision_ledger.jsonl"
+    final_package_ref: str = "packages/final_package.json"
     checkpoint_ref: str = "checkpoints/latest.json"
 
     @classmethod
@@ -169,6 +175,7 @@ class AgenticFlowRefs:
             "judge_packet_ref",
             "judge_report_ref",
             "decision_ledger_ref",
+            "final_package_ref",
             "checkpoint_ref",
         }
         unknown = sorted(set(data) - allowed)
@@ -200,6 +207,10 @@ class AgenticFlowRefs:
                 data.get("decision_ledger_ref", cls.decision_ledger_ref),
                 "agentic_flow_refs.decision_ledger_ref",
             ),
+            final_package_ref=validate_ref(
+                data.get("final_package_ref", cls.final_package_ref),
+                "agentic_flow_refs.final_package_ref",
+            ),
             checkpoint_ref=validate_ref(
                 data.get("checkpoint_ref", cls.checkpoint_ref),
                 "agentic_flow_refs.checkpoint_ref",
@@ -216,6 +227,7 @@ class AgenticFlowRefs:
         validate_ref(self.judge_packet_ref, "agentic_flow_refs.judge_packet_ref")
         validate_ref(self.judge_report_ref, "agentic_flow_refs.judge_report_ref")
         validate_ref(self.decision_ledger_ref, "agentic_flow_refs.decision_ledger_ref")
+        validate_ref(self.final_package_ref, "agentic_flow_refs.final_package_ref")
         validate_ref(self.checkpoint_ref, "agentic_flow_refs.checkpoint_ref")
 
     def to_dict(self) -> dict[str, str]:
@@ -228,6 +240,7 @@ class AgenticFlowRefs:
             "judge_packet_ref": self.judge_packet_ref,
             "judge_report_ref": self.judge_report_ref,
             "decision_ledger_ref": self.decision_ledger_ref,
+            "final_package_ref": self.final_package_ref,
             "checkpoint_ref": self.checkpoint_ref,
         }
 
@@ -451,8 +464,40 @@ class AgenticFlowRunner:
             runtime_workspace,
             run_id,
             contract,
-            "execution_packet_issued",
+            DecisionLedgerEventKind.CONTRACT_FROZEN,
+            refs={"contract_ref": self.refs.contract_ref},
+            content_hashes={self.refs.contract_ref: stable_json_hash(contract_payload)},
+        )
+        self._append_ledger(
+            runtime_workspace,
+            run_id,
+            contract,
+            DecisionLedgerEventKind.PROJECTION_WRITTEN,
+            refs={
+                "worker_brief_ref": self.refs.worker_brief_ref,
+                "judge_rubric_ref": contract.judge_rubric_ref,
+            },
+            content_hashes={
+                self.refs.worker_brief_ref: stable_json_hash(worker_brief_payload),
+                contract.judge_rubric_ref: stable_json_hash(judge_rubric_payload),
+            },
+        )
+        if hard_refs:
+            self._append_ledger(
+                runtime_workspace,
+                run_id,
+                contract,
+                DecisionLedgerEventKind.HARD_CHECKS_RECORDED,
+                refs={"hard_check_ref": hard_refs[0]},
+                status=hard_status.value,
+            )
+        self._append_ledger(
+            runtime_workspace,
+            run_id,
+            contract,
+            DecisionLedgerEventKind.EXECUTION_PACKET_ISSUED,
             refs={"execution_packet_ref": self.refs.execution_packet_ref},
+            content_hashes={self.refs.execution_packet_ref: execution_packet_hash},
         )
 
         execution_report = executor.execute(
@@ -476,9 +521,10 @@ class AgenticFlowRunner:
             runtime_workspace,
             run_id,
             contract,
-            "execution_report_recorded",
+            DecisionLedgerEventKind.EXECUTION_REPORT_RECORDED,
             refs={"execution_report_ref": self.refs.execution_report_ref},
             status=execution_report.status.value,
+            content_hashes={self.refs.execution_report_ref: execution_report_hash},
         )
 
         judge_packet = JudgePacket(
@@ -514,8 +560,9 @@ class AgenticFlowRunner:
             runtime_workspace,
             run_id,
             contract,
-            "judge_packet_issued",
+            DecisionLedgerEventKind.JUDGE_PACKET_ISSUED,
             refs={"judge_packet_ref": self.refs.judge_packet_ref},
+            content_hashes={self.refs.judge_packet_ref: judge_packet_hash},
         )
 
         judge_report = judge.judge(
@@ -545,7 +592,9 @@ class AgenticFlowRunner:
             )
         _ensure_judge_report_authorized(judge_report, scoped_judge_workspace)
         _ensure_judge_decision_artifact(run_id, judge_report, judge_packet, scoped_judge_workspace)
-        runtime_workspace.write_json(self.refs.judge_report_ref, judge_report.to_dict())
+        judge_report_payload = judge_report.to_dict()
+        judge_report_hash = stable_json_hash(judge_report_payload)
+        runtime_workspace.write_json(self.refs.judge_report_ref, judge_report_payload)
 
         result = self._build_result(run_id, contract, execution_report, judge_report)
         runtime_workspace.write_json(self.refs.checkpoint_ref, self._checkpoint_payload(result))
@@ -553,13 +602,71 @@ class AgenticFlowRunner:
             runtime_workspace,
             run_id,
             contract,
-            "judge_report_recorded",
+            DecisionLedgerEventKind.JUDGE_REPORT_RECORDED,
             refs={
                 "judge_report_ref": self.refs.judge_report_ref,
                 "checkpoint_ref": self.refs.checkpoint_ref,
             },
             status=result.status.value,
+            content_hashes={self.refs.judge_report_ref: judge_report_hash},
         )
+        if result.status is AgenticFlowStatus.ACCEPTED:
+            final_package = build_final_package(
+                run_id=run_id,
+                contract_id=contract.contract_id,
+                contract_hash=contract.contract_hash,
+                contract_ref=self.refs.contract_ref,
+                judge_report_ref=self.refs.judge_report_ref,
+                decision_ledger_ref=self.refs.decision_ledger_ref,
+                accepted_artifact_refs=result.accepted_artifact_refs,
+                hard_check_refs=hard_refs,
+                metric_refs=list(execution_report.metric_refs),
+            )
+            final_package_payload = final_package.to_dict()
+            runtime_workspace.write_json(self.refs.final_package_ref, final_package_payload)
+            self._append_ledger(
+                runtime_workspace,
+                run_id,
+                contract,
+                DecisionLedgerEventKind.FINAL_PACKAGE_EMITTED,
+                refs={
+                    "final_package_ref": self.refs.final_package_ref,
+                    "judge_report_ref": self.refs.judge_report_ref,
+                    "decision_ledger_ref": self.refs.decision_ledger_ref,
+                },
+                status=result.status.value,
+                content_hashes={self.refs.final_package_ref: stable_json_hash(final_package_payload)},
+            )
+        elif result.status is AgenticFlowStatus.REPAIR:
+            if result.repair_brief_ref is None:
+                raise ContractValidationError("repair result requires repair_brief_ref")
+            self._append_ledger(
+                runtime_workspace,
+                run_id,
+                contract,
+                DecisionLedgerEventKind.REPAIR_REQUESTED,
+                refs={
+                    "repair_brief_ref": result.repair_brief_ref,
+                    "judge_report_ref": self.refs.judge_report_ref,
+                    "decision_ledger_ref": self.refs.decision_ledger_ref,
+                },
+                status=result.status.value,
+            )
+        elif result.status is AgenticFlowStatus.REVISION_REQUIRED:
+            if result.revision_request_ref is None:
+                raise ContractValidationError("revision result requires revision_request_ref")
+            self._append_ledger(
+                runtime_workspace,
+                run_id,
+                contract,
+                DecisionLedgerEventKind.REVISION_REQUESTED,
+                refs={
+                    "revision_request_ref": result.revision_request_ref,
+                    "judge_report_ref": self.refs.judge_report_ref,
+                    "decision_ledger_ref": self.refs.decision_ledger_ref,
+                },
+                status=result.status.value,
+            )
         return result
 
     def _build_result(
@@ -600,23 +707,25 @@ class AgenticFlowRunner:
         workspace: RunWorkspace,
         run_id: str,
         contract: TaskContract,
-        event_kind: str,
+        event_kind: DecisionLedgerEventKind,
         *,
         refs: dict[str, str],
         status: str | None = None,
+        content_hashes: dict[str, str] | None = None,
     ) -> None:
-        payload = assert_refs_only_payload(
-            {
-                "created_at": self.now(),
-                "run_id": run_id,
-                "event_kind": event_kind,
-                "contract_id": contract.contract_id,
-                "contract_hash": contract.contract_hash,
-                "status": status,
-                "ref_map": refs,
-            },
-            "agentic_flow_ledger_entry",
+        existing_entries = _read_existing_ledger_entries(workspace, self.refs.decision_ledger_ref)
+        entry = TaskContractDecisionLedgerEntry(
+            entry_id=f"ledger-entry-{len(existing_entries) + 1:06d}",
+            created_at=self.now(),
+            run_id=run_id,
+            event_kind=event_kind,
+            contract_id=contract.contract_id,
+            contract_hash=contract.contract_hash,
+            status=status,
+            ref_map=refs,
+            content_hashes=content_hashes or {},
         )
+        payload = assert_refs_only_payload(entry.to_dict(), "agentic_flow_ledger_entry")
         path = workspace.resolve_ref(workspace.ensure_write_ref(self.refs.decision_ledger_ref))
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
@@ -642,6 +751,7 @@ def _runtime_permission_manifest(
         refs.judge_packet_ref,
         refs.judge_report_ref,
         refs.decision_ledger_ref,
+        refs.final_package_ref,
         refs.checkpoint_ref,
         *hard_check_refs,
     ]
@@ -717,6 +827,7 @@ def _executor_denied_write_refs(
             refs.judge_packet_ref,
             refs.judge_report_ref,
             refs.decision_ledger_ref,
+            refs.final_package_ref,
             _root_ref(refs.checkpoint_ref),
             *hard_check_refs,
         ]
@@ -740,6 +851,7 @@ def _judge_denied_write_refs(
             refs.judge_packet_ref,
             refs.judge_report_ref,
             refs.decision_ledger_ref,
+            refs.final_package_ref,
             _root_ref(refs.checkpoint_ref),
             *hard_check_refs,
         ]
@@ -872,6 +984,22 @@ def _optional_ref(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
     return validate_ref(value, field_name)
+
+
+def _read_existing_ledger_entries(workspace: RunWorkspace, ledger_ref: str) -> list[TaskContractDecisionLedgerEntry]:
+    safe_ref = workspace.ensure_write_ref(ledger_ref)
+    path = workspace.resolve_ref(safe_ref)
+    if not path.exists():
+        return []
+    entries: list[TaskContractDecisionLedgerEntry] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, Mapping):
+            raise ContractValidationError("decision ledger entries must be JSON objects")
+        entries.append(TaskContractDecisionLedgerEntry.from_dict(payload))
+    return entries
 
 
 

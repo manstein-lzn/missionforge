@@ -2,15 +2,24 @@
 
 ## Goal
 
-Historical PiWorker adapter notes for the earlier compatibility path.
+PiWorker is MissionForge's single first-class intelligent worker direction.
+The current production lane invokes `workers/pi-agent-runtime`, while core
+MissionForge exposes a smaller product-neutral boundary:
 
-The current production direction is `pi-agent-runtime`, not PiWorker. The
-dedicated PI Agent runtime is documented in
-`docs/PI_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md`.
+```text
+PiWorkerCall -> PiAgentRuntimeInput -> PI Agent runtime -> PiWorkerCallResult
+```
+
+`PiWorkerCall` is the minimal "unreliable RPC" contract for one PiWorker/LLM
+invocation. It declares role, frozen-contract binding, visible refs, writable
+refs, expected output refs, and optional permission/source/evidence refs.
+MissionForge code validates this boundary; the PiWorker owns semantic work
+inside it.
 
 ## Scope
 
 - PiWorker work-unit input
+- PiWorkerCall invocation boundary
 - PiWorker event stream
 - tool-mediated workspace reads/writes
 - provider usage metrics
@@ -26,6 +35,33 @@ dedicated PI Agent runtime is documented in
 - no PiWorker-owned acceptance, closure, or contract revision
 
 ## Current Status
+
+The TaskContract-native runtime now constructs role-separated
+`AgentExecutionPacket` and `JudgePacket` objects, projects each runtime call
+through `PiWorkerCall`, then writes a direct `PiAgentRuntimeInput` for
+`PiAgentRuntimeAdapter`. The input still carries a `WorkUnitContract`
+projection as a compatibility field for the current Node sidecar prompt
+builder, but the MissionForge authority is the call-shaped boundary:
+
+- packets carry role-specific semantic context and hash bindings;
+- `PiWorkerCall` carries the shared invocation boundary;
+- `PiAgentRuntimeInput` carries call id, refs, expected outputs, permission
+  manifest, runtime metadata, repair/resume envelope, and the compatibility
+  work-unit projection;
+- `WorkUnitContract` remains a compatibility projection, not the conceptual
+  runtime API;
+- PI Agent runtime owns the inner loop, tools, hooks, session artifacts, and
+  model calls.
+
+FrontDesk PiWorker authoring nodes use the same boundary with
+`frontdesk_author_piworker` role before projecting to `WorkUnitContract`.
+Repair directives and revision pending records also use the same runtime
+boundary through `repair_piworker` and `revision_drafter_piworker` calls.
+
+`PiWorkerCall` and the Node runtime parser reject raw
+prompt/transcript/payload/body/stdout/stderr/secret fields through refs-only
+payload validation, validate safe refs and hashes, require expected outputs,
+and reject outputs outside writable refs.
 
 Goal 6A implemented a deterministic faux PiWorker adapter. The adapter proves
 MissionForge's PiWorker-facing contract boundary without starting a live
@@ -44,8 +80,9 @@ into child-process environment variables and never serializes the API key into
 MissionForge input artifacts, evidence, execution reports, metrics, docs, or
 logs.
 
-This module is now legacy reference material. MissionForge's default runtime
-uses `PiAgentRuntimeAdapter`, which invokes `workers/pi-agent-runtime`.
+The faux adapter material below is legacy reference material. MissionForge's
+default runtime uses `PiAgentRuntimeAdapter`, which invokes
+`workers/pi-agent-runtime`.
 
 Phase 14 isolates default construction behind `PiWorkerRuntimeFactory` in
 `src/missionforge/piworker_runtime.py`. `MissionRuntime` uses that narrow
@@ -61,7 +98,12 @@ adapted PI source must retain required attribution.
 
 ## Public Contracts
 
-Implemented in Goal 6A:
+Current core boundary:
+
+- `PiWorkerCall`
+- `PiWorkerCallRole`
+
+Implemented in Goal 6A as the older compatibility path:
 
 - `WorkerAdapter`
 - `WorkerAdapterResult`
@@ -75,6 +117,34 @@ Implemented in Goal 6A:
 - `PiWorkerRuntimeFactory`
 
 ## Contract Sketch
+
+`PiWorkerCall` is derived from role-specific packets or FrontDesk authoring
+profiles and can be projected into a committed `WorkUnitContract`:
+
+```json
+{
+  "call_id": "WU-000001",
+  "schema_version": "piworker_call.v1",
+  "role": "executor_piworker",
+  "contract_id": "contract-001",
+  "contract_hash": "sha256:...",
+  "contract_ref": "mission/task_contract.json",
+  "objective": "Produce expected artifacts for contract-001.",
+  "visible_refs": [
+    "mission/task_contract.json",
+    "projections/worker_brief.json",
+    "policy/workspace_policy.json",
+    "policy/permission_manifest.json"
+  ],
+  "writable_refs": ["artifacts", "reports"],
+  "expected_output_refs": ["artifacts/final.md"],
+  "permission_manifest_ref": "policy/permission_manifest.json",
+  "source_packet_ref": "packets/execution_packet.json",
+  "source_packet_hash": "sha256:...",
+  "evidence_refs": [],
+  "metadata": {}
+}
+```
 
 `PiWorkerInput` should be derived from a committed `WorkUnitContract` and an
 attempt manifest:

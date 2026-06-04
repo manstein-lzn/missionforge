@@ -1,8 +1,13 @@
 # Phase 23: FrontDesk PiWorker AI Execution Plan
 
-Last updated: 2026-05-30
+Last updated: 2026-06-03
 
-Status: `planned`
+Status: partially implemented historical plan. FrontDesk PiWorker authoring
+now exists through `FrontDeskPiNodeRunner`, `FrontDesk.with_default_piworker`,
+and CLI `--use-default-piworker`. This document remains useful for FrontDesk
+authoring provenance and fail-closed requirements, but the current default
+runtime target is TaskContract-native PiWorker execution, not MissionIR as the
+primary product path.
 
 ## Purpose
 
@@ -10,20 +15,17 @@ Phase 22 established the product-context boundary:
 
 ```text
 FrontDesk + ProductInquiryProfile -> FrontDeskIntentBundle
-ProductIntegration + FrontDeskIntentBundle -> product contract + MissionIR
-MissionForge Runtime -> generic execution
+ProductIntegration + FrontDeskIntentBundle -> TaskContract + product refs
+TaskContract-native Runtime -> PiWorker executor + independent Judge PiWorker
 ProductGate -> product readiness
 ```
 
-The current implementation now correctly fails closed when FrontDesk needs
-semantic authoring but no LLM/PiWorker-authored artifacts exist. This is the
-right anti-cheat boundary, but it is not yet the usable product experience.
-
-Phase 23 wires the actual FrontDesk AI authoring path through PiWorker. The
-goal is not to reintroduce deterministic understanding in Python. The goal is
-to provide a contract harness in which PiWorker can act as the restrained
-requirements interviewer, product architect, and intent-bundle author while
-MissionForge code remains product-neutral, refs-first, and fail-closed.
+The current implementation correctly fails closed when FrontDesk needs
+semantic authoring but no LLM/PiWorker-authored artifacts exist. It also has an
+explicit PiWorker authoring path. The remaining FrontDesk work is to keep that
+path aligned with the TaskContract-native kernel: FrontDesk authors intent,
+ProductIntegration compiles a TaskContract, and the TaskContract flow invokes
+bounded PiWorker executor and judge calls.
 
 ## Current State
 
@@ -142,12 +144,12 @@ User
        validates candidate, profile hash, refs, missing slots, source policy
        writes canonical frontdesk/intent_bundle.json
   -> ProductIntegration.compile_intent()
-       owns product request, product contract, MissionIR, frozen contract,
-       product gate spec, and product clarification requests
-  -> MissionForge Runtime
-       executes only frozen generic MissionIR contracts
-  -> Verifier + ProductGate
-       close generic mission and product readiness separately
+       owns product request, TaskContract, workspace policy, permission
+       manifest, judge rubric, product refs, and product clarification requests
+  -> TaskContract-native MissionForge runtime
+       executes only frozen TaskContract state through PiWorkerCall
+  -> independent Judge PiWorker + ProductGate refs
+       close semantic acceptance and product readiness separately
 ```
 
 The product-specific path for SkillFoundry should become:
@@ -159,9 +161,11 @@ SkillFoundryInquiryProfile
   -> SkillFoundryFrontDeskIntegration.compile_intent()
   -> SkillFoundryRequest
   -> SkillFoundryProductContract
-  -> MissionIR
-  -> FrozenMissionContract
-  -> SkillFoundry ProductGradeGate spec
+  -> TaskContract + WorkspacePolicy + PermissionManifest + JudgeRubric
+  -> SkillFoundry ProductGradeGate refs
+
+MissionIR output is compatibility-only for generic fallback or migration. It is
+not the desired default runtime authority for product-aware flows.
 ```
 
 ## Node Model

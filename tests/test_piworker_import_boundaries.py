@@ -65,7 +65,7 @@ class PiWorkerImportBoundaryTests(unittest.TestCase):
         root_init = (CORE_ROOT / "__init__.py").read_text(encoding="utf-8")
         adapter_init = (ADAPTER_ROOT / "__init__.py").read_text(encoding="utf-8")
 
-        for symbol in PIWORKER_SYMBOLS | {"piworker"}:
+        for symbol in PIWORKER_SYMBOLS | {"adapters.piworker"}:
             self.assertNotIn(symbol, root_init)
             self.assertNotIn(symbol, adapter_init)
 

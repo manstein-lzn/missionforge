@@ -1,8 +1,9 @@
 """PiWorker boundary helpers for FrontDesk spec-grill nodes.
 
 This module does not introduce a second worker abstraction and does not call a
-live provider by default. It builds and validates bounded WorkUnitContract
-objects for future PiWorker-backed FrontDesk LLM nodes.
+live provider by default. It builds and validates bounded PiWorkerCall objects
+and projects them into WorkUnitContract objects for PiWorker-backed FrontDesk
+LLM nodes.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from ..contracts import (
     validate_ref,
 )
 from ..evidence_store import EvidenceLedger
+from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
 from ..work_unit import WorkUnitContract
 from ..workers import WorkerAdapter, WorkerAdapterResult
 from .workspace import FrontDeskWorkspace
@@ -44,6 +46,7 @@ class FrontDeskPiNodeContract:
 
     node_name: str
     session_id: str
+    call: PiWorkerCall
     work_unit: WorkUnitContract
 
     @classmethod
@@ -52,6 +55,7 @@ class FrontDeskPiNodeContract:
         contract = cls(
             node_name=require_non_empty_str(data.get("node_name"), "frontdesk_pi_node_contract.node_name"),
             session_id=require_non_empty_str(data.get("session_id"), "frontdesk_pi_node_contract.session_id"),
+            call=PiWorkerCall.from_dict(require_mapping(data.get("call"), "frontdesk_pi_node_contract.call")),
             work_unit=WorkUnitContract.from_dict(require_mapping(data.get("work_unit"), "frontdesk_pi_node_contract.work_unit")),
         )
         contract.validate()
@@ -61,7 +65,20 @@ class FrontDeskPiNodeContract:
         if self.node_name not in FRONTDESK_NODE_NAMES:
             raise ContractValidationError("frontdesk_pi_node_contract.node_name is unsupported")
         require_non_empty_str(self.session_id, "frontdesk_pi_node_contract.session_id")
+        self.call.validate()
         self.work_unit.validate()
+        if self.call.role != PiWorkerCallRole.FRONTDESK_AUTHOR:
+            raise ContractValidationError("frontdesk_pi_node_contract.call must be a FrontDesk author PiWorker call")
+        if self.call.call_id != self.work_unit.work_unit_id:
+            raise ContractValidationError("frontdesk_pi_node_contract.call_id must match work_unit_id")
+        if self.call.contract_id != self.work_unit.mission_id:
+            raise ContractValidationError("frontdesk_pi_node_contract.contract_id must match mission_id")
+        if self.call.expected_output_refs != self.work_unit.expected_outputs:
+            raise ContractValidationError("frontdesk_pi_node_contract expected outputs must match PiWorkerCall")
+        if self.call.writable_refs != self.work_unit.allowed_scope:
+            raise ContractValidationError("frontdesk_pi_node_contract writable refs must match allowed scope")
+        if self.call.visible_refs != self.work_unit.visible_refs:
+            raise ContractValidationError("frontdesk_pi_node_contract visible refs must match PiWorkerCall")
         for ref in self.work_unit.visible_refs:
             validate_ref(ref, "frontdesk_pi_node_contract.visible_refs[]")
         for ref in self.work_unit.expected_outputs:
@@ -74,6 +91,7 @@ class FrontDeskPiNodeContract:
         return {
             "node_name": self.node_name,
             "session_id": self.session_id,
+            "call": self.call.to_dict(),
             "work_unit": self.work_unit.to_dict(),
         }
 
@@ -95,6 +113,8 @@ class FrontDeskPiNodeExecutionRecord:
     node_spec_ref: str
     node_spec_hash: str
     work_unit_hash: str
+    piworker_call_result_ref: str
+    piworker_call_result_hash: str
     evidence_refs: list[str]
     execution_report_ref: str
     node_execution_ref: str
@@ -118,6 +138,8 @@ class FrontDeskPiNodeExecutionRecord:
         validate_ref(self.node_spec_ref, "frontdesk_pi_node_execution.node_spec_ref")
         _validate_hash(self.node_spec_hash, "frontdesk_pi_node_execution.node_spec_hash")
         _validate_hash(self.work_unit_hash, "frontdesk_pi_node_execution.work_unit_hash")
+        validate_ref(self.piworker_call_result_ref, "frontdesk_pi_node_execution.piworker_call_result_ref")
+        _validate_hash(self.piworker_call_result_hash, "frontdesk_pi_node_execution.piworker_call_result_hash")
         for ref in self.evidence_refs:
             validate_ref(ref, "frontdesk_pi_node_execution.evidence_refs[]")
         validate_ref(self.execution_report_ref, "frontdesk_pi_node_execution.execution_report_ref")
@@ -153,6 +175,14 @@ class FrontDeskPiNodeExecutionRecord:
                 data.get("work_unit_hash"),
                 "frontdesk_pi_node_execution.work_unit_hash",
             ),
+            piworker_call_result_ref=validate_ref(
+                data.get("piworker_call_result_ref"),
+                "frontdesk_pi_node_execution.piworker_call_result_ref",
+            ),
+            piworker_call_result_hash=require_non_empty_str(
+                data.get("piworker_call_result_hash"),
+                "frontdesk_pi_node_execution.piworker_call_result_hash",
+            ),
             evidence_refs=_require_string_list(data.get("evidence_refs", []), "frontdesk_pi_node_execution.evidence_refs"),
             execution_report_ref=validate_ref(
                 data.get("execution_report_ref"),
@@ -179,6 +209,8 @@ class FrontDeskPiNodeExecutionRecord:
             "node_spec_ref": self.node_spec_ref,
             "node_spec_hash": self.node_spec_hash,
             "work_unit_hash": self.work_unit_hash,
+            "piworker_call_result_ref": self.piworker_call_result_ref,
+            "piworker_call_result_hash": self.piworker_call_result_hash,
             "evidence_refs": list(self.evidence_refs),
             "execution_report_ref": self.execution_report_ref,
             "node_execution_ref": self.node_execution_ref,
@@ -225,6 +257,7 @@ class FrontDeskPiNodeRunner:
         visible_refs: list[str],
         expected_outputs: list[str],
         optional_outputs: list[str] | None = None,
+        node_spec_ref: str | None = None,
     ) -> FrontDeskPiNodeContract:
         if node_name not in FRONTDESK_NODE_NAMES:
             raise ContractValidationError("frontdesk pi node is unsupported")
@@ -235,18 +268,23 @@ class FrontDeskPiNodeRunner:
             _require_frontdesk_output_ref(ref)
         for ref in visible_refs:
             validate_ref(ref, "frontdesk_pi_node.visible_refs[]")
-        work_unit = WorkUnitContract(
-            work_unit_id=f"frontdesk-{session_id}-{node_name}",
-            mission_id=f"frontdesk-{session_id}",
-            iteration=1,
-            next_objective=f"Produce structured {node_name} output JSON only.",
-            allowed_scope=allowed_outputs,
-            visible_refs=list(visible_refs),
-            expected_outputs=list(expected_outputs),
+        safe_node_spec_ref = validate_ref(
+            node_spec_ref or _node_spec_ref(session_id=session_id, node_name=node_name),
+            "frontdesk_pi_node.node_spec_ref",
+        )
+        call = _frontdesk_piworker_call(
+            node_name=node_name,
+            session_id=session_id,
+            node_spec_ref=safe_node_spec_ref,
+            visible_refs=visible_refs,
+            expected_outputs=expected_outputs,
+            allowed_outputs=allowed_outputs,
+        )
+        work_unit = call.to_work_unit_contract(
             exit_criteria=["Expected output refs exist and validate against FrontDesk schemas."],
             stop_conditions=["Do not approve, freeze, verify, run, or mutate frozen contracts."],
         )
-        contract = FrontDeskPiNodeContract(node_name=node_name, session_id=session_id, work_unit=work_unit)
+        contract = FrontDeskPiNodeContract(node_name=node_name, session_id=session_id, call=call, work_unit=work_unit)
         contract.validate()
         return contract
 
@@ -301,6 +339,7 @@ class FrontDeskPiNodeRunner:
             visible_refs=contract_visible_refs,
             expected_outputs=expected_outputs,
             optional_outputs=optional_outputs,
+            node_spec_ref=node_spec_ref,
         )
         input_hashes = _hash_visible_refs(active_workspace, contract.work_unit.visible_refs)
         worker_result = worker.run(contract.work_unit, workspace=workspace, evidence_store=evidence_store)
@@ -309,6 +348,9 @@ class FrontDeskPiNodeRunner:
         produced_refs = list(worker_result.execution_report.produced_artifacts)
         self.validate_produced_refs(contract, produced_refs)
         output_hashes = {ref: _hash_ref(active_workspace, ref) for ref in produced_refs}
+        call_result = PiWorkerCallResult.from_worker_adapter_result(contract.call, worker_result)
+        call_result_ref = _node_call_result_ref(session_id=session_id, node_name=node_name)
+        active_workspace.write_json(call_result_ref, call_result.to_dict())
 
         execution_ref = _node_execution_ref(session_id=session_id, node_name=node_name)
         execution_record = FrontDeskPiNodeExecutionRecord(
@@ -321,6 +363,8 @@ class FrontDeskPiNodeRunner:
             node_spec_ref=node_spec_ref,
             node_spec_hash=_hash_ref(active_workspace, node_spec_ref),
             work_unit_hash=stable_json_hash(contract.work_unit.to_dict()),
+            piworker_call_result_ref=call_result_ref,
+            piworker_call_result_hash=_hash_ref(active_workspace, call_result_ref),
             evidence_refs=list(worker_result.execution_report.evidence_refs),
             execution_report_ref=worker_result.worker_result.execution_report_ref,
             node_execution_ref=execution_ref,
@@ -377,6 +421,10 @@ class FrontDeskPiNodeRunner:
             raise ContractValidationError("frontdesk PiWorker work unit hash does not match execution record")
         if _hash_ref(active_workspace, record.node_spec_ref) != record.node_spec_hash:
             raise ContractValidationError("frontdesk PiWorker node spec hash is stale")
+        if _hash_ref(active_workspace, record.piworker_call_result_ref) != record.piworker_call_result_hash:
+            raise ContractValidationError("frontdesk PiWorker call result hash is stale")
+        call_result = PiWorkerCallResult.from_dict(active_workspace.read_json(record.piworker_call_result_ref))
+        call_result.validate_against_call(record.contract.call)
         for input_ref, input_hash in record.input_hashes.items():
             current_hash = _hash_ref(active_workspace, input_ref) if active_workspace.exists(input_ref) else "missing"
             if current_hash != input_hash:
@@ -395,12 +443,69 @@ def _require_frontdesk_output_ref(ref: str) -> str:
     return safe
 
 
+def _frontdesk_node_contract_hash(
+    *,
+    node_name: str,
+    session_id: str,
+    node_spec_ref: str,
+    visible_refs: list[str],
+    expected_outputs: list[str],
+    allowed_outputs: list[str],
+) -> str:
+    return stable_json_hash(
+        {
+            "schema_version": "missionforge.frontdesk.pi_node_call_authority.v1",
+            "node_name": node_name,
+            "session_id": session_id,
+            "node_spec_ref": validate_ref(node_spec_ref, "frontdesk_pi_node.node_spec_ref"),
+            "visible_refs": [validate_ref(ref, "frontdesk_pi_node.visible_refs[]") for ref in visible_refs],
+            "expected_outputs": [_require_frontdesk_output_ref(ref) for ref in expected_outputs],
+            "allowed_outputs": [_require_frontdesk_output_ref(ref) for ref in allowed_outputs],
+        }
+    )
+
+
 def _node_spec_ref(*, session_id: str, node_name: str) -> str:
     return f"frontdesk/pi_nodes/{_safe_ref_fragment(session_id)}/{_safe_ref_fragment(node_name)}/node_spec.json"
 
 
 def _node_execution_ref(*, session_id: str, node_name: str) -> str:
     return f"frontdesk/pi_nodes/{_safe_ref_fragment(session_id)}/{_safe_ref_fragment(node_name)}/execution.json"
+
+
+def _node_call_result_ref(*, session_id: str, node_name: str) -> str:
+    return f"frontdesk/pi_nodes/{_safe_ref_fragment(session_id)}/{_safe_ref_fragment(node_name)}/piworker_call_result.json"
+
+
+def _frontdesk_piworker_call(
+    *,
+    node_name: str,
+    session_id: str,
+    node_spec_ref: str,
+    visible_refs: list[str],
+    expected_outputs: list[str],
+    allowed_outputs: list[str],
+) -> PiWorkerCall:
+    return PiWorkerCall(
+        call_id=f"frontdesk-{session_id}-{node_name}",
+        role=PiWorkerCallRole.FRONTDESK_AUTHOR,
+        contract_id=f"frontdesk-{session_id}",
+        contract_hash=_frontdesk_node_contract_hash(
+            node_name=node_name,
+            session_id=session_id,
+            node_spec_ref=node_spec_ref,
+            visible_refs=visible_refs,
+            expected_outputs=expected_outputs,
+            allowed_outputs=allowed_outputs,
+        ),
+        contract_ref=node_spec_ref,
+        objective=f"Produce structured {node_name} output JSON only.",
+        visible_refs=_dedupe_refs([node_spec_ref, *visible_refs]),
+        writable_refs=allowed_outputs,
+        expected_output_refs=list(expected_outputs),
+        source_packet_ref=node_spec_ref,
+        metadata={"frontdesk_node_name": node_name},
+    )
 
 
 def _node_guidance(

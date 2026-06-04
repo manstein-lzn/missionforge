@@ -31,7 +31,7 @@ The active requirements-discovery behavior is specified in
 `docs/FRONTDESK_SPEC_GRILL_DESIGN.md`. The refined product-context boundary is
 specified in `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md`, with the
 development plan in `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The
-planned live PiWorker authoring path is specified in
+implemented FrontDesk PiWorker authoring boundary is specified in
 `docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md`.
 
 ```text
@@ -128,6 +128,10 @@ FrontDeskAuthoringSession
 
 The new runtime path consumes TaskContract-derived role packets. PiWorker
 execution still consumes bounded runtime input with permission manifests.
+FrontDesk authoring nodes use the same minimal PiWorkerCall boundary before
+projection into the current WorkUnitContract runtime shape, so requirements
+discovery, execution, and judging share one refs-first invocation model without
+adding a worker registry.
 Product-aware FrontDesk output is useful only after Product Integration compiles
 it, deterministic validation passes, and the contract/projection refs are
 written.
@@ -539,7 +543,8 @@ The current implementation includes:
 - CLI commands for start, answer, inspect, scout, grill, cover-semantics, plan,
   review-plan, map, draft, intent, compile-product, audit, approve, freeze,
   and run;
-- opt-in PiWorker node runner that builds bounded contracts, requires explicit
+- opt-in PiWorker node runner that builds `PiWorkerCall` authoring boundaries,
+  projects them to bounded `WorkUnitContract` objects, requires explicit
   adapter injection, validates exact expected refs, and records execution
   provenance without adding another worker abstraction;
 - runtime feedback recommendations for repair, resume, revision, redesign,

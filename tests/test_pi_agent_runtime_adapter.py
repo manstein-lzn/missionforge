@@ -20,6 +20,7 @@ from missionforge.adapters.pi_agent_runtime import (
 from missionforge.agent_packets import AgentExecutionPacket, AgentExecutionStatus, HardCheckStatus, JudgePacket, JudgeReportDecision
 from missionforge.contracts import ContractValidationError, stable_json_hash
 from missionforge.evidence_store import InMemoryEvidenceStore
+from missionforge.piworker_call import PiWorkerCallResult
 from missionforge.work_unit import WorkUnitContract
 
 
@@ -336,6 +337,10 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result.execution_report.metrics["time_to_first_artifact_ms"], 2)
         self.assertNotIn("tool_latency_ms_by_name", result.execution_report.metrics)
         self.assertEqual(input_payload["schema_version"], "missionforge.pi_agent_runtime_input.v1")
+        self.assertEqual(input_payload["piworker_call"]["schema_version"], "piworker_call.v1")
+        self.assertEqual(input_payload["piworker_call"]["call_id"], "WU-000001")
+        self.assertEqual(input_payload["piworker_call"]["expected_output_refs"], ["package/SKILL.md"])
+        self.assertEqual(input_payload["piworker_call"]["writable_refs"], ["package"])
         self.assertEqual(input_payload["repair"]["mode"], "none")
         self.assertEqual(input_payload["savepoints_ref"], "attempts/WU-000001/pi_agent_savepoints.jsonl")
         self.assertEqual(input_payload["permission_manifest"]["schema_version"], "permission_manifest.v1")
@@ -565,15 +570,24 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
             report = PiAgentExecutorNode(workspace_root=tempdir, adapter=adapter).execute(
                 packet,
                 packet_ref="packets/execution_packet.json",
                 workspace=object(),
             )
+            call_result_payload = json.loads(
+                (root / "attempts/WU-000001/piworker_call_result.json").read_text(encoding="utf-8")
+            )
 
         self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
         self.assertEqual(report.produced_artifact_refs, ["package/SKILL.md"])
         self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
+        self.assertIn("attempts/WU-000001/piworker_call_result.json", report.changed_refs)
+        self.assertIn("attempts/WU-000001/piworker_call_result.json", report.evidence_refs)
+        call_result = PiWorkerCallResult.from_dict(call_result_payload)
+        self.assertEqual(call_result.output_refs, ["package/SKILL.md"])
+        self.assertEqual(call_result.metric_refs, ["attempts/WU-000001/pi_agent_metrics.json"])
 
     def test_pi_agent_judge_node_preserves_packet_hash_and_report_ref(self) -> None:
         runner = JudgeRecordingRunner()
@@ -611,6 +625,9 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                 packet_ref="packets/judge_packet.json",
                 workspace=object(),
             )
+            call_result_payload = json.loads(
+                (root / "attempts/judge-packet-001/piworker_call_result.json").read_text(encoding="utf-8")
+            )
 
             self.assertEqual(report.decision, JudgeReportDecision.ACCEPTED)
             self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
@@ -618,6 +635,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertIsNotNone(runner.captured_input)
             self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["reports/judge_report.json"])
             self.assertEqual(runner.captured_input["contract"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
+            call_result = PiWorkerCallResult.from_dict(call_result_payload)
+            self.assertEqual(call_result.output_refs, ["reports/judge_report.json"])
 
     def test_pi_agent_judge_node_rejects_failed_hard_checks(self) -> None:
         packet = sample_judge_packet()

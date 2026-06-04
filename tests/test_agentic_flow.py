@@ -20,9 +20,11 @@ from missionforge import (
     JudgeReportDecision,
     PermissionManifest,
     RepairBrief,
+    RunReplayStatus,
     TaskContract,
     TaskRevisionRequest,
     WorkspacePolicy,
+    replay_decision_ledger,
     stable_json_hash,
 )
 from missionforge.adapters.pi_agent_runtime import PiAgentExecutorNode, PiAgentJudgeNode, PiAgentRuntimeConfig
@@ -491,7 +493,8 @@ class AgenticFlowTests(unittest.TestCase):
             self.assertEqual(judge_packet["execution_report_hash"], stable_json_hash(execution_report))
             self.assertEqual(judge_report["packet_hash"], stable_json_hash(judge_packet))
             self.assertTrue(_exists(f"{base}/checkpoints/latest.json"))
-            self.assertEqual(_line_count(f"{base}/ledgers/decision_ledger.jsonl"), 4)
+            self.assertTrue(_exists(f"{base}/packages/final_package.json"))
+            self.assertEqual(_line_count(f"{base}/ledgers/decision_ledger.jsonl"), 8)
             entries = [
                 json.loads(line)
                 for line in Path(f"{base}/ledgers/decision_ledger.jsonl").read_text(encoding="utf-8").splitlines()
@@ -499,15 +502,33 @@ class AgenticFlowTests(unittest.TestCase):
             self.assertEqual(
                 [entry["event_kind"] for entry in entries],
                 [
+                    "contract_frozen",
+                    "projection_written",
+                    "hard_checks_recorded",
                     "execution_packet_issued",
                     "execution_report_recorded",
                     "judge_packet_issued",
                     "judge_report_recorded",
+                    "final_package_emitted",
                 ],
             )
             self.assertTrue(all(entry["contract_hash"] == result.contract_hash for entry in entries))
             self.assertTrue(all("ref_map" in entry for entry in entries))
-            self.assertNotIn("raw_transcript", json.dumps(entries, sort_keys=True))
+            ledger_text = json.dumps(entries, sort_keys=True)
+            for forbidden in ["raw_transcript", "provider_payload", "stdout", "stderr", "deliverable"]:
+                self.assertNotIn(forbidden, ledger_text)
+
+            final_package = json.loads(Path(f"{base}/packages/final_package.json").read_text(encoding="utf-8"))
+            self.assertEqual(final_package["contract_hash"], result.contract_hash)
+            self.assertEqual(final_package["judge_report_ref"], "reports/judge_report.json")
+            self.assertEqual(final_package["accepted_artifact_refs"], ["artifacts/final.md"])
+            self.assertEqual(final_package["hard_check_refs"], ["reports/hard_checks.json"])
+            self.assertEqual(final_package["metric_refs"], ["ledgers/executor_metrics.jsonl"])
+
+            replay = replay_decision_ledger(base, decision_ledger_ref="ledgers/decision_ledger.jsonl")
+            self.assertEqual(replay.status, RunReplayStatus.ACCEPTED)
+            self.assertEqual(replay.final_package_ref, "packages/final_package.json")
+            self.assertEqual(replay.accepted_artifact_refs, ["artifacts/final.md"])
 
             checkpoint = json.loads(Path(f"{base}/checkpoints/latest.json").read_text(encoding="utf-8"))
             self.assertEqual(checkpoint["status"], "accepted")

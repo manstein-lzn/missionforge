@@ -1,12 +1,14 @@
 # TaskContract-Native Runtime Cutover Plan
 
-Last updated: 2026-06-01
+Last updated: 2026-06-03
 
-Status: implementation cutover plan. This document does not replace
-`docs/MISSIONFORGE_FINAL_SYSTEM_SHAPE.md` or
-`docs/MISSIONFORGE_SIMPLIFIED_AGENT_RUNTIME_IMPLEMENTATION_PLAN.md`; it is the
-short engineering sequence for moving the current repository from the mature
-MissionIR runtime path to the TaskContract-native PiWorker executor/judge path.
+Status: historical cutover plan, now subordinate to
+`docs/PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md`. Phases C1 and C2 are
+implemented in the current tree through `PiAgentJudgeNode`,
+`PiAgentExecutorNode`, `PiWorkerCall`, and the default TaskContract flow
+preset. The remaining work is product default-path closure, repair/revision
+runtime closure, DecisionLedger/FinalPackage replay, and legacy MissionIR/API
+demotion.
 
 ## Goal
 
@@ -42,6 +44,8 @@ Implemented and validated in the current tree:
 
 - TaskContract, WorkspacePolicy, PermissionManifest, WorkerBrief, JudgeRubric.
 - AgentExecutionPacket, AgentExecutionReport, JudgePacket, JudgeReport.
+- PiWorkerCall as the shared refs-first invocation boundary before existing
+  WorkUnitContract runtime projection.
 - Content-hash binding between packets, projections, execution reports, and
   judge reports.
 - `AgenticFlowRunner` offline executor/judge path with refs-only checkpoint and
@@ -69,6 +73,8 @@ Remaining gaps are runtime closure, not architecture discovery.
    product flows prove equivalent or better guarantees.
 
 ## Phase C1: Live Judge PiWorker Lane
+
+Status: implemented. Retained as the acceptance record for the judge lane.
 
 Purpose: close independent semantic acceptance without changing the product
 entrypoint or repair loop.
@@ -104,11 +110,17 @@ for a small product-neutral TaskContract.
 
 ## Phase C2: PiWorker Executor + Judge AgenticFlow Preset
 
+Status: implemented. The narrow public entrypoint is
+`create_default_task_contract_flow`; adapter internals remain outside the
+package-root API.
+
 Purpose: provide a boring default TaskContract-native runtime assembly without
 turning it into a worker marketplace.
 
 Deliverables:
 
+- Executor and Judge nodes project role packets through `PiWorkerCall` before
+  converting to the current `WorkUnitContract` runtime shape.
 - A small factory/helper that assembles:
   - `PiAgentExecutorNode`
   - `PiAgentJudgeNode`
@@ -267,10 +279,11 @@ Exit criterion:
 New maintainers see one default product path and one documented compatibility
 path.
 
-## Phase C8: Value Benchmark Rerun
+## Phase C8: Optional Value Comparison
 
-Purpose: prove what the added structure buys, without over-claiming speed or
-cost wins.
+Purpose: prove what the added structure buys after the kernel is stable,
+without over-claiming speed or cost wins. This is not a request to restore the
+removed value_benchmark lane into core.
 
 Deliverables:
 
@@ -295,11 +308,10 @@ it buys relative to direct PiWorker chat.
 
 ## Immediate Next Task
 
-Implement Phase C1: live Judge PiWorker lane.
-
-This is the next load-bearing boundary because the final architecture depends on
-independent acceptance. FrontDesk live authoring is now proven; executor packets
-and content binding exist; the missing closure is live judge authority.
+Implement the remaining convergence work from
+`docs/PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md`, starting with the default
+TaskContract product path, repair/revision runtime closure, and
+DecisionLedger/FinalPackage replay.
 
 ## Completion Definition For Cutover
 

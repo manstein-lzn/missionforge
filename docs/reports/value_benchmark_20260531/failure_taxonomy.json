@@ -1,9 +1,0 @@
-{
-  "failure_taxonomy_counts": {
-    "hidden_acceptance_failed": 2,
-    "product_compile_failed_closed": 2,
-    "product_gate_failed": 1,
-    "runtime_verifier_failed": 1
-  },
-  "schema_version": "missionforge.value_benchmark_failure_taxonomy.v1"
-}

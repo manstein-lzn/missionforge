@@ -1,1 +1,0 @@
-I keep rewriting the same checklist for turning a rough engineering request into a clear implementation plan. I want a small local Codex skill package so I can reuse that checklist. First version can be prompt-only. Please keep everything under package/ and do not include any raw conversation or provider payload.
