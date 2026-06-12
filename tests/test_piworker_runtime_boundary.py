@@ -34,10 +34,11 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
     def test_factory_creates_pi_agent_runtime_adapter(self) -> None:
         config = PiAgentRuntimeConfig(command=("pi-agent-runtime",))
 
-        worker = PiWorkerRuntimeFactory(config=config).create_default_worker()
+        adapter = PiWorkerRuntimeFactory(config=config).create_default_worker()
 
-        self.assertIsInstance(worker, PiAgentRuntimeAdapter)
-        self.assertEqual(worker.config.command, ("pi-agent-runtime",))
+        self.assertIsInstance(adapter, PiAgentRuntimeAdapter)
+        self.assertTrue(callable(getattr(adapter, "run_call", None)))
+        self.assertEqual(adapter.config.command, ("pi-agent-runtime",))
         self.assertIsInstance(create_default_piworker_adapter(config), PiAgentRuntimeAdapter)
 
     def test_runner_does_not_import_pi_agent_adapter_directly(self) -> None:

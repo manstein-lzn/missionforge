@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from missionforge.adapters.pi_agent_provider_config import load_codex_current_provider
 from missionforge.adapters.pi_agent_runtime import (
@@ -611,13 +610,14 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             writable_refs=["package", "reports"],
         )
 
+        self.assertFalse(hasattr(PiWorkerCall, "to_work_unit_contract"))
+
         with tempfile.TemporaryDirectory() as tempdir:
-            with patch.object(PiWorkerCall, "to_work_unit_contract", side_effect=AssertionError("legacy projection called")):
-                report = PiAgentExecutorNode(workspace_root=tempdir, adapter=adapter).execute(
-                    packet,
-                    packet_ref="packets/execution_packet.json",
-                    workspace=object(),
-                )
+            report = PiAgentExecutorNode(workspace_root=tempdir, adapter=adapter).execute(
+                packet,
+                packet_ref="packets/execution_packet.json",
+                workspace=object(),
+            )
 
         self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
         self.assertIsNotNone(runner.captured_input)

@@ -412,6 +412,7 @@ Use these as the primary MissionForge kernel surface:
 - `AgenticFlowRunner`
 - `create_default_task_contract_flow`
 - `PiWorkerCall`
+- `PiWorkerCallAdapter`
 - `PiWorkerCallResult`
 - `FinalPackage`
 - `TaskContractDecisionLedgerEntry`

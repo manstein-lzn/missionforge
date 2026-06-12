@@ -63,6 +63,7 @@ MissionForge internals.
 
 - `create_default_task_contract_flow(...)`
 - `PiWorkerRuntimeFactory`
+- `PiWorkerCallAdapter`
 - `run_repair_directive_with_default_piworker(...)`
 - `build_repair_rejudge_packet(...)`
 - `run_revision_draft_with_default_piworker(...)`

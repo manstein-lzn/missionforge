@@ -130,6 +130,7 @@ from .piworker_call import (
     PiWorkerCallRole,
 )
 from .piworker_runtime import (
+    PiWorkerCallAdapter,
     PiWorkerRuntimeFactory,
     TaskContractFlowPreset,
     create_default_piworker_adapter,
@@ -259,6 +260,7 @@ __all__ = [
     "ProfileRecommendationSet",
     "PlanReviewRecord",
     "PiWorkerCall",
+    "PiWorkerCallAdapter",
     "PiWorkerCallResult",
     "PiWorkerCallResultStatus",
     "PiWorkerCallRole",

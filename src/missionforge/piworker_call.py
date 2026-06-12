@@ -26,7 +26,6 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
-from .work_unit import WorkUnitContract
 from .workers import WorkerAdapterResult
 
 
@@ -373,37 +372,6 @@ class PiWorkerCall:
             "runtime_budget": dict(self.runtime_budget),
             "metadata": dict(self.metadata),
         }
-
-    def to_work_unit_contract(
-        self,
-        *,
-        iteration: int = 1,
-        exit_criteria: list[str] | None = None,
-        stop_conditions: list[str] | None = None,
-    ) -> WorkUnitContract:
-        """Project this PiWorker call into the legacy WorkUnit runtime shape."""
-
-        self.validate()
-        require_int_at_least(iteration, "piworker_call.iteration", 1)
-        work_unit = WorkUnitContract(
-            work_unit_id=self.call_id,
-            mission_id=self.contract_id,
-            iteration=iteration,
-            next_objective=self.objective,
-            allowed_scope=list(self.writable_refs),
-            visible_refs=_dedupe_refs(
-                [
-                    *self.visible_refs,
-                    *([self.permission_manifest_ref] if self.permission_manifest_ref else []),
-                ]
-            ),
-            expected_outputs=list(self.expected_output_refs),
-            exit_criteria=exit_criteria or ["Write all expected output refs through the PiWorker runtime."],
-            stop_conditions=stop_conditions or ["Stop if the PiWorker runtime reports failed or blocked."],
-        )
-        work_unit.validate()
-        return work_unit
-
 
 @dataclass(frozen=True)
 class PiWorkerCallResult:

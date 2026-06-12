@@ -129,6 +129,8 @@ Current core boundary:
 
 - `PiWorkerCall`
 - `PiWorkerCallRole`
+- `PiWorkerCallAdapter`
+- `PiWorkerRuntimeFactory`
 
 Older compatibility/faux runtime contracts remain in submodules for migration
 tests and offline reference behavior:
@@ -142,7 +144,6 @@ tests and offline reference behavior:
 - `ContractAdjustmentEvidence`
 - `PiWorkerRunResult`
 - `PiWorkerProviderEnvironment`
-- `PiWorkerRuntimeFactory`
 
 ## Contract Sketch
 

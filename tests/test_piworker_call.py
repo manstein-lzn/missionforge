@@ -210,22 +210,17 @@ def worker_adapter_result(*, status: str = "completed", produced_refs: list[str]
 
 
 class PiWorkerCallTests(unittest.TestCase):
-    def test_round_trip_and_work_unit_projection(self) -> None:
+    def test_round_trip_preserves_piworker_call_authority(self) -> None:
         call = PiWorkerCall.from_dict(piworker_call_payload())
 
         self.assertEqual(call.role, PiWorkerCallRole.EXECUTOR)
         self.assertEqual(PiWorkerCall.from_dict(call.to_dict()), call)
-
-        work_unit = call.to_work_unit_contract(
-            exit_criteria=["Artifacts exist."],
-            stop_conditions=["Runtime failed."],
-        )
-        self.assertEqual(work_unit.work_unit_id, "call-001")
-        self.assertEqual(work_unit.mission_id, "contract-001")
-        self.assertEqual(work_unit.next_objective, "Produce expected artifacts.")
-        self.assertEqual(work_unit.allowed_scope, ["artifacts", "reports"])
-        self.assertEqual(work_unit.expected_outputs, ["artifacts/final.md"])
-        self.assertEqual(work_unit.visible_refs.count("policy/permission_manifest.json"), 1)
+        self.assertEqual(call.call_id, "call-001")
+        self.assertEqual(call.contract_id, "contract-001")
+        self.assertEqual(call.objective, "Produce expected artifacts.")
+        self.assertEqual(call.writable_refs, ["artifacts", "reports"])
+        self.assertEqual(call.expected_output_refs, ["artifacts/final.md"])
+        self.assertEqual(call.visible_refs.count("policy/permission_manifest.json"), 1)
         self.assertEqual(call.output_schema_ref, "schemas/agent_execution_report.json")
         self.assertEqual(call.validation_policy_ref, "validation/piworker_executor_policy.json")
         self.assertEqual(call.runtime_budget, {"max_turns": 4, "timeout_seconds": 300})
@@ -290,12 +285,11 @@ class PiWorkerCallTests(unittest.TestCase):
             packet_ref="packets/judge_packet.json",
             spec_ref="attempts/judge-packet-001/judge_node_spec.json",
         )
-        work_unit = call.to_work_unit_contract()
 
         self.assertEqual(call.role, PiWorkerCallRole.JUDGE)
         self.assertEqual(call.metadata, {"hard_check_status": "passed"})
         self.assertEqual(
-            work_unit.allowed_scope,
+            call.writable_refs,
             [
                 "reports/judge_report.json",
                 "reports/judge_rationale.md",
@@ -303,8 +297,8 @@ class PiWorkerCallTests(unittest.TestCase):
                 "revisions/request.json",
             ],
         )
-        self.assertEqual(work_unit.expected_outputs, ["reports/judge_report.json"])
-        self.assertEqual(work_unit.visible_refs[0], "attempts/judge-packet-001/judge_node_spec.json")
+        self.assertEqual(call.expected_output_refs, ["reports/judge_report.json"])
+        self.assertEqual(call.visible_refs[0], "attempts/judge-packet-001/judge_node_spec.json")
 
     def test_repair_directive_projection_uses_same_piworker_call_boundary(self) -> None:
         directive = repair_directive()

@@ -36,6 +36,7 @@ New product integrations should start with the TaskContract/PiWorker kernel:
   - `project_judge_rubric`
 - PiWorker call boundary:
   - `PiWorkerCall`
+  - `PiWorkerCallAdapter`
   - `PiWorkerCallResult`
   - `PiWorkerCallRole`
   - `PiWorkerCallResultStatus`
@@ -223,8 +224,9 @@ Allowed:
 - external integration code under `integrations/*`
 
 Legacy adapters may still accept explicit `WorkUnitContract` values for
-migration behavior. New PiWorker adapter paths should project `PiWorkerCall`
-into a minimal runtime input/sidecar contract instead of constructing
+migration behavior. New PiWorker adapter paths should expose the
+`PiWorkerCallAdapter.run_call(...)` boundary and project `PiWorkerCall` into a
+minimal runtime input/sidecar contract instead of constructing
 `WorkUnitContract`.
 
 Adapter-specific classes such as `PiAgentRuntimeConfig`,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .agentic_repair_controller import RepairExecutionDirective
 from .agentic_revision_controller import RevisionPendingRecord
@@ -20,7 +20,27 @@ from .agentic_ledger import (
 )
 from .contracts import ContractValidationError, stable_json_hash, validate_ref
 from .piworker_call import PiWorkerCall, PiWorkerCallResult
-from .workers import WorkerAdapter
+from .evidence_store import EvidenceLedger
+from .workers import WorkerAdapterResult
+
+
+class PiWorkerCallAdapter(Protocol):
+    """Minimal adapter protocol for the PiWorkerCall runtime boundary."""
+
+    adapter_family: str
+
+    def run_call(
+        self,
+        call: PiWorkerCall,
+        *,
+        workspace: str | Path = ".",
+        evidence_store: EvidenceLedger | None = None,
+        runtime_contract: Any | None = None,
+        exit_criteria: list[str] | None = None,
+        stop_conditions: list[str] | None = None,
+    ) -> WorkerAdapterResult:
+        """Execute one bounded PiWorker call."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -30,7 +50,7 @@ class PiWorkerRuntimeFactory:
     config: Any | None = None
     runner: Any | None = None
 
-    def create_default_worker(self) -> WorkerAdapter:
+    def create_default_worker(self) -> PiWorkerCallAdapter:
         from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
 
         if self.runner is None:
@@ -140,8 +160,8 @@ class PiWorkerRuntimeFactory:
         return call_result
 
 
-def create_default_piworker_adapter(config: Any | None = None, *, runner: Any | None = None) -> WorkerAdapter:
-    """Return the default PI Agent/PiWorker-compatible runtime adapter."""
+def create_default_piworker_adapter(config: Any | None = None, *, runner: Any | None = None) -> PiWorkerCallAdapter:
+    """Return the default PiWorkerCall adapter."""
 
     return PiWorkerRuntimeFactory(config=config, runner=runner).create_default_worker()
 

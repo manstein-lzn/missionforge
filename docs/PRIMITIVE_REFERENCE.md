@@ -53,6 +53,13 @@ The bounded intelligence RPC:
 - `permission_manifest_ref`
 - `evidence_refs`
 
+## PiWorkerCallAdapter
+
+The runtime adapter boundary for one bounded PiWorker call:
+
+- `adapter_family`
+- `run_call(call, workspace, evidence_store, exit_criteria, stop_conditions)`
+
 ## PiWorkerCallResult
 
 Boundary evidence for one call:
