@@ -5,14 +5,11 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from missionforge import (
-    DeterministicProposalProvider,
     InMemoryEvidenceStore,
     ProposalValidationStatus,
-    ProposalValidator,
-    WorkUnitCompiler,
-    WorkUnitHarness,
 )
 from missionforge.fake_worker import FakeWorker
+from missionforge.harness import DeterministicProposalProvider, ProposalValidator, WorkUnitCompiler, WorkUnitHarness
 from tests.test_proposal_validation import valid_proposal
 
 

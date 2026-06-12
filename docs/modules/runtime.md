@@ -30,6 +30,12 @@ Execute Mission IR through a fixed evidence-first adaptive loop.
 
 ## Current Status
 
+Status: legacy reference. The active runtime direction is the
+TaskContract/PiWorker flow documented in `docs/API_BOUNDARY.md`,
+`docs/USER_MANUAL.md`, and `docs/modules/agentic_flow.md`. The older
+MissionIR/MissionRuntime/RuntimeEngine path remains only as an explicit
+submodule compatibility surface and is no longer package-root public API.
+
 Phase 5 implemented the first deterministic runtime vertical slice behind the
 existing `MissionRuntime.run()` facade. The runtime now defaults to the
 dedicated `PiAgentRuntimeAdapter`, which invokes
@@ -108,11 +114,11 @@ Phase 17-21 hardening is documented in
 - `MissionRunAudit` provides refs-only stale/missing ref diagnostics for
   long-running missions.
 
-## Public Contracts
+## Legacy Submodule Contracts
 
-- `MissionRuntime`
-- `MissionResult`
-- `RuntimeEngine`
+- `missionforge.runner.MissionRuntime`
+- `missionforge.runner.MissionResult`
+- `missionforge.runtime.RuntimeEngine`
 - `MissionRunState`
 - `RuntimeAttemptRunner`
 - `RuntimeStateWriter`

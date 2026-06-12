@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ContractValidationError, SteeringContext
+from missionforge import ContractValidationError
+from missionforge.steering import SteeringContext
 from missionforge.adapters.steering_llm import ControlledSteeringLLMAdapter
 
 
@@ -77,4 +78,3 @@ def _context() -> SteeringContext:
 
 if __name__ == "__main__":
     unittest.main()
-

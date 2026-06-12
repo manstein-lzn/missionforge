@@ -6,7 +6,6 @@ import unittest
 from missionforge import (
     CapabilityProfile,
     ContractValidationError,
-    MissionIR,
     ProfilePack,
     ValidatorMode,
     ValidatorSeverity,
@@ -14,10 +13,11 @@ from missionforge import (
     VerificationProfile,
     VerificationSpec,
     VerificationStatus,
-    expand_mission,
     run_validator,
     verify_spec,
 )
+from missionforge.freeze import expand_mission
+from missionforge.ir import MissionIR
 from tests.test_ir import sample_mission_payload
 
 

@@ -6,7 +6,6 @@ import unittest
 from missionforge import (
     AuthorityRequirement,
     ContractValidationError,
-    MissionResult,
     RuntimeFeedbackAction,
     RuntimeFeedbackRecommendation,
     RuntimeFeedbackSourceKind,
@@ -22,6 +21,7 @@ from missionforge.frontdesk.runtime_feedback import (
     unsupported_validator_feedback,
 )
 from missionforge.revision import MissionRevisionRequest, MissionRevisionWorkflow
+from missionforge.runner import MissionResult
 
 
 class FrontDeskRuntimeFeedbackTests(unittest.TestCase):

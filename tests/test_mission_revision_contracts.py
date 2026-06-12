@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ContractAdjustmentRequest, ContractValidationError, MissionIR
+from missionforge import ContractValidationError
 from missionforge.freeze import freeze_mission
+from missionforge.ir import MissionIR
+from missionforge.steering import ContractAdjustmentRequest
 from missionforge.revision import MissionRevision, MissionRevisionDecision, MissionRevisionRequest, MissionRevisionWorkflow
 from tests.test_ir import sample_mission_payload
 

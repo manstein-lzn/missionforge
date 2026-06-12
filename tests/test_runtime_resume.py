@@ -4,7 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import ContractValidationError, MissionIR, MissionRuntime
+from missionforge import ContractValidationError
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from missionforge.runtime import RuntimeEngine
 from missionforge.work_unit import ExecutionReport, WorkerResult
 from missionforge.workers import WorkerAdapterResult

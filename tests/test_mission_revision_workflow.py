@@ -6,10 +6,13 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from missionforge import ContractAdjustmentRequest, ContractValidationError, MissionIR, MissionRuntime, apply_mission_revision
+from missionforge import ContractValidationError
 from missionforge.freeze import freeze_mission
+from missionforge.ir import MissionIR
 from missionforge.revision import MissionRevisionRequest, MissionRevisionWorkflow
-from missionforge.revision_store import MissionRevisionStore
+from missionforge.revision_store import MissionRevisionStore, apply_mission_revision
+from missionforge.runner import MissionRuntime
+from missionforge.steering import ContractAdjustmentRequest
 from missionforge.state import MissionRun
 from tests.test_ir import sample_mission_payload
 

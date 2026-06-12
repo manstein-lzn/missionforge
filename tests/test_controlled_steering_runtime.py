@@ -5,15 +5,14 @@ import unittest
 
 from missionforge import (
     EvidenceTrustLevel,
-    MissionIR,
     ObservationSignalType,
-    ObservationSignal,
     ReviewerDecision,
-    RuntimeEngine,
-    SteeringProposal,
 )
 from missionforge.contracts import AdaptiveDecision
 from missionforge.fake_worker import FakeWorker
+from missionforge.ir import MissionIR
+from missionforge.runtime import RuntimeEngine
+from missionforge.steering import ObservationSignal, SteeringProposal
 from tests.test_ir import sample_mission_payload
 
 

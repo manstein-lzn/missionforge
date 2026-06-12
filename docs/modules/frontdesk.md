@@ -276,8 +276,9 @@ Recommended artifact set:
 
 The exact filenames can evolve, but the separation must remain: conversation is
 provenance, semantic lock is task truth, intent bundle is FrontDesk output,
-Product Integration owns product contracts, and MissionIR is the runtime
-contract.
+Product Integration owns product contracts, and TaskContract is the default
+runtime contract. Draft MissionIR artifacts are legacy generic-fallback
+compatibility only.
 
 ## State Model
 
@@ -497,7 +498,8 @@ FrontDesk implementation should include tests for:
   MissionIR;
 - approval is required before freeze;
 - frozen contract hash is stable;
-- frozen MissionIR can run through `MissionRuntime`;
+- legacy frozen MissionIR can still run through the legacy `MissionRuntime`
+  submodule while that compatibility path exists;
 - external ProfilePack composition works without core runtime branches;
 - SkillFoundry uses FrontDesk output as an integration, not as core runtime
   behavior.

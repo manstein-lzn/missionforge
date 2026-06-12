@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ProposalValidationStatus, ProposalValidator, SteeringProposal, WorkUnitCompiler
+from missionforge import ProposalValidationStatus
 from missionforge.contracts import AdaptiveDecision, ContractValidationError
+from missionforge.harness import ProposalValidator, WorkUnitCompiler
+from missionforge.steering import SteeringProposal
 
 
 def valid_proposal() -> SteeringProposal:

@@ -3,7 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import FrontDesk, MissionIR
+from missionforge import FrontDesk
+from missionforge.ir import MissionIR
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
 from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts

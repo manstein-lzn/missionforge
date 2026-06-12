@@ -4,7 +4,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import EvidenceTrustLevel, MissionIR, RuntimeEngine, SteeringProposal
+from missionforge import EvidenceTrustLevel
+from missionforge.ir import MissionIR
+from missionforge.runtime import RuntimeEngine
+from missionforge.steering import SteeringProposal
 from missionforge.adapters.cli import MissionCLI
 from missionforge.contracts import AdaptiveDecision
 from missionforge.fake_worker import FakeWorker

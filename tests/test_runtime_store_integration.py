@@ -4,7 +4,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from missionforge import JsonWorkspaceStore, MissionIR, MissionRuntime
+from missionforge import JsonWorkspaceStore
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from tests.test_ir import sample_mission_payload
 
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import MissionIR, freeze_mission
+from missionforge.freeze import freeze_mission
+from missionforge.ir import MissionIR
 from tests.test_ir import sample_mission_payload
 
 

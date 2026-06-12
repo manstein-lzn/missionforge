@@ -429,7 +429,7 @@ Acceptance:
 Use the Python API until Phase 11 adds CLI UX:
 
 ```python
-from missionforge import MissionRuntime
+from missionforge.runner import MissionRuntime
 
 summary = MissionRuntime(workspace="...").inspect("run-sample-mission")
 ```

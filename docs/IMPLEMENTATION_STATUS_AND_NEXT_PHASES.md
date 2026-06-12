@@ -60,7 +60,8 @@ the final long-running mission platform is complete
 ```
 
 MissionIR, old runtime, steering, work-unit, and metric-dict surfaces remain as
-compatibility and migration surfaces. New product work should start with the
+legacy submodule compatibility and migration surfaces. They are no longer
+package-root public API. New product work should start with the
 TaskContract/PiWorker path.
 
 ## Current Architecture Target
@@ -274,11 +275,11 @@ The package root no longer re-exports `RuntimeContractView` or
 `ActiveMissionContract`. Stable, experimental, and internal surfaces are
 documented in `docs/API_BOUNDARY.md`.
 
-`RuntimeEngine`, MissionIR, steering, and work-unit surfaces remain exported for
-compatibility. Product integrations should default to `TaskContract`,
-`WorkspacePolicy`, `PermissionManifest`, `WorkerBrief`, `JudgeRubric`,
-`create_default_task_contract_flow(...)`, repair/revision primitives, and
-refs-first ledgers.
+`RuntimeEngine`, MissionIR, steering, and work-unit surfaces remain available
+only through explicit legacy submodules for migration. Product integrations
+should default to `TaskContract`, `WorkspacePolicy`, `PermissionManifest`,
+`WorkerBrief`, `JudgeRubric`, `create_default_task_contract_flow(...)`,
+repair/revision primitives, and refs-first ledgers.
 
 ### 6. Profiles Are Not Yet Strong Enough To Prevent Core Patching
 
@@ -373,9 +374,11 @@ Primary goals:
 
 - define public, experimental, and internal API lists;
 - remove or stop re-exporting internal helpers where feasible;
-- preserve compatibility for core public contracts such as `MissionIR`,
-  `MissionRuntime`, `MissionResult`, `MetricEvent`, `MetricProjection`,
-  `MissionRevision`, `JsonWorkspaceStore`, and store protocols;
+- remove legacy runtime, MissionIR, steering, and work-unit symbols from the
+  package root while preserving explicit submodule imports for migration;
+- preserve package-root access only for the TaskContract/PiWorker kernel and
+  genuinely shared infrastructure such as `MetricEvent`, `MetricProjection`,
+  `JsonWorkspaceStore`, and store protocols;
 - document how product integrations should depend on MissionForge.
 
 Candidate files:
@@ -392,7 +395,8 @@ Acceptance:
 - internal runtime helper exports are either removed or explicitly documented as
   experimental;
 - SkillFoundry integration continues to pass without importing internals;
-- no behavior change to `MissionRuntime.run()` or `resume()`.
+- no behavior change to legacy `MissionRuntime.run()` or `resume()` while those
+  submodules still exist.
 
 ### Phase 19: Metric Dict Sunset Plan
 

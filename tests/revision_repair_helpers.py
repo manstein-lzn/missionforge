@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from missionforge import ContractAdjustmentRequest, MissionIR, RuntimeEngine, apply_mission_revision
+from missionforge.ir import MissionIR
+from missionforge.revision_store import apply_mission_revision
+from missionforge.runtime import RuntimeEngine
+from missionforge.steering import ContractAdjustmentRequest
 from missionforge.work_unit import ExecutionReport, WorkerResult
 from missionforge.workers import WorkerAdapterResult
 

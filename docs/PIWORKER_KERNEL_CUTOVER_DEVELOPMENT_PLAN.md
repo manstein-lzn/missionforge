@@ -304,7 +304,11 @@ Phase 3 progress:
   contract-hash transition.
 - `docs/API_BOUNDARY.md` now names the primary TaskContract/PiWorker kernel
   surface first and demotes MissionIR, older runtime, work-unit, steering, and
-  metric-dict surfaces to compatibility guidance.
+  metric-dict surfaces to explicit legacy submodule compatibility guidance.
+- The package root no longer re-exports MissionIR, MissionRuntime,
+  RuntimeEngine, WorkUnitContract, old harness, old revision, or old steering
+  runtime symbols. Legacy tests import those compatibility symbols from their
+  owning submodules.
 - `tests.test_public_api_boundary` now has an explicit primary kernel export
   test so public imports stay aligned with the documentation.
 

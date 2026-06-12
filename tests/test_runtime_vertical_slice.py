@@ -4,7 +4,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR, MissionRuntime
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from tests.test_ir import sample_mission_payload
 
 

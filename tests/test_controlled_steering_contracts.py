@@ -4,13 +4,15 @@ import unittest
 
 from missionforge import (
     AuthorityRequirement,
-    ContractAdjustmentRequest,
     ContractValidationError,
+    ReviewPacket,
+    assert_refs_only_payload,
+)
+from missionforge.steering import (
+    ContractAdjustmentRequest,
     ObservationSignal,
     RepairStrategyProposal,
-    ReviewPacket,
     SteeringContext,
-    assert_refs_only_payload,
 )
 
 
@@ -142,4 +144,3 @@ class ControlledSteeringContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

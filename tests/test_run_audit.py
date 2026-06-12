@@ -5,7 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR, MissionRuntime, build_run_audit
+from missionforge import build_run_audit
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from missionforge.adapters.cli import MissionCLI
 from tests.test_ir import sample_mission_payload
 from tests.test_operator_cli_run import write_mission

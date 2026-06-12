@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR, RuntimeEngine
+from missionforge.ir import MissionIR
+from missionforge.runtime import RuntimeEngine
 from tests.revision_repair_helpers import ResumableRevisionWorker, run_and_apply_split_revision
 from tests.test_ir import sample_mission_payload
 

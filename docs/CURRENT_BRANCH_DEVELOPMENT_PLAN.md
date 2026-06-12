@@ -53,8 +53,8 @@ This branch should not:
 ## Current Branch Truth
 
 - `TaskContract` and PiWorker are the primary direction.
-- `MissionIR`, old runtime, steering, and metric-dict surfaces remain
-  compatibility paths.
+- `MissionIR`, old runtime, steering, work-unit, and metric-dict surfaces remain
+  legacy submodule compatibility paths; they are not package-root public API.
 - `create_default_task_contract_flow(...)` is the default product-neutral flow.
 - Runtime-owned `attempts/...` artifacts are the PiWorker audit plane.
 - Runtime projections are exposed as refs, not as worker-owned artifacts.
@@ -365,8 +365,8 @@ Goal: prevent compatibility code from becoming the active architecture again.
 
 Tasks:
 
-- [x] Mark MissionIR, old runtime, steering, and metric-dict surfaces as
-  compatibility in docs and public API guidance.
+- [x] Move MissionIR, old runtime, steering, and work-unit surfaces out of the
+  package-root public API and leave them as explicit legacy submodule imports.
 - [x] Stop adding features to legacy paths unless they preserve compatibility.
 - [x] Remove or isolate stale benchmark/demo references from the active lane.
 - [x] Keep product-specific branches out of `src/missionforge`.

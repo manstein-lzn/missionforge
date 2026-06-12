@@ -128,43 +128,46 @@ Stable root categories include:
 FrontDesk output is not operational task truth by itself. The frozen
 `TaskContract`, or an explicit revision of it, remains task authority.
 
-## Compatibility Surface
+## Legacy Submodule Surface
 
-These exports remain available for older code and migration paths, but they are
-not the recommended conceptual API for new product work:
+These symbols remain in legacy submodules for older code and migration paths,
+but they are not exported from the `missionforge` package root and are not the
+recommended conceptual API for new product work:
 
 - MissionIR and freeze path:
-  - `MissionIR`
-  - `MissionObjective`
-  - `MissionConstraint`
-  - `CapabilityProfileRef`
-  - `ExpandedMission`
-  - `FrozenMissionContract`
-  - `ContractManifest`
-  - `expand_mission`
-  - `freeze_mission`
+  - `missionforge.ir.MissionIR`
+  - `missionforge.ir.MissionObjective`
+  - `missionforge.ir.MissionConstraint`
+  - `missionforge.ir.CapabilityProfileRef`
+  - `missionforge.freeze.ExpandedMission`
+  - `missionforge.freeze.FrozenMissionContract`
+  - `missionforge.freeze.ContractManifest`
+  - `missionforge.freeze.expand_mission`
+  - `missionforge.freeze.freeze_mission`
 - Older runtime facade:
-  - `MissionRuntime`
-  - `MissionResult`
-  - `RuntimeEngine`
+  - `missionforge.runner.MissionRuntime`
+  - `missionforge.runner.MissionResult`
+  - `missionforge.runtime.RuntimeEngine`
 - Older revision contracts:
-  - `MissionRevision`
-  - `MissionRevisionRequest`
-  - `MissionRevisionDecision`
-  - `MissionRevisionWorkflow`
-  - `MissionRevisionStore`
-  - `apply_mission_revision`
+  - `missionforge.revision.MissionRevision`
+  - `missionforge.revision.MissionRevisionRequest`
+  - `missionforge.revision.MissionRevisionDecision`
+  - `missionforge.revision.MissionRevisionWorkflow`
+  - `missionforge.revision_store.MissionRevisionStore`
+  - `missionforge.revision_store.apply_mission_revision`
 - Work-unit and harness compatibility:
-  - `WorkUnitContract`
-  - `WorkUnitCompiler`
-  - `WorkUnitHarness`
-  - `WorkerInvocation`
-  - `WorkerResult`
-  - `AttemptInputManifest`
+  - `missionforge.work_unit.WorkUnitContract`
+  - `missionforge.harness.WorkUnitCompiler`
+  - `missionforge.harness.WorkUnitHarness`
+  - `missionforge.work_unit.WorkerInvocation`
+  - `missionforge.work_unit.WorkerResult`
+  - `missionforge.work_unit.AttemptInputManifest`
 - Controlled steering and metric-dict surfaces.
 
-Compatibility APIs may stay importable, but new features should not be added to
-them unless the change intentionally preserves migration behavior.
+Compatibility APIs may stay importable through their explicit submodules, but
+new features should not be added to them unless the change intentionally
+preserves migration behavior. New code should not import these symbols from the
+package root.
 
 ## Evidence, Store, And Verifier Surface
 

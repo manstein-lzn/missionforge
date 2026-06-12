@@ -3,7 +3,8 @@ from __future__ import annotations
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR, MissionResult, MissionRuntime
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionResult, MissionRuntime
 from tests.test_ir import sample_mission_payload
 
 

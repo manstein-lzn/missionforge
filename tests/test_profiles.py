@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import CapabilityProfile, MissionIR, ProfileRegistry, VerificationProfile
+from missionforge import CapabilityProfile, ProfileRegistry, VerificationProfile
+from missionforge.ir import MissionIR
 from missionforge.contracts import ContractValidationError
 from missionforge.freeze import expand_mission
 from tests.test_ir import sample_mission_payload

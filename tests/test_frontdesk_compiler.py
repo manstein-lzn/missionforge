@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from missionforge import MissionIR
+from missionforge.ir import MissionIR
 from missionforge.freeze import freeze_mission
 from missionforge.frontdesk.compiler import approved_hash_for, compile_frontdesk_artifacts
 from missionforge.frontdesk.schema import (

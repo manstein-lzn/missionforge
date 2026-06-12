@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR
+from missionforge.ir import MissionIR
 from missionforge.adapters.cli import MissionCLI
 from tests.revision_repair_helpers import run_and_apply_split_revision
 from tests.test_ir import sample_mission_payload

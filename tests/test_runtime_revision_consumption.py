@@ -5,7 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import ContractValidationError, MissionIR, RuntimeEngine
+from missionforge import ContractValidationError
+from missionforge.ir import MissionIR
+from missionforge.runtime import RuntimeEngine
 from missionforge.steering_store import SteeringArtifactStore
 from tests.revision_repair_helpers import ResumableRevisionWorker, run_and_apply_split_revision
 from tests.test_ir import sample_mission_payload
@@ -72,7 +74,8 @@ class RuntimeRevisionConsumptionTests(unittest.TestCase):
 
 class _ContextProvider:
     def next_proposal(self, context):
-        from missionforge import EvidenceTrustLevel, SteeringProposal
+        from missionforge import EvidenceTrustLevel
+        from missionforge.steering import SteeringProposal
         from missionforge.contracts import AdaptiveDecision
 
         return SteeringProposal(

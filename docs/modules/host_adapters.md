@@ -23,6 +23,10 @@ dependencies.
 
 ## Current Status
 
+Status: legacy reference. New host/product integrations should compile into
+TaskContract/PiWorker primitives. The older MissionIR/MissionRuntime CLI path is
+kept only for migration and operator-history context.
+
 Goal 6C now implements an optional offline host adapter shell. It keeps the
 primary integration path as `MissionIR -> MissionRuntime.run() ->
 MissionResult`, adds a small CLI/Python wrapper around that path, adds
@@ -65,15 +69,18 @@ Implemented in Phase 11 operator productization:
 
 ## Adapter Shapes
 
-The stable Python shape is already:
+The legacy Python shape was:
 
 ```text
 MissionIR -> MissionRuntime.run() -> MissionResult
 ```
 
-Host adapters must preserve that shape. A host shell may translate host state
-into a MissionIR ref and write a MissionResult summary back to the host, but it
-must not own verifier, repair, steering, or completion semantics.
+New host adapters should not preserve that shape as their default. They should
+compile host state into `TaskContract`, `WorkspacePolicy`, and
+`PermissionManifest`, then use the PiWorker executor/judge flow. A legacy host
+shell may still translate host state into a MissionIR ref and write a
+MissionResult summary back to the host, but it must not own verifier, repair,
+steering, or completion semantics.
 
 Observation surfaces are read-only:
 

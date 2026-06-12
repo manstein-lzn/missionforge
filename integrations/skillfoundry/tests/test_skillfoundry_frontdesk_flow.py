@@ -5,10 +5,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import FrontDesk, MissionIR, MissionRuntime
+from missionforge import FrontDesk
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
-from missionforge.runner import MissionResult
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionResult, MissionRuntime
 from missionforge_skillfoundry import BundleProfile, SkillFoundryMissionCompiler, SkillFoundryRequest
 from missionforge_skillfoundry.runtime import run_skillfoundry_bundle_build
 from missionforge_skillfoundry.workspace import read_json_ref

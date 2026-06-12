@@ -48,8 +48,8 @@ contracts, rubrics, hard checks, fixtures, and product packages.
 The current branch already has:
 
 - TaskContract/PiWorker as the primary public direction.
-- MissionIR, old runtime, steering, work-unit, and metric-dict APIs documented
-  as compatibility surfaces.
+- MissionIR, old runtime, steering, work-unit, and metric-dict APIs demoted to
+  explicit legacy submodule surfaces rather than package-root public API.
 - `create_default_task_contract_flow(...)` as the default product-neutral flow.
 - Independent judge acceptance; executor completion does not self-accept.
 - Same-contract repair and explicit revised-contract continuation.
@@ -93,7 +93,8 @@ Tasks:
   fixtures, tests, or docs.
 - Re-check public exports in `src/missionforge/__init__.py`.
 - Keep TaskContract/PiWorker primitives as the primary public surface.
-- Keep MissionIR and old runtime APIs available only as compatibility paths.
+- Keep MissionIR and old runtime APIs available only as explicit legacy
+  submodule paths until they are deleted.
 - Add or adjust boundary tests if any public surface moved.
 
 Exit condition:
@@ -186,7 +187,30 @@ Exit condition:
 - A decision ledger plus refs can explain the full run path without reading Pi
   transcripts or provider payloads.
 
-## Phase 7: Store And Runtime Cleanup
+## Phase 7: Legacy Deletion Cut
+
+Goal: remove the old conceptual surface instead of preserving compatibility
+forever.
+
+Tasks:
+
+- Keep package-root exports limited to the TaskContract/PiWorker kernel and
+  genuinely shared infrastructure.
+- Replace FrontDesk generic MissionIR fallback with TaskContract-native
+  ProductIntegration compilation.
+- Move or delete CLI commands that require MissionIR as the run input.
+- Change Pi Agent runtime projection so it can consume PiWorkerCall/agent
+  packets directly instead of `WorkUnitContract`.
+- Delete `MissionRuntime`, `RuntimeEngine`, `MissionIR`, `WorkUnitContract`,
+  old harness, old faux worker, and old steering runtime tests only after their
+  invariants are covered by TaskContract/PiWorker tests.
+
+Exit condition:
+
+- New programmers encounter one conceptual runtime path in code and docs:
+  TaskContract/PiWorker.
+
+## Phase 8: Store And Runtime Cleanup
 
 Goal: reduce future maintenance risk without changing the conceptual model.
 
@@ -205,7 +229,7 @@ Exit condition:
 - Runtime evidence remains refs-first, permission-bounded, and replayable, with
   no second hidden write path for important state.
 
-## Phase 8: FrontDesk PiWorker Authoring Slice
+## Phase 9: FrontDesk PiWorker Authoring Slice
 
 Goal: improve requirement discovery without adding deterministic product
 understanding to core.
@@ -224,7 +248,7 @@ Exit condition:
 - FrontDesk can improve semantic input quality while preserving the same hard
   contract and product-integration boundaries.
 
-## Phase 9: Release Candidate Validation
+## Phase 10: Release Candidate Validation
 
 Goal: produce a branch external programmers can try.
 
@@ -273,4 +297,3 @@ programmer as:
   inspectable through refs and ledgers;
 - a platform where product teams build integrations outside core instead of
   modifying MissionForge internals.
-

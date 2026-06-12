@@ -9,12 +9,10 @@ from missionforge import (
     ControlPoint,
     ControlRequest,
     InMemoryEvidenceStore,
-    ProposalValidator,
-    WorkUnitCompiler,
-    WorkUnitHarness,
 )
 from missionforge.contracts import ContractValidationError
 from missionforge.fake_worker import FakeWorker
+from missionforge.harness import ProposalValidator, WorkUnitCompiler, WorkUnitHarness
 from tests.test_proposal_validation import valid_proposal
 
 

@@ -5,7 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import MissionIR, MissionRuntime
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from missionforge.adapters.pi_agent_runtime import PiAgentCommandResult, PiAgentRuntimeAdapter, PiAgentRuntimeConfig
 from missionforge.evidence_store import InMemoryEvidenceStore
 from missionforge.runtime import RuntimeEngine

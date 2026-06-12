@@ -3,8 +3,9 @@ from __future__ import annotations
 import unittest
 from tempfile import TemporaryDirectory
 
-from missionforge import MissionIR, MissionRuntime, MissionValidationError
-from missionforge import MissionResult, Ref
+from missionforge import Ref
+from missionforge.ir import MissionIR, MissionValidationError
+from missionforge.runner import MissionResult, MissionRuntime
 
 
 def sample_mission_payload() -> dict:

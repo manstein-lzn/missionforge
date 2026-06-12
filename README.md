@@ -39,8 +39,9 @@ This branch is centered on the TaskContract-native PiWorker runtime:
 - SkillFoundry is the active external product integration.
 - The old active value-benchmark lane has been removed from the product path.
 
-MissionIR and older deterministic runtime modules still exist as compatibility
-and migration surfaces. New product work should prefer the TaskContract-native
+MissionIR and older deterministic runtime modules now exist only as explicit
+legacy submodule surfaces for migration. They are not exported from the
+`missionforge` package root. New product work should use the TaskContract-native
 PiWorker path.
 
 ## Runtime Shape
@@ -368,7 +369,7 @@ missionforge -> does not import missionforge_skillfoundry
 
 Its default compile path emits `TaskContract`, `WorkspacePolicy`, and
 `PermissionManifest` refs under `runs/{bundle_id}/`. MissionIR APIs remain only
-for migration compatibility.
+in legacy submodules for migration compatibility.
 
 Run SkillFoundry tests from the repository root:
 
@@ -421,6 +422,12 @@ Use these as the primary MissionForge kernel surface:
 Adapter internals such as `PiAgentRuntimeAdapter` are intentionally not
 exported from the package root. Import them directly only when building or
 testing adapter-specific behavior.
+
+Legacy symbols such as `MissionIR`, `MissionRuntime`, `RuntimeEngine`, and
+`WorkUnitContract` are also intentionally not exported from the package root.
+If old tests or migration tools still need them, import the explicit submodule
+surface, for example `missionforge.ir`, `missionforge.runner`,
+`missionforge.runtime`, or `missionforge.work_unit`.
 
 ## Design Documents
 

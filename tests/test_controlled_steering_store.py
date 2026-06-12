@@ -4,14 +4,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import (
-    DecisionLedgerEntry,
-    ProposalValidationStatus,
-    SteeringArtifactStore,
-    SteeringContext,
-    SteeringProposal,
-)
+from missionforge import ProposalValidationStatus
 from missionforge.contracts import AdaptiveDecision
+from missionforge.steering import DecisionLedgerEntry, SteeringContext, SteeringProposal
+from missionforge.steering_store import SteeringArtifactStore
 
 
 class ControlledSteeringStoreTests(unittest.TestCase):
@@ -72,4 +68,3 @@ class ControlledSteeringStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

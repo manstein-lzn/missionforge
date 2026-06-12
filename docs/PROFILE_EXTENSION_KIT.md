@@ -68,7 +68,9 @@ External integration code should build or load a pack, convert it to a registry,
 and pass the registry into MissionForge expansion or freezing:
 
 ```python
-from missionforge import MissionIR, ProfilePack, expand_mission, freeze_mission
+from missionforge import ProfilePack
+from missionforge.freeze import expand_mission, freeze_mission
+from missionforge.ir import MissionIR
 
 pack = ProfilePack.from_dict(profile_pack_payload)
 registry = pack.to_registry(include_builtins=True)

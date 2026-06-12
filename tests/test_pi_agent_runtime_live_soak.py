@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import unittest
 
-from missionforge import MissionIR, MissionRuntime
+from missionforge.ir import MissionIR
+from missionforge.runner import MissionRuntime
 from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeConfig
 from tests.test_ir import sample_mission_payload
 

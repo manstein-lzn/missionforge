@@ -3,9 +3,12 @@ from __future__ import annotations
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import EvidenceTrustLevel, MissionIR, ProposalValidationStatus, RuntimeEngine, SteeringProposal
+from missionforge import EvidenceTrustLevel, ProposalValidationStatus
 from missionforge.contracts import AdaptiveDecision
 from missionforge.fake_worker import FakeWorker
+from missionforge.ir import MissionIR
+from missionforge.runtime import RuntimeEngine
+from missionforge.steering import SteeringProposal
 from tests.test_ir import sample_mission_payload
 
 
@@ -88,4 +91,3 @@ class _UnsafeScopeProvider:
 
 if __name__ == "__main__":
     unittest.main()
-
