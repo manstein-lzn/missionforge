@@ -129,14 +129,14 @@ The current working tree was validated with:
 ```bash
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # Node runtime: 8 tests passed
-# Python: Ran 511 tests: OK (skipped=5)
+# Python: Ran 512 tests: OK (skipped=5)
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
 # Ran 112 tests: OK (skipped=1)
 
-PYTHONPATH=src python3 -m unittest tests.test_public_api_boundary tests.test_agentic_ledger tests.test_agentic_flow tests.test_piworker_call tests.test_piworker_runtime_boundary
-# Ran 43 tests: OK (skipped=1)
+PYTHONPATH=src python3 -m unittest tests.test_public_api_boundary tests.test_agentic_ledger tests.test_agentic_flow tests.test_piworker_call tests.test_piworker_runtime_boundary tests.test_standalone_product_shell_example
+# Ran 44 tests: OK (skipped=1)
 
 PYTHONPATH=src python3 -m unittest tests.test_agentic_repair_controller tests.test_agentic_ledger
 # Ran 36 tests: OK

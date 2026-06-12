@@ -395,13 +395,15 @@ Focused validation after this progress:
   1 skipped.
 - `PYTHONPATH=src python3 -m unittest tests.test_public_api_boundary
   tests.test_agentic_ledger tests.test_agentic_flow tests.test_piworker_call
-  tests.test_piworker_runtime_boundary` passed after revised judge result
-  handling and public API boundary tightening:
-  43 tests, 1 skipped.
+  tests.test_piworker_runtime_boundary
+  tests.test_standalone_product_shell_example` passed after revised judge
+  result handling, public API boundary tightening, and standalone shell
+  evidence:
+  44 tests, 1 skipped.
 - `MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh` passed after the repair
   rejudge, revision draft, revision execution directive/rejudge, and revised
   judge result bridges:
-  8 Node runtime tests; 511 Python tests, 5 skipped; whitespace check passed.
+  8 Node runtime tests; 512 Python tests, 5 skipped; whitespace check passed.
 - `./scripts/validate_integrations.sh skillfoundry` passed after the repair
   rejudge, revision draft, revision execution directive/rejudge, revised judge
   result, and SkillFoundry TaskContract facade work:
@@ -429,9 +431,11 @@ Focused validation after this progress:
   - `product_grade=true`
   - `registry status=product_grade_registered`
   - MissionForge ledger replay status `accepted`
+- Manual-only standalone product shell evidence now exists:
+  `examples/standalone_product_shell.py` runs from public primitives and
+  reaches `status=accepted` plus `replay_status=accepted`; its focused test is
+  `tests.test_standalone_product_shell_example`.
 
 Remaining work:
 
-- Continue Phase 2 boundary tightening if any additional root exports or
-  compatibility-only surfaces need demotion.
 - Prepare the release-candidate cleanup and clean-worktree audit.

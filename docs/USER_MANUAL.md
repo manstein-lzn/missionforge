@@ -26,6 +26,39 @@ You usually provide:
 - hard-check refs
 - optional product-specific integration code outside `src/missionforge`
 
+## Build A Product Shell
+
+A product shell is ordinary application code outside `src/missionforge`. It
+does three things:
+
+1. Compile product meaning into MissionForge contracts.
+2. Provide an executor and independent judge, usually PiWorker-backed in real
+   use and deterministic in tests.
+3. Read refs-first results, ledgers, and final packages.
+
+The smallest standalone example is
+`examples/standalone_product_shell.py`. Run it from the repository root:
+
+```bash
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-demo
+```
+
+Expected shape:
+
+```text
+status=accepted
+replay_status=accepted
+final_package_ref=packages/final_package.json
+accepted_artifact_refs=['package/README.md']
+```
+
+That file is intentionally standalone product code. It imports public
+MissionForge primitives, compiles a small product request into `TaskContract`,
+`WorkspacePolicy`, and `PermissionManifest`, runs an executor and a separate
+judge, then replays the decision ledger. It should be the first file to copy
+when proving that a new product shell can be built without reading
+MissionForge internals.
+
 ## Main Entry Points
 
 - `create_default_task_contract_flow(...)`
@@ -34,6 +67,9 @@ You usually provide:
 - `build_repair_rejudge_packet(...)`
 - `run_revision_draft_with_default_piworker(...)`
 - `load_revision_draft_contract(...)`
+- `build_revision_execution_directive(...)`
+- `build_revision_rejudge_packet(...)`
+- `build_revision_judge_result(...)`
 - `AgenticFlowRunner`
 
 ## What The Flow Guarantees

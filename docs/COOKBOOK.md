@@ -98,3 +98,20 @@ workspace.
 
 Keep the default config faux. Switch to live only when you need to verify the
 real provider path.
+
+## 7. Start From The Standalone Shell
+
+Run the manual-only product shell example:
+
+```bash
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-demo
+```
+
+Use its structure for new integrations:
+
+- request dataclass
+- product compiler returning `TaskContract`, `WorkspacePolicy`, and
+  `PermissionManifest`
+- executor node
+- independent judge node
+- ledger replay check

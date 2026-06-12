@@ -587,7 +587,7 @@ tests/test_frontdesk_pi_node_runner.py
 # Ran 81 tests: OK
 
 PYTHONPATH=src python3 -m unittest discover -s tests
-# Current cutover validation: 511 tests, OK (skipped=5)
+# Current cutover validation: 512 tests, OK (skipped=5)
 
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # MissionForge validation passed

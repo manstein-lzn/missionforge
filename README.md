@@ -242,6 +242,16 @@ A complete offline executable fixture is maintained in
 product integration because it exercises the same contract, permission, packet,
 judge, ledger, and final-package path without requiring a live model.
 
+For a standalone product-shell shape that does not depend on test fixtures, run:
+
+```bash
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-demo
+```
+
+That example compiles product meaning into TaskContract-native primitives,
+runs a deterministic executor and independent judge, and replays the decision
+ledger.
+
 ## Configure The Pi Agent Runtime
 
 The default `PiAgentRuntimeConfig` uses the faux provider:

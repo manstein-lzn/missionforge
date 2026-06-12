@@ -158,7 +158,7 @@ The following checks have passed during this branch line of work:
 
 - `MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh`
   - 8 Node runtime tests passed.
-  - 511 Python tests passed.
+  - 512 Python tests passed.
   - 5 Python tests skipped.
   - whitespace check passed.
 - `./scripts/validate_integrations.sh skillfoundry`
@@ -171,7 +171,7 @@ The following checks have passed during this branch line of work:
 - Focused combined repair/revision plus ledger suite:
   - 36 tests passed.
 - Core PiWorker/flow/ledger/public API focused suite:
-  - 43 tests passed.
+  - 44 tests passed.
   - 1 test skipped.
 - Public API boundary now has an explicit primary TaskContract/PiWorker root
   export test.
@@ -214,6 +214,16 @@ Evidence refs:
 - Replay of `/tmp/mf-skillfoundry-live-xxxbuoj9/runs/demo-skill` returned
   `status=accepted` with the three package refs accepted by the independent
   judge.
+- Manual-only standalone product shell evidence:
+
+```bash
+PYTHONPATH=src:. python3 -m unittest tests.test_standalone_product_shell_example
+# Ran 1 test: OK
+
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-manual-demo
+# status=accepted
+# replay_status=accepted
+```
 
 ## Known Gaps
 
@@ -317,6 +327,8 @@ Tasks:
   compatibility.
 - [x] Keep SkillFoundry documentation as an external integration example, not a
   required product methodology.
+- [x] Maintain a standalone product-shell example that can be run from public
+  docs without reading MissionForge source.
 
 Exit condition:
 
