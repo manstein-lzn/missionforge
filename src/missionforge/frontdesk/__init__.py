@@ -53,6 +53,7 @@ from .pi_node_runner import (
     FrontDeskPiNodeContract,
     FrontDeskPiNodeExecutionRecord,
     FrontDeskPiNodeRunner,
+    FrontDeskPiWorkerAdapter,
     frontdesk_pi_node_execution_ref,
     frontdesk_pi_node_spec_ref,
 )
@@ -138,6 +139,7 @@ __all__ = [
     "FrontDeskPiNodeContract",
     "FrontDeskPiNodeExecutionRecord",
     "FrontDeskPiNodeRunner",
+    "FrontDeskPiWorkerAdapter",
     "frontdesk_pi_node_execution_ref",
     "frontdesk_pi_node_spec_ref",
     "FrontDeskState",

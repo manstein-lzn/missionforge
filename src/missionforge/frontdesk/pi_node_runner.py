@@ -2,8 +2,7 @@
 
 This module does not introduce a second worker abstraction and does not call a
 live provider by default. It builds and validates bounded PiWorkerCall objects
-and projects them into WorkUnitContract objects for PiWorker-backed FrontDesk
-LLM nodes.
+for PiWorker-backed FrontDesk LLM nodes.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from ..contracts import (
     ContractValidationError,
@@ -24,8 +23,7 @@ from ..contracts import (
 )
 from ..evidence_store import EvidenceLedger
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
-from ..work_unit import WorkUnitContract
-from ..workers import WorkerAdapter, WorkerAdapterResult
+from ..workers import WorkerAdapterResult
 from .workspace import FrontDeskWorkspace
 
 
@@ -40,6 +38,28 @@ FRONTDESK_NODE_NAMES = frozenset(
 )
 
 
+FRONTDESK_EXIT_CRITERIA = ["Expected output refs exist and validate against FrontDesk schemas."]
+FRONTDESK_STOP_CONDITIONS = ["Do not approve, freeze, verify, run, or mutate frozen contracts."]
+
+
+class FrontDeskPiWorkerAdapter(Protocol):
+    """Minimal FrontDesk PiWorker adapter boundary."""
+
+    adapter_family: str
+
+    def run_call(
+        self,
+        call: PiWorkerCall,
+        *,
+        workspace: str | Path = ".",
+        evidence_store: EvidenceLedger | None = None,
+        exit_criteria: list[str] | None = None,
+        stop_conditions: list[str] | None = None,
+    ) -> WorkerAdapterResult:
+        """Execute one bounded FrontDesk PiWorker call."""
+        ...
+
+
 @dataclass(frozen=True)
 class FrontDeskPiNodeContract:
     """Bounded contract for one PiWorker-backed FrontDesk node."""
@@ -47,7 +67,6 @@ class FrontDeskPiNodeContract:
     node_name: str
     session_id: str
     call: PiWorkerCall
-    work_unit: WorkUnitContract
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "FrontDeskPiNodeContract":
@@ -56,7 +75,6 @@ class FrontDeskPiNodeContract:
             node_name=require_non_empty_str(data.get("node_name"), "frontdesk_pi_node_contract.node_name"),
             session_id=require_non_empty_str(data.get("session_id"), "frontdesk_pi_node_contract.session_id"),
             call=PiWorkerCall.from_dict(require_mapping(data.get("call"), "frontdesk_pi_node_contract.call")),
-            work_unit=WorkUnitContract.from_dict(require_mapping(data.get("work_unit"), "frontdesk_pi_node_contract.work_unit")),
         )
         contract.validate()
         return contract
@@ -66,24 +84,13 @@ class FrontDeskPiNodeContract:
             raise ContractValidationError("frontdesk_pi_node_contract.node_name is unsupported")
         require_non_empty_str(self.session_id, "frontdesk_pi_node_contract.session_id")
         self.call.validate()
-        self.work_unit.validate()
         if self.call.role != PiWorkerCallRole.FRONTDESK_AUTHOR:
             raise ContractValidationError("frontdesk_pi_node_contract.call must be a FrontDesk author PiWorker call")
-        if self.call.call_id != self.work_unit.work_unit_id:
-            raise ContractValidationError("frontdesk_pi_node_contract.call_id must match work_unit_id")
-        if self.call.contract_id != self.work_unit.mission_id:
-            raise ContractValidationError("frontdesk_pi_node_contract.contract_id must match mission_id")
-        if self.call.expected_output_refs != self.work_unit.expected_outputs:
-            raise ContractValidationError("frontdesk_pi_node_contract expected outputs must match PiWorkerCall")
-        if self.call.writable_refs != self.work_unit.allowed_scope:
-            raise ContractValidationError("frontdesk_pi_node_contract writable refs must match allowed scope")
-        if self.call.visible_refs != self.work_unit.visible_refs:
-            raise ContractValidationError("frontdesk_pi_node_contract visible refs must match PiWorkerCall")
-        for ref in self.work_unit.visible_refs:
+        for ref in self.call.visible_refs:
             validate_ref(ref, "frontdesk_pi_node_contract.visible_refs[]")
-        for ref in self.work_unit.expected_outputs:
+        for ref in self.call.expected_output_refs:
             _require_frontdesk_output_ref(ref)
-        for ref in self.work_unit.allowed_scope:
+        for ref in self.call.writable_refs:
             _require_frontdesk_output_ref(ref)
         assert_refs_only_payload(self.to_dict_without_validation(), "frontdesk_pi_node_contract")
 
@@ -92,7 +99,6 @@ class FrontDeskPiNodeContract:
             "node_name": self.node_name,
             "session_id": self.session_id,
             "call": self.call.to_dict(),
-            "work_unit": self.work_unit.to_dict(),
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -112,7 +118,7 @@ class FrontDeskPiNodeExecutionRecord:
     input_hashes: dict[str, str]
     node_spec_ref: str
     node_spec_hash: str
-    work_unit_hash: str
+    call_hash: str
     piworker_call_result_ref: str
     piworker_call_result_hash: str
     evidence_refs: list[str]
@@ -137,7 +143,7 @@ class FrontDeskPiNodeExecutionRecord:
             )
         validate_ref(self.node_spec_ref, "frontdesk_pi_node_execution.node_spec_ref")
         _validate_hash(self.node_spec_hash, "frontdesk_pi_node_execution.node_spec_hash")
-        _validate_hash(self.work_unit_hash, "frontdesk_pi_node_execution.work_unit_hash")
+        _validate_hash(self.call_hash, "frontdesk_pi_node_execution.call_hash")
         validate_ref(self.piworker_call_result_ref, "frontdesk_pi_node_execution.piworker_call_result_ref")
         _validate_hash(self.piworker_call_result_hash, "frontdesk_pi_node_execution.piworker_call_result_hash")
         for ref in self.evidence_refs:
@@ -171,9 +177,9 @@ class FrontDeskPiNodeExecutionRecord:
                 data.get("node_spec_hash"),
                 "frontdesk_pi_node_execution.node_spec_hash",
             ),
-            work_unit_hash=require_non_empty_str(
-                data.get("work_unit_hash"),
-                "frontdesk_pi_node_execution.work_unit_hash",
+            call_hash=require_non_empty_str(
+                data.get("call_hash"),
+                "frontdesk_pi_node_execution.call_hash",
             ),
             piworker_call_result_ref=validate_ref(
                 data.get("piworker_call_result_ref"),
@@ -208,7 +214,7 @@ class FrontDeskPiNodeExecutionRecord:
             "input_hashes": dict(self.input_hashes),
             "node_spec_ref": self.node_spec_ref,
             "node_spec_hash": self.node_spec_hash,
-            "work_unit_hash": self.work_unit_hash,
+            "call_hash": self.call_hash,
             "piworker_call_result_ref": self.piworker_call_result_ref,
             "piworker_call_result_hash": self.piworker_call_result_hash,
             "evidence_refs": list(self.evidence_refs),
@@ -280,11 +286,7 @@ class FrontDeskPiNodeRunner:
             expected_outputs=expected_outputs,
             allowed_outputs=allowed_outputs,
         )
-        work_unit = call.to_work_unit_contract(
-            exit_criteria=["Expected output refs exist and validate against FrontDesk schemas."],
-            stop_conditions=["Do not approve, freeze, verify, run, or mutate frozen contracts."],
-        )
-        contract = FrontDeskPiNodeContract(node_name=node_name, session_id=session_id, call=call, work_unit=work_unit)
+        contract = FrontDeskPiNodeContract(node_name=node_name, session_id=session_id, call=call)
         contract.validate()
         return contract
 
@@ -296,7 +298,7 @@ class FrontDeskPiNodeRunner:
         visible_refs: list[str],
         expected_outputs: list[str],
         optional_outputs: list[str] | None = None,
-        worker: WorkerAdapter | None = None,
+        worker: FrontDeskPiWorkerAdapter | None = None,
         workspace: str | Path = ".",
         evidence_store: EvidenceLedger | None = None,
         product_profile_hash: str = "",
@@ -305,8 +307,7 @@ class FrontDeskPiNodeRunner:
 
         if worker is None:
             raise ContractValidationError("frontdesk pi node execution requires an explicit PiWorker adapter")
-        if getattr(worker, "adapter_family", "") != "piworker":
-            raise ContractValidationError("frontdesk pi node execution requires an explicit PiWorker-compatible adapter")
+        _validate_frontdesk_piworker_adapter(worker)
         active_workspace = FrontDeskWorkspace(workspace)
         node_spec_ref = _node_spec_ref(session_id=session_id, node_name=node_name)
         allowed_outputs = _dedupe_refs([*expected_outputs, *(optional_outputs or [])])
@@ -341,8 +342,14 @@ class FrontDeskPiNodeRunner:
             optional_outputs=optional_outputs,
             node_spec_ref=node_spec_ref,
         )
-        input_hashes = _hash_visible_refs(active_workspace, contract.work_unit.visible_refs)
-        worker_result = worker.run(contract.work_unit, workspace=workspace, evidence_store=evidence_store)
+        input_hashes = _hash_visible_refs(active_workspace, contract.call.visible_refs)
+        worker_result = worker.run_call(
+            contract.call,
+            workspace=workspace,
+            evidence_store=evidence_store,
+            exit_criteria=list(FRONTDESK_EXIT_CRITERIA),
+            stop_conditions=list(FRONTDESK_STOP_CONDITIONS),
+        )
         worker_result.validate()
         assert_refs_only_payload(worker_result.to_dict(), "frontdesk_pi_node_worker_result")
         produced_refs = list(worker_result.execution_report.produced_artifacts)
@@ -362,7 +369,7 @@ class FrontDeskPiNodeRunner:
             input_hashes=input_hashes,
             node_spec_ref=node_spec_ref,
             node_spec_hash=_hash_ref(active_workspace, node_spec_ref),
-            work_unit_hash=stable_json_hash(contract.work_unit.to_dict()),
+            call_hash=stable_json_hash(contract.call.to_dict()),
             piworker_call_result_ref=call_result_ref,
             piworker_call_result_hash=_hash_ref(active_workspace, call_result_ref),
             evidence_refs=list(worker_result.execution_report.evidence_refs),
@@ -384,10 +391,10 @@ class FrontDeskPiNodeRunner:
         contract.validate()
         for ref in produced_refs:
             _require_frontdesk_output_ref(ref)
-        missing = sorted(set(contract.work_unit.expected_outputs) - set(produced_refs))
+        missing = sorted(set(contract.call.expected_output_refs) - set(produced_refs))
         if missing:
             raise ContractValidationError(f"frontdesk pi node missing expected output(s): {', '.join(missing)}")
-        extra = sorted(set(produced_refs) - set(contract.work_unit.allowed_scope))
+        extra = sorted(set(produced_refs) - set(contract.call.writable_refs))
         if extra:
             raise ContractValidationError(f"frontdesk pi node wrote outside allowed scope: {', '.join(extra)}")
 
@@ -417,8 +424,8 @@ class FrontDeskPiNodeRunner:
         expected_hash = record.output_hashes.get(output_ref, "")
         if not expected_hash or _hash_ref(active_workspace, output_ref) != expected_hash:
             raise ContractValidationError("frontdesk artifact bytes do not match recorded PiWorker output hash")
-        if stable_json_hash(record.contract.work_unit.to_dict()) != record.work_unit_hash:
-            raise ContractValidationError("frontdesk PiWorker work unit hash does not match execution record")
+        if stable_json_hash(record.contract.call.to_dict()) != record.call_hash:
+            raise ContractValidationError("frontdesk PiWorker call hash does not match execution record")
         if _hash_ref(active_workspace, record.node_spec_ref) != record.node_spec_hash:
             raise ContractValidationError("frontdesk PiWorker node spec hash is stale")
         if _hash_ref(active_workspace, record.piworker_call_result_ref) != record.piworker_call_result_hash:
@@ -441,6 +448,13 @@ def _require_frontdesk_output_ref(ref: str) -> str:
     if not safe.startswith("frontdesk/"):
         raise ContractValidationError("frontdesk pi node outputs must stay under frontdesk/")
     return safe
+
+
+def _validate_frontdesk_piworker_adapter(worker: object) -> None:
+    if getattr(worker, "adapter_family", "") != "piworker":
+        raise ContractValidationError("frontdesk pi node execution requires an explicit PiWorker-compatible adapter")
+    if not callable(getattr(worker, "run_call", None)):
+        raise ContractValidationError("frontdesk pi node execution requires a PiWorker run_call adapter")
 
 
 def _frontdesk_node_contract_hash(
@@ -894,6 +908,7 @@ __all__ = [
     "FrontDeskPiNodeContract",
     "FrontDeskPiNodeExecutionRecord",
     "FrontDeskPiNodeRunResult",
+    "FrontDeskPiWorkerAdapter",
     "FrontDeskPiNodeRunner",
     "frontdesk_pi_node_execution_ref",
     "frontdesk_pi_node_spec_ref",

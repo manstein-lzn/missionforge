@@ -28,7 +28,8 @@ from missionforge.frontdesk.state import (
     SOLUTION_PLAN_REF,
 )
 from missionforge.frontdesk.schema import MissionPlan
-from missionforge.work_unit import ExecutionReport, WorkUnitContract, WorkerResult
+from missionforge.piworker_call import PiWorkerCall
+from missionforge.work_unit import ExecutionReport, WorkerResult
 from missionforge.workers import WorkerAdapterResult
 
 
@@ -41,19 +42,21 @@ class ScriptedFrontDeskPiWorker:
     def __init__(self, payloads: dict[str, object], *, text_payloads: dict[str, str] | None = None) -> None:
         self.payloads = dict(payloads)
         self.text_payloads = dict(text_payloads or {})
-        self.seen_work_units: list[WorkUnitContract] = []
+        self.seen_calls: list[PiWorkerCall] = []
 
-    def run(
+    def run_call(
         self,
-        work_unit: WorkUnitContract,
+        call: PiWorkerCall,
         *,
         workspace: str | Path = ".",
         evidence_store=None,
+        exit_criteria=None,
+        stop_conditions=None,
     ) -> WorkerAdapterResult:
-        self.seen_work_units.append(work_unit)
+        self.seen_calls.append(call)
         produced_refs: list[str] = []
         root = Path(workspace)
-        for ref in work_unit.allowed_scope:
+        for ref in call.writable_refs:
             if ref in self.payloads:
                 path = root / ref
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,8 +73,8 @@ class ScriptedFrontDeskPiWorker:
                 path.write_text(self.text_payloads[ref], encoding="utf-8")
                 produced_refs.append(ref)
         report = ExecutionReport(
-            report_id=f"R-{work_unit.work_unit_id}",
-            work_unit_id=work_unit.work_unit_id,
+            report_id=f"R-{call.call_id}",
+            work_unit_id=call.call_id,
             status="completed",
             produced_artifacts=produced_refs,
             changed_refs=produced_refs,
@@ -83,7 +86,7 @@ class ScriptedFrontDeskPiWorker:
             execution_report=report,
             worker_result=WorkerResult(
                 status="completed",
-                execution_report_ref=f"attempts/{work_unit.work_unit_id}/execution_report.json",
+                execution_report_ref=f"attempts/{call.call_id}/execution_report.json",
             ),
             event_evidence_refs=["evidence/frontdesk_scripted_piworker.json"],
             metrics={"adapter_result_status": "completed"},

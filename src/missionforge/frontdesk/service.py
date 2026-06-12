@@ -39,7 +39,7 @@ from .schema import (
 )
 from .mission_mapper import MissionMappingResult
 from .need_griller import NeedGrillResult
-from .pi_node_runner import FrontDeskPiNodeRunner, frontdesk_pi_node_execution_ref, frontdesk_pi_node_spec_ref
+from .pi_node_runner import FrontDeskPiNodeRunner, FrontDeskPiWorkerAdapter, frontdesk_pi_node_execution_ref, frontdesk_pi_node_spec_ref
 from .scout import ScoutResult, WorkspaceScout
 from .semantic_coverage import SemanticCoverageChecker, SemanticCoverageResult
 from .solution_architect import SolutionArchitectureResult
@@ -90,7 +90,6 @@ from .state import (
 )
 from .schema import FrontDeskStatus
 from .workspace import FrontDeskWorkspace
-from ..workers import WorkerAdapter
 
 
 @dataclass(frozen=True)
@@ -135,7 +134,7 @@ class FrontDesk:
         workspace: str | Path = ".",
         *,
         registry: ProfileRegistry | None = None,
-        worker: WorkerAdapter | None = None,
+        worker: FrontDeskPiWorkerAdapter | None = None,
     ) -> None:
         self.workspace = FrontDeskWorkspace(workspace)
         self.registry = registry
@@ -643,11 +642,13 @@ class FrontDesk:
             product_context=self._product_context_snapshot(),
         )
 
-    def _validate_piworker_adapter(self, worker: WorkerAdapter) -> None:
+    def _validate_piworker_adapter(self, worker: object) -> None:
         if getattr(worker, "adapter_family", "") != "piworker":
             raise ContractValidationError("FrontDesk worker must be an explicit PiWorker-compatible adapter")
+        if not callable(getattr(worker, "run_call", None)):
+            raise ContractValidationError("FrontDesk worker must expose the PiWorker run_call boundary")
 
-    def _worker_or_fail(self, session: FrontDeskAuthoringSession, operation: str) -> WorkerAdapter:
+    def _worker_or_fail(self, session: FrontDeskAuthoringSession, operation: str) -> FrontDeskPiWorkerAdapter:
         if self.worker is None:
             self._fail_llm_required(session, operation)
         self._validate_piworker_adapter(self.worker)

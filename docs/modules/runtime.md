@@ -133,8 +133,8 @@ Phase 17-21 hardening is documented in
 - Failed constraints must route repair through constraint IDs, not log strings.
 - Repair, redesign, review, stop, and escalation are separate runtime
   decisions.
-- PI Agent runtime receives WorkUnitContract, not raw MissionIR or chat
-  history.
+- PI Agent runtime receives bounded PiWorker runtime input, not raw MissionIR
+  or chat history.
 - Runtime commits state only after proposal, scope, authority, and evidence
   validation.
 - Proposal mode is opt-in. Provider output must pass the same schema, refs,

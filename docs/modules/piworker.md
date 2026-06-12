@@ -18,7 +18,7 @@ inside it.
 
 ## Scope
 
-- PiWorker work-unit input
+- PiWorker runtime input
 - PiWorkerCall invocation boundary
 - PiWorker event stream
 - tool-mediated workspace reads/writes
@@ -55,9 +55,9 @@ MissionForge authority is the call-shaped boundary, not a legacy
 - PI Agent runtime owns the inner loop, tools, hooks, session artifacts, and
   model calls.
 
-FrontDesk PiWorker authoring nodes still have a legacy projection path with
-`frontdesk_author_piworker` role before `WorkUnitContract`. That is a remaining
-compatibility edge, not the target runtime shape.
+FrontDesk PiWorker authoring nodes use the same direct `PiWorkerCall` boundary
+with `frontdesk_author_piworker` role. Their execution provenance binds the
+call hash and call result refs, not a legacy work-unit projection.
 Repair directives and revision pending records also use the same runtime
 boundary through `repair_piworker` and `revision_drafter_piworker` calls.
 Those helper paths now persist their `PiWorkerCallResult` under
@@ -271,7 +271,7 @@ runtime reached offline parity.
 ## Dependencies
 
 - Mission IR
-- work-unit harness
+- legacy work-unit harness
 - context/evidence
 - controlled steering for contract adjustment requests
 - adapter contracts

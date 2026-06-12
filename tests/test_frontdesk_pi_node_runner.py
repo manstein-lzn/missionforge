@@ -7,8 +7,8 @@ import unittest
 
 from missionforge import ContractValidationError
 from missionforge.frontdesk.pi_node_runner import FrontDeskPiNodeRunner
-from missionforge.piworker_call import PiWorkerCallResult
-from missionforge.work_unit import ExecutionReport, WorkUnitContract, WorkerResult
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult
+from missionforge.work_unit import ExecutionReport, WorkerResult
 from missionforge.workers import WorkerAdapterResult
 
 
@@ -18,11 +18,19 @@ class _ScriptedPiWorker:
     def __init__(self, *, produced_refs: list[str] | None = None, unsafe_metrics: bool = False) -> None:
         self.produced_refs = produced_refs
         self.unsafe_metrics = unsafe_metrics
-        self.seen_work_unit: WorkUnitContract | None = None
+        self.seen_call: PiWorkerCall | None = None
 
-    def run(self, work_unit: WorkUnitContract, *, workspace: str | Path = ".", evidence_store=None) -> WorkerAdapterResult:
-        self.seen_work_unit = work_unit
-        produced_refs = list(self.produced_refs if self.produced_refs is not None else work_unit.expected_outputs)
+    def run_call(
+        self,
+        call: PiWorkerCall,
+        *,
+        workspace: str | Path = ".",
+        evidence_store=None,
+        exit_criteria=None,
+        stop_conditions=None,
+    ) -> WorkerAdapterResult:
+        self.seen_call = call
+        produced_refs = list(self.produced_refs if self.produced_refs is not None else call.expected_output_refs)
         for ref in produced_refs:
             path = Path(workspace) / ref
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,8 +39,8 @@ class _ScriptedPiWorker:
         if self.unsafe_metrics:
             metrics["raw_prompt"] = "hidden provider payload"
         report = ExecutionReport(
-            report_id=f"R-{work_unit.work_unit_id}",
-            work_unit_id=work_unit.work_unit_id,
+            report_id=f"R-{call.call_id}",
+            work_unit_id=call.call_id,
             status="completed",
             produced_artifacts=produced_refs,
             changed_refs=produced_refs,
@@ -44,7 +52,7 @@ class _ScriptedPiWorker:
             execution_report=report,
             worker_result=WorkerResult(
                 status="completed",
-                execution_report_ref=f"attempts/{work_unit.work_unit_id}/execution_report.json",
+                execution_report_ref=f"attempts/{call.call_id}/execution_report.json",
             ),
             event_evidence_refs=["evidence/frontdesk_pi_node.json"],
             metrics={"adapter_result_status": "completed"},
@@ -60,13 +68,12 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
             expected_outputs=["frontdesk/need_grilling_report.json"],
         )
 
-        self.assertEqual(contract.work_unit.allowed_scope, ["frontdesk/need_grilling_report.json"])
-        self.assertEqual(contract.work_unit.expected_outputs, ["frontdesk/need_grilling_report.json"])
-        self.assertEqual(contract.work_unit.visible_refs[0], "frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json")
-        self.assertIn("frontdesk/workspace_facts.json", contract.work_unit.visible_refs)
+        self.assertEqual(contract.call.writable_refs, ["frontdesk/need_grilling_report.json"])
+        self.assertEqual(contract.call.expected_output_refs, ["frontdesk/need_grilling_report.json"])
+        self.assertEqual(contract.call.visible_refs[0], "frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json")
+        self.assertIn("frontdesk/workspace_facts.json", contract.call.visible_refs)
         self.assertEqual(contract.call.role.value, "frontdesk_author_piworker")
-        self.assertEqual(contract.call.expected_output_refs, contract.work_unit.expected_outputs)
-        self.assertEqual(contract.call.writable_refs, contract.work_unit.allowed_scope)
+        self.assertNotIn("work_unit", contract.to_dict())
 
     def test_rejects_non_frontdesk_outputs(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "frontdesk/"):
@@ -125,12 +132,15 @@ class FrontDeskPiNodeRunnerTests(unittest.TestCase):
                 workspace=tempdir,
             )
 
-            self.assertIsNotNone(worker.seen_work_unit)
-            self.assertEqual(worker.seen_work_unit.allowed_scope, ["frontdesk/need_grilling_report.json"])
+            self.assertIsNotNone(worker.seen_call)
+            self.assertEqual(worker.seen_call.writable_refs, ["frontdesk/need_grilling_report.json"])
             self.assertEqual(result.execution_record.produced_refs, ["frontdesk/need_grilling_report.json"])
             execution_ref = "frontdesk/pi_nodes/fd-pi/need_griller/execution.json"
             self.assertEqual(result.execution_record.node_execution_ref, execution_ref)
             self.assertTrue((Path(tempdir) / execution_ref).exists())
+            execution_payload = json.loads((Path(tempdir) / execution_ref).read_text(encoding="utf-8"))
+            self.assertIn("call_hash", execution_payload)
+            self.assertNotIn("work_unit_hash", execution_payload)
             self.assertIn("frontdesk/need_grilling_report.json", result.execution_record.output_hashes)
             self.assertIn("frontdesk/pi_nodes/fd-pi/need_griller/node_spec.json", result.execution_record.input_hashes)
             call_result_ref = "frontdesk/pi_nodes/fd-pi/need_griller/piworker_call_result.json"

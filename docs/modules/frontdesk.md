@@ -128,10 +128,9 @@ FrontDeskAuthoringSession
 
 The new runtime path consumes TaskContract-derived role packets. PiWorker
 execution still consumes bounded runtime input with permission manifests.
-FrontDesk authoring nodes use the same minimal PiWorkerCall boundary before
-projection into the current WorkUnitContract runtime shape, so requirements
-discovery, execution, and judging share one refs-first invocation model without
-adding a worker registry.
+FrontDesk authoring nodes use the same minimal PiWorkerCall boundary directly,
+so requirements discovery, execution, and judging share one refs-first
+invocation model without adding a worker registry.
 Product-aware FrontDesk output is useful only after Product Integration compiles
 it, deterministic validation passes, and the contract/projection refs are
 written.
@@ -392,7 +391,7 @@ production worker.
 Acceptable implementation paths:
 
 - use PiWorker as an internal authoring assistant through a bounded FrontDesk
-  work unit;
+  `PiWorkerCall`;
 - use a PiWorker-compatible adapter-family marker for production
   configuration, not a second provider abstraction;
 - use deterministic scripted clients or prewritten LLM artifact fixtures in
@@ -546,9 +545,9 @@ The current implementation includes:
   review-plan, map, draft, intent, compile-product, audit, approve, freeze,
   and run;
 - opt-in PiWorker node runner that builds `PiWorkerCall` authoring boundaries,
-  projects them to bounded `WorkUnitContract` objects, requires explicit
-  adapter injection, validates exact expected refs, and records execution
-  provenance without adding another worker abstraction;
+  requires explicit `run_call` adapter injection, validates exact expected
+  refs, and records execution provenance without adding another worker
+  abstraction;
 - runtime feedback recommendations for repair, resume, revision, redesign,
   profile or validator extension, human review, and stop;
 - SkillFoundry dogfood and formal SkillFoundry FrontDesk bridge that consume
