@@ -124,7 +124,7 @@ Core rules:
 
 ## Verification Snapshot
 
-The current working tree was validated with:
+The current pushed release-candidate checkpoint was validated with:
 
 ```bash
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
@@ -143,6 +143,21 @@ PYTHONPATH=src python3 -m unittest tests.test_agentic_repair_controller tests.te
 
 git diff --check
 # passed
+
+git status --branch --short
+# ## agentic-runtime-upgrade...origin/agentic-runtime-upgrade
+
+git rev-parse HEAD origin/agentic-runtime-upgrade
+# HEAD and origin/agentic-runtime-upgrade matched at validation time.
+```
+
+The standalone product-shell example also passed a manual release-candidate
+run:
+
+```bash
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-rc-audit
+# status=accepted
+# replay_status=accepted
 ```
 
 Opt-in live validation also passed on 2026-06-12:

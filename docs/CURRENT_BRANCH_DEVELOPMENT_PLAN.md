@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-12
 
-Status: active branch execution plan for `agentic-runtime-upgrade`.
+Status: release-candidate checkpoint for `agentic-runtime-upgrade`.
 
 ## Objective
 
@@ -306,7 +306,7 @@ Exit condition:
 
 ### Phase 4: Lock The Programmer Surface
 
-Status: in progress.
+Status: completed for the current release-candidate checkpoint.
 
 Goal: let programmers build with MissionForge primitives without reading
 `src/missionforge`.
@@ -359,16 +359,18 @@ Exit condition:
 
 ### Phase 6: Clean Legacy Drift
 
+Status: completed for the current release-candidate checkpoint.
+
 Goal: prevent compatibility code from becoming the active architecture again.
 
 Tasks:
 
-- Mark MissionIR, old runtime, steering, and metric-dict surfaces as
+- [x] Mark MissionIR, old runtime, steering, and metric-dict surfaces as
   compatibility in docs and public API guidance.
-- Stop adding features to legacy paths unless they preserve compatibility.
-- Remove or isolate stale benchmark/demo references from the active lane.
-- Keep product-specific branches out of `src/missionforge`.
-- Update public API boundary tests when imports move.
+- [x] Stop adding features to legacy paths unless they preserve compatibility.
+- [x] Remove or isolate stale benchmark/demo references from the active lane.
+- [x] Keep product-specific branches out of `src/missionforge`.
+- [x] Update public API boundary tests when imports move.
 
 Exit condition:
 
@@ -378,33 +380,36 @@ Exit condition:
 
 ### Phase 7: Release Candidate Audit
 
+Status: completed for the current release-candidate checkpoint.
+
 Goal: produce a branch that external programmers can try.
 
 Acceptance checklist:
 
-- `MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh` passes.
-- `./scripts/validate_integrations.sh skillfoundry` passes.
-- Faux TaskContract flow reaches independent accepted judgment.
-- Product-neutral opt-in live smoke reaches an independent judge decision.
-- SkillFoundry dogfood reaches a product-grade result or correctly classified
+- [x] `MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh` passes.
+- [x] `./scripts/validate_integrations.sh skillfoundry` passes.
+- [x] Faux TaskContract flow reaches independent accepted judgment.
+- [x] Product-neutral opt-in live smoke reaches an independent judge decision.
+- [x] SkillFoundry dogfood reaches a product-grade result or correctly classified
   boundary failure.
-- Programmer docs support a standalone product shell.
-- Public API boundary tests pass.
-- Product semantics remain outside `src/missionforge`.
-- Decision ledgers remain refs-first and replayable.
-- No executor path can self-accept.
+- [x] Programmer docs support a standalone product shell.
+- [x] Public API boundary tests pass.
+- [x] Product semantics remain outside `src/missionforge`.
+- [x] Decision ledgers remain refs-first and replayable.
+- [x] No executor path can self-accept.
 
-## Immediate Work Order
+## Completed Work Order
 
-Use this order for the next development pass:
+Completed for the current release-candidate checkpoint:
 
-1. Update primitive and module docs for `build_revision_judge_result(...)`.
-2. Re-run focused repair/revision and ledger tests.
-3. Re-run the core boundary suite.
-4. Re-run full validation and SkillFoundry integration validation.
-5. Refresh the verified evidence section with exact counts.
-6. Audit README and public exports for TaskContract/PiWorker-first guidance.
-7. Prepare the release-candidate cleanup/commit audit.
+1. Updated primitive and module docs for `build_revision_judge_result(...)`.
+2. Re-ran focused repair/revision and ledger tests.
+3. Re-ran the core boundary suite.
+4. Re-ran full validation and SkillFoundry integration validation.
+5. Refreshed the verified evidence section with exact counts.
+6. Audited README and public exports for TaskContract/PiWorker-first guidance.
+7. Completed the release-candidate cleanup, commit, push, and clean-worktree
+   audit.
 
 ## Definition Of Done
 

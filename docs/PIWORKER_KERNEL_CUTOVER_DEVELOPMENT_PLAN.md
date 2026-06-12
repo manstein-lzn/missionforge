@@ -2,7 +2,8 @@
 
 Last updated: 2026-06-12
 
-Status: active development plan for the `agentic-runtime-upgrade` branch.
+Status: completed release-candidate cutover plan for the
+`agentic-runtime-upgrade` branch.
 
 ## Goal
 
@@ -436,6 +437,28 @@ Focused validation after this progress:
   reaches `status=accepted` plus `replay_status=accepted`; its focused test is
   `tests.test_standalone_product_shell_example`.
 
-Remaining work:
+Release-candidate audit completed on 2026-06-12:
 
-- Prepare the release-candidate cleanup and clean-worktree audit.
+- The standalone product-shell example and documentation checkpoint was
+  committed and pushed to `origin/agentic-runtime-upgrade`.
+- Local validation passed after the checkpoint:
+  - `MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh`
+  - Node runtime: 8 tests passed.
+  - Python: 512 tests passed, 5 skipped.
+  - whitespace check passed.
+- SkillFoundry integration validation passed:
+  - `./scripts/validate_integrations.sh skillfoundry`
+  - 112 tests passed, 1 skipped.
+- Core PiWorker/flow/ledger/public API focused suite passed:
+  - 44 tests passed, 1 skipped.
+- Manual standalone product-shell run passed:
+  - `PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-rc-audit`
+  - `status=accepted`
+  - `replay_status=accepted`
+- `git diff --check` passed.
+- `git status --branch --short` showed `agentic-runtime-upgrade` aligned with
+  `origin/agentic-runtime-upgrade`.
+- Product-boundary source search found no SkillFoundry, Codexarium, benchmark,
+  finance, customer, or demo-specific branches in `src/missionforge`; the only
+  product-related core match was the generic `product_gate.py` status
+  vocabulary.
