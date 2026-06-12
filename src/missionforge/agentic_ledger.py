@@ -36,7 +36,11 @@ class DecisionLedgerEventKind(StrEnum):
     JUDGE_PACKET_ISSUED = "judge_packet_issued"
     JUDGE_REPORT_RECORDED = "judge_report_recorded"
     REPAIR_REQUESTED = "repair_requested"
+    REPAIR_EXECUTION_RECORDED = "repair_execution_recorded"
     REVISION_REQUESTED = "revision_requested"
+    REVISION_DRAFT_RECORDED = "revision_draft_recorded"
+    REVISION_APPLIED = "revision_applied"
+    REVISION_JUDGE_REPORT_RECORDED = "revision_judge_report_recorded"
     FINAL_PACKAGE_EMITTED = "final_package_emitted"
 
 
@@ -454,13 +458,20 @@ def _read_ledger_entries(path: Path) -> list[TaskContractDecisionLedgerEntry]:
 
 def _validate_ledger_sequence(entries: list[TaskContractDecisionLedgerEntry]) -> None:
     first = entries[0]
+    current_contract_hash = first.contract_hash
     for entry in entries:
         if entry.run_id != first.run_id:
             raise ContractValidationError("decision ledger contains multiple run_id values")
         if entry.contract_id != first.contract_id:
             raise ContractValidationError("decision ledger contains multiple contract_id values")
-        if entry.contract_hash != first.contract_hash:
-            raise ContractValidationError("decision ledger contains multiple contract_hash values")
+        if entry.contract_hash != current_contract_hash:
+            if entry.event_kind is not DecisionLedgerEventKind.REVISION_APPLIED:
+                raise ContractValidationError("decision ledger contract_hash changed without revision_applied")
+            _required_ref(entry.ref_map, "revision_applied_ref")
+            _required_ref(entry.ref_map, "task_contract_revision_ref")
+            current_contract_hash = entry.contract_hash
+        elif entry.event_kind is DecisionLedgerEventKind.REVISION_APPLIED:
+            raise ContractValidationError("revision_applied ledger entry must change contract_hash")
 
 
 def _status_from_tail(entry: TaskContractDecisionLedgerEntry) -> RunReplayStatus:
@@ -473,9 +484,24 @@ def _status_from_tail(entry: TaskContractDecisionLedgerEntry) -> RunReplayStatus
             return RunReplayStatus.REVISION_REQUIRED
         if entry.status == JudgeReportDecision.REJECTED.value or entry.status == RunReplayStatus.REJECTED.value:
             return RunReplayStatus.REJECTED
+    if entry.event_kind is DecisionLedgerEventKind.REVISION_JUDGE_REPORT_RECORDED:
+        if entry.status == JudgeReportDecision.ACCEPTED.value or entry.status == RunReplayStatus.ACCEPTED.value:
+            return RunReplayStatus.ACCEPTED
+        if entry.status == JudgeReportDecision.REPAIR.value or entry.status == RunReplayStatus.REPAIR.value:
+            return RunReplayStatus.REPAIR
+        if entry.status == JudgeReportDecision.REVISION_REQUIRED.value or entry.status == RunReplayStatus.REVISION_REQUIRED.value:
+            return RunReplayStatus.REVISION_REQUIRED
+        if entry.status == JudgeReportDecision.REJECTED.value or entry.status == RunReplayStatus.REJECTED.value:
+            return RunReplayStatus.REJECTED
     if entry.event_kind is DecisionLedgerEventKind.REPAIR_REQUESTED:
         return RunReplayStatus.REPAIR
+    if entry.event_kind is DecisionLedgerEventKind.REPAIR_EXECUTION_RECORDED:
+        return RunReplayStatus.REPAIR if entry.status == "completed" else RunReplayStatus.BLOCKED
     if entry.event_kind is DecisionLedgerEventKind.REVISION_REQUESTED:
+        return RunReplayStatus.REVISION_REQUIRED
+    if entry.event_kind is DecisionLedgerEventKind.REVISION_DRAFT_RECORDED:
+        return RunReplayStatus.REVISION_REQUIRED if entry.status == "completed" else RunReplayStatus.BLOCKED
+    if entry.event_kind is DecisionLedgerEventKind.REVISION_APPLIED:
         return RunReplayStatus.REVISION_REQUIRED
     return RunReplayStatus.BLOCKED
 

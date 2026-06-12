@@ -17,9 +17,13 @@ from missionforge.contracts import (
 from missionforge.task_contract import ContractClause, NetworkPolicy, PermissionManifest, TaskContract, WorkspacePolicy
 
 from .product_contract import (
+    BUNDLE_MANIFEST_SCHEMA_VERSION,
+    PROMPT_ONLY_MANIFEST_REQUIRED_KEYS,
     ProductAcceptanceMatrix,
+    SkillBundleManifest,
     SkillFoundryRequest,
     SkillProductContract,
+    manifest_for_profile,
 )
 from .workspace import read_json_ref, resolve_workspace_ref, write_json_ref
 
@@ -30,6 +34,8 @@ SKILLFOUNDRY_PERMISSION_MANIFEST_REF = "policy/permission_manifest.json"
 SKILLFOUNDRY_JUDGE_RUBRIC_REF = "projections/judge_rubric.json"
 SKILLFOUNDRY_HARD_CHECK_RESULT_REF = "reports/skillfoundry_hard_checks.json"
 SKILLFOUNDRY_TASK_COMPILE_REPORT_REF = "product_contract/task_contract_compile_report.json"
+SKILLFOUNDRY_MANIFEST_TEMPLATE_REF = "product_contract/skill_bundle_manifest_template.json"
+SKILLFOUNDRY_MANIFEST_CONTRACT_REF = "product_contract/skill_bundle_manifest_contract.json"
 TASK_CONTRACT_COMPILE_RESULT_SCHEMA_VERSION = "missionforge_skillfoundry.task_contract_compile_result.v1"
 
 
@@ -198,11 +204,24 @@ def compile_skillfoundry_task_contract(
         permission_manifest=permission_manifest,
         request_ref=request_ref,
         product_contract_ref="product_contract/skill_product_contract.json",
+        manifest_template_ref=SKILLFOUNDRY_MANIFEST_TEMPLATE_REF,
+        manifest_contract_ref=SKILLFOUNDRY_MANIFEST_CONTRACT_REF,
         source_refs=materialized_source_refs,
+    )
+    manifest_template = manifest_for_profile(
+        product_contract.bundle_profile,
+        request.bundle_id,
+        target_package_refs=product_contract.target_package_refs,
+    )
+    manifest_contract = _manifest_artifact_contract(
+        product_contract=product_contract,
+        manifest_template=manifest_template,
     )
 
     product_contract_ref = _run_ref(run_workspace_ref, "product_contract/skill_product_contract.json")
     acceptance_matrix_ref = _run_ref(run_workspace_ref, product_contract.matrix_ref)
+    manifest_template_ref = _run_ref(run_workspace_ref, SKILLFOUNDRY_MANIFEST_TEMPLATE_REF)
+    manifest_contract_ref = _run_ref(run_workspace_ref, SKILLFOUNDRY_MANIFEST_CONTRACT_REF)
     product_request_ref = _run_ref(run_workspace_ref, request_ref)
     task_contract_ref = _run_ref(run_workspace_ref, SKILLFOUNDRY_TASK_CONTRACT_REF)
     workspace_policy_ref = _run_ref(run_workspace_ref, SKILLFOUNDRY_WORKSPACE_POLICY_REF)
@@ -212,6 +231,8 @@ def compile_skillfoundry_task_contract(
     write_json_ref(root, product_request_ref, request.to_dict())
     write_json_ref(root, product_contract_ref, product_contract.to_dict())
     write_json_ref(root, acceptance_matrix_ref, matrix.to_dict())
+    write_json_ref(root, manifest_template_ref, manifest_template.to_dict())
+    write_json_ref(root, manifest_contract_ref, manifest_contract)
     write_json_ref(root, task_contract_ref, task_contract.to_dict())
     write_json_ref(root, workspace_policy_ref, workspace_policy.to_dict())
     write_json_ref(root, permission_manifest_ref, permission_manifest.to_dict())
@@ -240,6 +261,8 @@ def compile_skillfoundry_task_contract(
             "product_request_ref": result.product_request_ref,
             "product_contract_ref": result.product_contract_ref,
             "acceptance_matrix_ref": result.acceptance_matrix_ref,
+            "manifest_template_ref": manifest_template_ref,
+            "manifest_contract_ref": manifest_contract_ref,
             "contract_hash": result.contract_hash,
             "hard_check_refs": list(result.hard_check_refs),
             "materialized_source_refs": list(materialized_source_refs),
@@ -276,9 +299,20 @@ def _task_contract_for_product(
     permission_manifest: PermissionManifest,
     request_ref: str,
     product_contract_ref: str,
+    manifest_template_ref: str,
+    manifest_contract_ref: str,
     source_refs: list[str],
 ) -> TaskContract:
-    admitted_source_refs = _unique_refs([request_ref, product_contract_ref, product_contract.matrix_ref, *source_refs])
+    admitted_source_refs = _unique_refs(
+        [
+            request_ref,
+            product_contract_ref,
+            product_contract.matrix_ref,
+            manifest_template_ref,
+            manifest_contract_ref,
+            *source_refs,
+        ]
+    )
     task_contract = TaskContract(
         contract_id=f"skillfoundry-{request.bundle_id}-task-contract",
         product_id="skillfoundry",
@@ -291,7 +325,7 @@ def _task_contract_for_product(
         required_outputs=[
             ContractClause(
                 clause_id=f"sf-output-{index:03d}",
-                text=f"Produce SkillFoundry package artifact {ref}.",
+                text=_required_output_clause_text(ref, manifest_template_ref, manifest_contract_ref),
                 refs=[ref],
                 metadata={"bundle_id": request.bundle_id},
             )
@@ -313,12 +347,26 @@ def _task_contract_for_product(
                 text="Package artifacts must not expose raw prompts, transcripts, provider payloads, credentials, or secrets.",
                 refs=[product_contract.matrix_ref],
             ),
+            ContractClause(
+                clause_id="sf-hard-manifest-contract",
+                text=(
+                    "The SkillFoundry manifest artifact must follow the manifest template and artifact contract exactly: "
+                    "write only the declared keys, keep schema_version skillfoundry.bundle.v1, and keep entrypoint SKILL.md."
+                ),
+                refs=[manifest_template_ref, manifest_contract_ref],
+            ),
         ],
         semantic_acceptance=[
             ContractClause(
                 clause_id=f"sf-accept-{item.check_id.lower().replace('_', '-')}",
                 text=item.purpose,
-                refs=[product_contract.matrix_ref, SKILLFOUNDRY_HARD_CHECK_RESULT_REF],
+                refs=_semantic_acceptance_refs(
+                    item.check_id,
+                    matrix_ref=product_contract.matrix_ref,
+                    hard_check_ref=SKILLFOUNDRY_HARD_CHECK_RESULT_REF,
+                    manifest_template_ref=manifest_template_ref,
+                    manifest_contract_ref=manifest_contract_ref,
+                ),
                 metadata={"check_id": item.check_id, "evaluator": item.evaluator},
             )
             for item in matrix.items
@@ -339,7 +387,12 @@ def _task_contract_for_product(
         judge_rubric_ref=SKILLFOUNDRY_JUDGE_RUBRIC_REF,
         revision_policy={"mode": "explicit_revision_required", "product_id": "skillfoundry"},
         source_refs=admitted_source_refs,
-        product_contract_refs=[product_contract_ref, product_contract.matrix_ref],
+        product_contract_refs=[
+            product_contract_ref,
+            product_contract.matrix_ref,
+            manifest_template_ref,
+            manifest_contract_ref,
+        ],
         created_by="missionforge_skillfoundry.task_contract_compiler",
         metadata={
             "bundle_id": request.bundle_id,
@@ -350,6 +403,55 @@ def _task_contract_for_product(
     )
     task_contract.validate()
     return task_contract
+
+
+def _manifest_artifact_contract(
+    *,
+    product_contract: SkillProductContract,
+    manifest_template: SkillBundleManifest,
+) -> dict[str, Any]:
+    manifest_payload = manifest_template.to_dict()
+    return {
+        "artifact_ref": product_contract.manifest_ref,
+        "kind": "json",
+        "role": "skillfoundry_bundle_manifest",
+        "required": True,
+        "schema_version": BUNDLE_MANIFEST_SCHEMA_VERSION,
+        "required_keys": list(PROMPT_ONLY_MANIFEST_REQUIRED_KEYS),
+        "forbidden_extra_keys": True,
+        "field_contract": manifest_payload,
+        "template_ref": SKILLFOUNDRY_MANIFEST_TEMPLATE_REF,
+        "notes": [
+            "Write only the keys listed in required_keys.",
+            "Use entrypoint exactly SKILL.md, not package/SKILL.md.",
+            "Keep runtime_assets, data_assets, and references as package-relative refs.",
+            "Do not add descriptive top-level fields such as name, description, triggers, artifacts, privacy, or target_user.",
+        ],
+    }
+
+
+def _required_output_clause_text(ref: str, manifest_template_ref: str, manifest_contract_ref: str) -> str:
+    if ref == "package/skillfoundry.bundle.json":
+        return (
+            f"Produce SkillFoundry package artifact {ref} by following {manifest_contract_ref} "
+            f"and using {manifest_template_ref} as the exact JSON shape. Write only the keys declared there; "
+            "entrypoint must be SKILL.md."
+        )
+    return f"Produce SkillFoundry package artifact {ref}."
+
+
+def _semantic_acceptance_refs(
+    check_id: str,
+    *,
+    matrix_ref: str,
+    hard_check_ref: str,
+    manifest_template_ref: str,
+    manifest_contract_ref: str,
+) -> list[str]:
+    refs = [matrix_ref, hard_check_ref]
+    if "-MANIFEST-" in check_id or check_id.endswith("-ENTRYPOINT") or check_id.endswith("-REFS-SAFE"):
+        refs.extend([manifest_template_ref, manifest_contract_ref])
+    return _unique_refs(refs)
 
 
 def _workspace_policy_for_product(
@@ -385,7 +487,7 @@ def _permission_manifest_for_product(
             *(_root_ref(ref) for ref in source_refs),
         ]
     )
-    writable_refs = _unique_refs([*product_contract.allowed_write_scopes, "attempts", "reports", "ledgers"])
+    writable_refs = _unique_refs([*product_contract.allowed_write_scopes, "reports", "ledgers"])
     return PermissionManifest(
         manifest_id=f"skillfoundry-{request.bundle_id}-permissions",
         workspace_policy_ref=SKILLFOUNDRY_WORKSPACE_POLICY_REF,

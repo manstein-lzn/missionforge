@@ -193,7 +193,14 @@ class PiWorkerCall:
                     *packet.hard_check_refs,
                 ]
             ),
-            writable_refs=[packet.report_ref],
+            writable_refs=_dedupe_refs(
+                [
+                    packet.report_ref,
+                    "reports/judge_rationale.md",
+                    "projections/repair_brief.json",
+                    "revisions/request.json",
+                ]
+            ),
             expected_output_refs=[packet.report_ref],
             source_packet_ref=packet_ref,
             source_packet_hash=effective_packet_hash,

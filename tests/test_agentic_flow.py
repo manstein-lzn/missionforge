@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -27,6 +28,7 @@ from missionforge import (
     replay_decision_ledger,
     stable_json_hash,
 )
+from missionforge.adapters.pi_agent_provider_config import load_codex_current_provider
 from missionforge.adapters.pi_agent_runtime import PiAgentExecutorNode, PiAgentJudgeNode, PiAgentRuntimeConfig
 from missionforge.adapters.task_contract_runtime import TaskContractFlowPreset, create_default_task_contract_flow
 
@@ -221,6 +223,18 @@ class HardCheckWritingExecutor:
     ) -> AgentExecutionReport:
         workspace.write_text("reports/hard_checks.json", '{"status": "mutated"}')
         raise AssertionError("hard-check write should fail before executor returns")
+
+
+class RuntimeProjectionWritingExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        workspace.write_text("reports/piworker_runtime/forged.json", "{}")
+        raise AssertionError("runtime projection write should fail before executor returns")
 
 
 class BlockedExecutor:
@@ -454,6 +468,96 @@ class HardCheckWritingJudge:
         raise AssertionError("hard-check write should fail before judge returns")
 
 
+class MinimalPiRuntimeRunner:
+    def run(self, command, *, input_path: Path, cwd: Path, timeout_seconds: int, env):
+        from missionforge.adapters.pi_agent_runtime import PI_AGENT_OUTPUT_SCHEMA_VERSION, PiAgentCommandResult
+
+        runtime_input = json.loads(input_path.read_text(encoding="utf-8"))
+        role = runtime_input["piworker_call"]["role"]
+        output_ref = str(runtime_input["output_ref"])
+        session_ref = str(runtime_input["session_ref"])
+        events_ref = str(runtime_input["events_ref"])
+        metrics_ref = str(runtime_input["metrics_ref"])
+        savepoints_ref = str(runtime_input["savepoints_ref"])
+        metrics = {"tool_call_count": 1, "total_tokens": 3, "tool_error_count": 0}
+
+        _write_file(cwd / session_ref, "{}\n")
+        _write_file(cwd / events_ref, "{}\n")
+        _write_file(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
+        _write_file(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
+
+        if role == "judge_piworker":
+            spec_ref = str(runtime_input["contract"]["visible_refs"][0])
+            spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
+            report_ref = str(spec["report_ref"])
+            _write_file(
+                cwd / report_ref,
+                json.dumps(
+                    {
+                        "schema_version": "judge_report.v1",
+                        "report_id": "judge-report-001",
+                        "packet_id": runtime_input["work_unit_id"],
+                        "packet_ref": spec["packet_ref"],
+                        "packet_hash": spec["packet_hash"],
+                        "contract_id": runtime_input["mission_id"],
+                        "contract_hash": runtime_input["piworker_call"]["contract_hash"],
+                        "contract_ref": spec["contract_ref"],
+                        "decision": "accepted",
+                        "hard_check_status": spec["hard_check_status"],
+                        "rationale_refs": ["reports/judge_rationale.md"],
+                        "evidence_refs": [spec["execution_report_ref"]],
+                        "accepted_artifact_refs": spec["artifact_refs"],
+                    },
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+            )
+            _write_file(cwd / "reports/judge_rationale.md", "accepted\n")
+            produced_artifacts = [report_ref]
+            changed_refs = [report_ref]
+            verifier_evidence = [report_ref]
+        else:
+            produced_artifacts = [str(ref) for ref in runtime_input["piworker_call"]["expected_output_refs"]]
+            for ref in produced_artifacts:
+                _write_file(cwd / ref, "MissionForge FrontDesk live smoke passed\n")
+            changed_refs = list(produced_artifacts)
+            verifier_evidence = list(produced_artifacts)
+
+        _write_file(
+            cwd / output_ref,
+            json.dumps(
+                {
+                    "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
+                    "work_unit_id": runtime_input["work_unit_id"],
+                    "status": "completed",
+                    "produced_artifacts": produced_artifacts,
+                    "changed_refs": changed_refs,
+                    "commands_run": [],
+                    "tests_run": [],
+                    "failures": [],
+                    "worker_claims": ["assistant_final_text_present:length=20"],
+                    "verifier_evidence": verifier_evidence,
+                    "new_unknowns": [],
+                    "recommended_next_steps": [],
+                    "verification_status": "not_run",
+                    "input_ref": runtime_input["input_ref"],
+                    "output_ref": output_ref,
+                    "session_ref": session_ref,
+                    "events_ref": events_ref,
+                    "metrics_ref": metrics_ref,
+                    "savepoints_ref": savepoints_ref,
+                    "duration_ms": 1,
+                    "metrics": metrics,
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+        )
+        return PiAgentCommandResult(returncode=0)
+
+
 class AgenticFlowTests(unittest.TestCase):
     def test_offline_accepted_flow_writes_refs_only_artifacts(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -547,6 +651,95 @@ class AgenticFlowTests(unittest.TestCase):
             self.assertIsInstance(preset.judge, PiAgentJudgeNode)
             self.assertEqual(Path(preset.runner.root), Path(tmpdir))
 
+    def test_default_piworker_flow_does_not_require_worker_attempts_permission(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            root = Path(tmpdir)
+            run_root = root / sample_workspace_policy().workspace_root_ref
+            (run_root / "contract").mkdir(parents=True, exist_ok=True)
+            (run_root / "projections").mkdir(parents=True, exist_ok=True)
+            (run_root / "policy").mkdir(parents=True, exist_ok=True)
+            (run_root / "frontdesk").mkdir(parents=True, exist_ok=True)
+            (run_root / "frontdesk/intent_bundle.json").write_text('{"summary_ref":"frontdesk/intent_bundle.json"}\n', encoding="utf-8")
+
+            preset = create_default_task_contract_flow(
+                tmpdir,
+                piworker_config=PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                piworker_runner=MinimalPiRuntimeRunner(),
+            )
+
+            result = preset.runner.run(
+                run_id="run-001",
+                contract=sample_contract(),
+                workspace_policy=sample_workspace_policy(),
+                permission_manifest=sample_permission_manifest(writable_refs=["artifacts", "reports", "ledgers"]),
+                executor=preset.executor,
+                judge=preset.judge,
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=["reports/hard_checks.json"],
+            )
+
+            execution_report = json.loads((run_root / "reports/execution_report.json").read_text(encoding="utf-8"))
+            judge_packet = json.loads((run_root / "packets/judge_packet.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(result.status, AgenticFlowStatus.ACCEPTED)
+            self.assertTrue((run_root / "attempts/run-001-execution-packet/pi_agent_input.json").exists())
+            self.assertTrue((run_root / "attempts/run-001-execution-packet/piworker_call_result.json").exists())
+            self.assertNotIn("attempts", json.dumps(execution_report, sort_keys=True))
+            self.assertNotIn("attempts", json.dumps(judge_packet, sort_keys=True))
+            self.assertTrue(all(ref.startswith("reports/") for ref in execution_report["evidence_refs"]))
+
+    @unittest.skipUnless(
+        os.environ.get("MISSIONFORGE_PI_AGENT_LIVE_SMOKE") == "1",
+        "set MISSIONFORGE_PI_AGENT_LIVE_SMOKE=1 to run the live TaskContract smoke",
+    )
+    def test_live_codex_current_default_task_contract_flow_accepts(self) -> None:
+        config = PiAgentRuntimeConfig(
+            timeout_seconds=int(os.environ.get("MISSIONFORGE_PI_AGENT_LIVE_TIMEOUT_SECONDS", "180")),
+            provider_mode="live",
+            provider_config_source="codex_current",
+            metadata={"phase": "task_contract_live_smoke"},
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            provider = load_codex_current_provider()
+            root = Path(tmpdir)
+            (root / "runs/run-001/reports").mkdir(parents=True, exist_ok=True)
+            (root / "runs/run-001/frontdesk").mkdir(parents=True, exist_ok=True)
+            (root / "runs/run-001/policy").mkdir(parents=True, exist_ok=True)
+            (root / "runs/run-001/projections").mkdir(parents=True, exist_ok=True)
+            (root / "runs/run-001/contract").mkdir(parents=True, exist_ok=True)
+            (root / "runs/run-001/frontdesk/intent_bundle.json").write_text(
+                '{"summary_ref":"frontdesk/intent_bundle.json"}\n',
+                encoding="utf-8",
+            )
+            _write_hard_check(tmpdir)
+            preset = create_default_task_contract_flow(
+                tmpdir,
+                piworker_config=config,
+            )
+
+            result = preset.runner.run(
+                run_id="run-001",
+                contract=sample_contract(),
+                workspace_policy=sample_workspace_policy(),
+                permission_manifest=sample_permission_manifest(),
+                executor=preset.executor,
+                judge=preset.judge,
+                hard_check_status=HardCheckStatus.PASSED,
+                hard_check_refs=["reports/hard_checks.json"],
+            )
+
+            root_text = "\n".join(
+                path.read_text(encoding="utf-8", errors="replace")
+                for path in Path(tmpdir).rglob("*")
+                if path.is_file()
+            )
+
+        self.assertEqual(result.status, AgenticFlowStatus.ACCEPTED)
+        self.assertFalse(provider["api_key"] in root_text, "live API key leaked into workspace artifacts")
+        self.assertNotIn("OPENAI_API_KEY", root_text)
+
     def test_passed_hard_checks_require_explicit_refs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with self.assertRaises(ContractValidationError):
@@ -612,6 +805,20 @@ class AgenticFlowTests(unittest.TestCase):
                     workspace_policy=sample_workspace_policy(),
                     permission_manifest=sample_permission_manifest(),
                     executor=LedgerWritingExecutor(),
+                    judge=AcceptingJudge(),
+                    hard_check_status=HardCheckStatus.PASSED,
+                    hard_check_refs=["reports/hard_checks.json"],
+                )
+
+        with TemporaryDirectory() as tmpdir:
+            _write_hard_check(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                AgenticFlowRunner(tmpdir).run(
+                    run_id="run-001",
+                    contract=sample_contract(),
+                    workspace_policy=sample_workspace_policy(),
+                    permission_manifest=sample_permission_manifest(),
+                    executor=RuntimeProjectionWritingExecutor(),
                     judge=AcceptingJudge(),
                     hard_check_status=HardCheckStatus.PASSED,
                     hard_check_refs=["reports/hard_checks.json"],
@@ -855,6 +1062,11 @@ def _write_hard_check(tmpdir: str) -> None:
     path = Path(tmpdir) / "runs/run-001/reports/hard_checks.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"status": "passed"}\n', encoding="utf-8")
+
+
+def _write_file(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

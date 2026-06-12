@@ -753,6 +753,7 @@ def _runtime_permission_manifest(
         refs.decision_ledger_ref,
         refs.final_package_ref,
         refs.checkpoint_ref,
+        "reports/piworker_runtime",
         *hard_check_refs,
     ]
     control_roots = _unique_refs([_root_ref(ref) for ref in control_refs])
@@ -828,6 +829,7 @@ def _executor_denied_write_refs(
             refs.judge_report_ref,
             refs.decision_ledger_ref,
             refs.final_package_ref,
+            "reports/piworker_runtime",
             _root_ref(refs.checkpoint_ref),
             *hard_check_refs,
         ]
@@ -879,13 +881,18 @@ def _ensure_executor_report_authorized(
     for ref in [
         *report.produced_artifact_refs,
         *report.changed_refs,
-        *report.evidence_refs,
-        *report.metric_refs,
         *([report.repair_request_ref] if report.repair_request_ref else []),
         *([report.revision_request_ref] if report.revision_request_ref else []),
     ]:
         agent_workspace.ensure_write_ref(ref)
+    runtime_owned_report_refs: list[str] = []
+    for ref in [*report.evidence_refs, *report.metric_refs]:
+        if ref_is_under(ref, "reports/piworker_runtime"):
+            runtime_owned_report_refs.append(ref)
+        else:
+            agent_workspace.ensure_write_ref(ref)
     _ensure_existing_refs(runtime_workspace, report.produced_artifact_refs, "produced_artifact_refs")
+    _ensure_existing_refs(runtime_workspace, runtime_owned_report_refs, "runtime_owned_report_refs")
 
 
 def _ensure_judge_report_authorized(report: JudgeReport, workspace: AgentWorkspace) -> None:

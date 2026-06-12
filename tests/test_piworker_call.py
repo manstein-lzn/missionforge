@@ -282,7 +282,7 @@ class PiWorkerCallTests(unittest.TestCase):
         self.assertEqual(call.writable_refs, ["artifacts", "reports"])
         self.assertEqual(call.visible_refs.count("contract/task_contract.json"), 1)
 
-    def test_judge_packet_projection_is_report_only_writable(self) -> None:
+    def test_judge_packet_projection_uses_exact_judge_authored_writable_refs(self) -> None:
         packet = judge_packet()
 
         call = PiWorkerCall.from_judge_packet(
@@ -294,7 +294,15 @@ class PiWorkerCallTests(unittest.TestCase):
 
         self.assertEqual(call.role, PiWorkerCallRole.JUDGE)
         self.assertEqual(call.metadata, {"hard_check_status": "passed"})
-        self.assertEqual(work_unit.allowed_scope, ["reports/judge_report.json"])
+        self.assertEqual(
+            work_unit.allowed_scope,
+            [
+                "reports/judge_report.json",
+                "reports/judge_rationale.md",
+                "projections/repair_brief.json",
+                "revisions/request.json",
+            ],
+        )
         self.assertEqual(work_unit.expected_outputs, ["reports/judge_report.json"])
         self.assertEqual(work_unit.visible_refs[0], "attempts/judge-packet-001/judge_node_spec.json")
 

@@ -1,13 +1,17 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, streamSimple } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
+import { access } from "node:fs/promises";
 
 import type { RuntimeInput } from "./contract.js";
 import { EvidenceRecorder } from "./evidence-recorder.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
+import { resolveWorkspaceRef } from "./paths.js";
 import { resolveProviderConfig } from "./provider-config.js";
 import { buildRuntimeOutput, writeRuntimeOutput } from "./result-writer.js";
 import { createMissionForgeTools, writeExpectedArtifact } from "./tools.js";
+
+const DEFAULT_COMPLETION_RETRY_LIMIT = 2;
 
 export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot: string): Promise<void> {
   const provider = resolveProviderConfig();
@@ -93,6 +97,14 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       }
     });
     await agent.prompt(buildUserPrompt(input));
+    await promptForMissingExpectedOutputs({
+      input,
+      workspaceRoot,
+      maxTurns: provider.maxTurns,
+      maxRetries: DEFAULT_COMPLETION_RETRY_LIMIT,
+      currentTurnCount: () => turnStartCount,
+      prompt: (prompt) => agent.prompt(prompt),
+    });
     await recorder.writeSession(agent.state.messages);
     if (agent.state.errorMessage) {
       failures.push(agent.state.errorMessage);
@@ -198,6 +210,66 @@ function buildUserPrompt(input: RuntimeInput): string {
     "If the visible refs include a node spec, follow its schema_hints exactly before writing artifacts.",
     "Use permitted tools to inspect, edit, and write as needed. Do not use bash unless a bash tool is present and the exact command is allowed.",
   ].join("\n");
+}
+
+export interface MissingOutputRetryOptions {
+  input: RuntimeInput;
+  workspaceRoot: string;
+  maxTurns: number;
+  maxRetries: number;
+  currentTurnCount: () => number;
+  prompt: (prompt: string) => Promise<void>;
+}
+
+export interface MissingOutputRetryResult {
+  missingOutputs: string[];
+  retryCount: number;
+}
+
+export async function promptForMissingExpectedOutputs(
+  options: MissingOutputRetryOptions,
+): Promise<MissingOutputRetryResult> {
+  let missingOutputs = await missingExpectedOutputRefs(options.input, options.workspaceRoot);
+  let retryCount = 0;
+  while (
+    missingOutputs.length > 0 &&
+    retryCount < options.maxRetries &&
+    options.currentTurnCount() < options.maxTurns
+  ) {
+    retryCount += 1;
+    await options.prompt(buildCompletionRetryPrompt(options.input, missingOutputs, retryCount));
+    missingOutputs = await missingExpectedOutputRefs(options.input, options.workspaceRoot);
+  }
+  return { missingOutputs, retryCount };
+}
+
+export function buildCompletionRetryPrompt(input: RuntimeInput, missingOutputs: string[], retryCount: number): string {
+  const lines = [
+    `MissionForge verification pass ${retryCount} found missing expected output refs: ${missingOutputs.join(", ")}`,
+    "Continue the same work unit. Do not change the contract, packets, hard checks, evidence refs, or permission manifest.",
+    `Visible refs to inspect: ${input.contract.visible_refs.join(", ") || "<none>"}`,
+    `Writable refs: ${input.permission_manifest.writable_refs.join(", ")}`,
+    `Write only these missing expected outputs: ${missingOutputs.join(", ")}`,
+    "Do not answer in text instead of writing artifacts. Use the available file tools to create or update the missing refs.",
+  ];
+  if (input.piworker_call?.role === "judge_piworker") {
+    lines.push(
+      "As judge_piworker, write a complete JudgeReport JSON object at the missing report ref using the judge node spec and JudgePacket.",
+    );
+  }
+  return lines.join("\n");
+}
+
+export async function missingExpectedOutputRefs(input: RuntimeInput, workspaceRoot: string): Promise<string[]> {
+  const missing: string[] = [];
+  for (const ref of input.contract.expected_outputs) {
+    try {
+      await access(resolveWorkspaceRef(workspaceRoot, ref));
+    } catch {
+      missing.push(ref);
+    }
+  }
+  return missing;
 }
 
 function extractFinalText(messages: readonly unknown[]): string | undefined {

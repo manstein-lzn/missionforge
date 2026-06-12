@@ -579,12 +579,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             call_result_payload = json.loads(
                 (root / "attempts/WU-000001/piworker_call_result.json").read_text(encoding="utf-8")
             )
+            self.assertTrue((root / "reports/piworker_runtime/WU-000001/call_result_projection.json").exists())
+            self.assertTrue((root / "reports/piworker_runtime/WU-000001/metrics_projection.json").exists())
 
         self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
         self.assertEqual(report.produced_artifact_refs, ["package/SKILL.md"])
         self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
-        self.assertIn("attempts/WU-000001/piworker_call_result.json", report.changed_refs)
-        self.assertIn("attempts/WU-000001/piworker_call_result.json", report.evidence_refs)
+        self.assertEqual(report.changed_refs, ["package/SKILL.md"])
+        self.assertEqual(report.evidence_refs, ["reports/piworker_runtime/WU-000001/call_result_projection.json"])
+        self.assertEqual(report.metric_refs, ["reports/piworker_runtime/WU-000001/metrics_projection.json"])
         call_result = PiWorkerCallResult.from_dict(call_result_payload)
         self.assertEqual(call_result.output_refs, ["package/SKILL.md"])
         self.assertEqual(call_result.metric_refs, ["attempts/WU-000001/pi_agent_metrics.json"])
@@ -633,7 +636,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertEqual(report.packet_hash, stable_json_hash(packet.to_dict()))
             self.assertTrue((root / "reports/judge_report.json").exists())
             self.assertIsNotNone(runner.captured_input)
-            self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["reports/judge_report.json"])
+            self.assertEqual(
+                runner.captured_input["permission_manifest"]["writable_refs"],
+                [
+                    "reports/judge_report.json",
+                    "reports/judge_rationale.md",
+                    "projections/repair_brief.json",
+                    "revisions/request.json",
+                ],
+            )
             self.assertEqual(runner.captured_input["contract"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
             call_result = PiWorkerCallResult.from_dict(call_result_payload)
             self.assertEqual(call_result.output_refs, ["reports/judge_report.json"])

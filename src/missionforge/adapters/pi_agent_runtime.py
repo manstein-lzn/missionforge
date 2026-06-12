@@ -421,6 +421,7 @@ class PiAgentExecutorNode:
         workspace: object,
     ) -> AgentExecutionReport:
         packet.validate()
+        root = _agent_node_workspace_root(workspace, fallback=self.workspace_root)
         call = PiWorkerCall.from_execution_packet(packet, packet_ref=packet_ref)
         work_unit = call.to_work_unit_contract(
             exit_criteria=["Write all expected artifact refs and report through PI Agent runtime."],
@@ -428,19 +429,27 @@ class PiAgentExecutorNode:
         )
         result = self.adapter.run_call(
             call,
-            workspace=self.workspace_root,
+            workspace=root,
             evidence_store=InMemoryEvidenceStore(),
             work_unit_contract=work_unit,
         )
-        root = Path(self.workspace_root).resolve()
         call_result = PiWorkerCallResult.from_worker_adapter_result(call, result)
         call_result_ref = _piworker_call_result_ref(call.call_id)
         _write_json(_resolve_workspace_ref(root, call_result_ref), call_result.to_dict())
+        evidence_projection_ref = _piworker_call_result_projection_ref(call.call_id)
+        metrics_projection_ref = _piworker_metrics_projection_ref(call.call_id)
+        _write_json(
+            _resolve_workspace_ref(root, evidence_projection_ref),
+            _piworker_call_result_projection_payload(call_result, source_call_result_ref=call_result_ref),
+        )
+        _write_json(
+            _resolve_workspace_ref(root, metrics_projection_ref),
+            _piworker_metrics_projection_payload(call_result, result.execution_report),
+        )
         work_report = result.execution_report
         status = _agent_execution_status(work_report.status)
-        metric_ref = work_report.metrics.get("metrics_ref")
-        metric_refs = [metric_ref] if isinstance(metric_ref, str) and metric_ref else []
         packet_hash = stable_json_hash(packet.to_dict())
+        runtime_owned_refs = _pi_agent_runtime_owned_refs(call.call_id)
         report = AgentExecutionReport(
             report_id=f"agent-{work_report.report_id}",
             packet_id=packet.packet_id,
@@ -451,9 +460,9 @@ class PiAgentExecutorNode:
             contract_ref=packet.contract_ref,
             status=status,
             produced_artifact_refs=list(work_report.produced_artifacts),
-            changed_refs=_dedupe_refs([*work_report.changed_refs, call_result_ref]),
-            evidence_refs=[call_result_ref],
-            metric_refs=_dedupe_refs([*metric_refs, *call_result.metric_refs]),
+            changed_refs=_dedupe_refs([ref for ref in work_report.changed_refs if ref not in runtime_owned_refs]),
+            evidence_refs=[evidence_projection_ref],
+            metric_refs=[metrics_projection_ref],
         )
         report.validate()
         return report
@@ -474,7 +483,7 @@ class PiAgentJudgeNode:
         workspace: object,
     ) -> JudgeReport:
         packet.validate()
-        root = Path(self.workspace_root).resolve()
+        root = _agent_node_workspace_root(workspace, fallback=self.workspace_root)
         root.mkdir(parents=True, exist_ok=True)
         packet_path = _resolve_workspace_ref(root, packet_ref)
         _write_json(packet_path, packet.to_dict())
@@ -1104,6 +1113,97 @@ def _piworker_call_result_ref(call_id: str) -> str:
     return f"attempts/{safe_call_id}/piworker_call_result.json"
 
 
+def _piworker_call_result_projection_ref(call_id: str) -> str:
+    safe_call_id = require_non_empty_str(call_id, "piworker_call.call_id")
+    return f"reports/piworker_runtime/{safe_call_id}/call_result_projection.json"
+
+
+def _piworker_metrics_projection_ref(call_id: str) -> str:
+    safe_call_id = require_non_empty_str(call_id, "piworker_call.call_id")
+    return f"reports/piworker_runtime/{safe_call_id}/metrics_projection.json"
+
+
+def _pi_agent_runtime_owned_refs(call_id: str) -> set[str]:
+    refs = _pi_agent_refs(call_id)
+    return {
+        refs["input"],
+        refs["output"],
+        refs["session"],
+        refs["events"],
+        refs["metrics"],
+        refs["savepoints"],
+        refs["report"],
+        _piworker_call_result_ref(call_id),
+    }
+
+
+def _piworker_call_result_projection_payload(
+    call_result: PiWorkerCallResult,
+    *,
+    source_call_result_ref: str,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": "missionforge.piworker_call_result_projection.v1",
+        "call_id": call_result.call_id,
+        "role": call_result.role.value,
+        "contract_id": call_result.contract_id,
+        "contract_hash": call_result.contract_hash,
+        "contract_ref": call_result.contract_ref,
+        "status": call_result.status.value,
+        "source_call_result_ref": validate_ref(source_call_result_ref, "piworker_call_result_projection.source_call_result_ref"),
+        "source_call_result_hash": stable_json_hash(call_result.to_dict()),
+        "execution_report_ref": call_result.execution_report_ref,
+        "output_refs": list(call_result.output_refs),
+        "runtime_refs": list(call_result.runtime_refs),
+        "evidence_refs": list(call_result.evidence_refs),
+        "metric_refs": list(call_result.metric_refs),
+        "validation_report_ref": call_result.validation_report_ref,
+        "error_ref": call_result.error_ref,
+    }
+    return ensure_json_value(payload, "piworker_call_result_projection")
+
+
+def _piworker_metrics_projection_payload(
+    call_result: PiWorkerCallResult,
+    report: ExecutionReport,
+) -> dict[str, Any]:
+    metrics = report.metrics
+    payload = {
+        "schema_version": "missionforge.piworker_metrics_projection.v1",
+        "call_id": call_result.call_id,
+        "role": call_result.role.value,
+        "status": call_result.status.value,
+        "execution_report_ref": call_result.execution_report_ref,
+        "metric_refs": list(call_result.metric_refs),
+        "duration_ms": _non_negative_metric(metrics, "duration_ms"),
+        "returncode": _non_negative_metric(metrics, "returncode"),
+        "timed_out": bool(metrics.get("timed_out", False)),
+        "provider_mode": metrics.get("provider_mode"),
+        "provider_config_source": metrics.get("provider_config_source"),
+        "model": metrics.get("model"),
+        "tool_call_count": _non_negative_metric(metrics, "tool_call_count"),
+        "token_count": _non_negative_metric(metrics, "token_count", "total_tokens"),
+        "total_tokens": _non_negative_metric(metrics, "total_tokens", "token_count"),
+        "input_tokens": _non_negative_metric(metrics, "input_tokens"),
+        "output_tokens": _non_negative_metric(metrics, "output_tokens"),
+        "cache_read_tokens": _non_negative_metric(metrics, "cache_read_tokens"),
+        "cache_write_tokens": _non_negative_metric(metrics, "cache_write_tokens"),
+        "input_cost_usd": _non_negative_number_metric(metrics, "input_cost_usd"),
+        "output_cost_usd": _non_negative_number_metric(metrics, "output_cost_usd"),
+        "cache_read_cost_usd": _non_negative_number_metric(metrics, "cache_read_cost_usd"),
+        "cache_write_cost_usd": _non_negative_number_metric(metrics, "cache_write_cost_usd"),
+        "provider_reported_cost_usd": _non_negative_number_metric(metrics, "provider_reported_cost_usd"),
+        "tool_error_count": _non_negative_metric(metrics, "tool_error_count"),
+        "tool_latency_ms_total": _non_negative_metric(metrics, "tool_latency_ms_total"),
+        "command_count": _non_negative_metric(metrics, "command_count"),
+        "test_command_count": _non_negative_metric(metrics, "test_command_count"),
+        "command_failure_count": _non_negative_metric(metrics, "command_failure_count"),
+        "time_to_first_tool_ms": _non_negative_metric(metrics, "time_to_first_tool_ms"),
+        "time_to_first_artifact_ms": _non_negative_metric(metrics, "time_to_first_artifact_ms"),
+    }
+    return ensure_json_value(payload, "piworker_metrics_projection")
+
+
 def _judge_node_spec_payload(*, packet: JudgePacket, packet_ref: str, packet_hash: str) -> dict[str, Any]:
     return {
         "schema_version": "missionforge.pi_agent_judge_node_spec.v1",
@@ -1123,11 +1223,19 @@ def _judge_node_spec_payload(*, packet: JudgePacket, packet_ref: str, packet_has
             "Read the judge packet, judge rubric, execution report, hard checks, evidence refs, and artifact refs before deciding.",
             "Do not edit executor artifacts, contracts, packets, evidence refs, or hard-check refs.",
             "Write exactly one JudgeReport JSON object at report_ref.",
+            "rationale_refs is for judge-authored rationale artifacts only; use [] if you do not write one.",
+            "Do not put contract, rubric, packet, execution report, hard-check, evidence, or artifact refs in rationale_refs.",
+            "If you write rationale, write it only to reports/judge_rationale.md.",
             "Use accepted only when execution and artifacts satisfy the judge rubric and hard_check_status is passed.",
             "Use rejected when execution or artifacts are not acceptable and no same-contract repair is appropriate.",
             "Use repair only for same-contract implementation gaps and include repair_brief_ref.",
             "Use revision_required only when the contract itself must change and include revision_request_ref.",
         ],
+        "judge_authored_optional_refs": {
+            "rationale_ref": "reports/judge_rationale.md",
+            "repair_brief_ref": "projections/repair_brief.json",
+            "revision_request_ref": "revisions/request.json",
+        },
         "judge_report_schema": {
             "schema_version": "judge_report.v1",
             "role": "judge_piworker",
@@ -1157,6 +1265,14 @@ def _agent_execution_status(status: str) -> AgentExecutionStatus:
     if status == "blocked":
         return AgentExecutionStatus.BLOCKED
     return AgentExecutionStatus.FAILED
+
+
+def _agent_node_workspace_root(workspace: object, *, fallback: str | Path) -> Path:
+    active_workspace = getattr(workspace, "workspace", workspace)
+    workspace_root_path = getattr(active_workspace, "workspace_root_path", None)
+    if workspace_root_path is not None:
+        return Path(workspace_root_path).resolve()
+    return Path(fallback).resolve()
 
 
 def _role_from_work_unit(work_unit: WorkUnitContract) -> PiWorkerCallRole:

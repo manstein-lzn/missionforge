@@ -65,9 +65,21 @@ class AgenticLedgerTests(unittest.TestCase):
                 RunReplayStatus.REPAIR,
             ),
             (
+                DecisionLedgerEventKind.REPAIR_EXECUTION_RECORDED,
+                "completed",
+                {"piworker_call_result_ref": "attempts/repair-call/piworker_call_result.json"},
+                RunReplayStatus.REPAIR,
+            ),
+            (
                 DecisionLedgerEventKind.REVISION_REQUESTED,
                 "revision_required",
                 {"revision_request_ref": "revisions/request.json"},
+                RunReplayStatus.REVISION_REQUIRED,
+            ),
+            (
+                DecisionLedgerEventKind.REVISION_DRAFT_RECORDED,
+                "completed",
+                {"piworker_call_result_ref": "attempts/revision-call/piworker_call_result.json"},
                 RunReplayStatus.REVISION_REQUIRED,
             ),
             (
@@ -106,6 +118,39 @@ class AgenticLedgerTests(unittest.TestCase):
 
             with self.assertRaises(ContractValidationError):
                 replay_decision_ledger(root, decision_ledger_ref="ledgers/decision_ledger.jsonl")
+
+    def test_replay_allows_explicit_revision_applied_contract_transition(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_ledger(
+                root,
+                [
+                    _entry("ledger-entry-000001", DecisionLedgerEventKind.CONTRACT_FROZEN),
+                    _entry(
+                        "ledger-entry-000002",
+                        DecisionLedgerEventKind.REVISION_APPLIED,
+                        status="applied",
+                        contract_hash=OTHER_CONTRACT_HASH,
+                        refs={
+                            "revision_applied_ref": "revisions/revision-001/revision_applied.json",
+                            "task_contract_revision_ref": "revisions/revision-001/task_contract_revision.json",
+                        },
+                    ),
+                    _entry(
+                        "ledger-entry-000003",
+                        DecisionLedgerEventKind.REVISION_JUDGE_REPORT_RECORDED,
+                        status="repair",
+                        contract_hash=OTHER_CONTRACT_HASH,
+                        refs={"judge_report_ref": "revisions/revision-001/reports/judge_report.json"},
+                    ),
+                ],
+            )
+
+            summary = replay_decision_ledger(root, decision_ledger_ref="ledgers/decision_ledger.jsonl")
+
+            self.assertEqual(summary.status, RunReplayStatus.REPAIR)
+            self.assertEqual(summary.contract_hash, OTHER_CONTRACT_HASH)
+            self.assertEqual(summary.judge_report_ref, "revisions/revision-001/reports/judge_report.json")
 
     def test_ledger_entry_rejects_artifact_body_field(self) -> None:
         payload = _entry("ledger-entry-000001", DecisionLedgerEventKind.CONTRACT_FROZEN).to_dict()

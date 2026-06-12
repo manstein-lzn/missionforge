@@ -57,11 +57,35 @@ FrontDesk PiWorker authoring nodes use the same boundary with
 `frontdesk_author_piworker` role before projecting to `WorkUnitContract`.
 Repair directives and revision pending records also use the same runtime
 boundary through `repair_piworker` and `revision_drafter_piworker` calls.
+Those helper paths now persist their `PiWorkerCallResult` under
+`attempts/<call_id>/piworker_call_result.json`, so repair and revision drafting
+calls have the same refs-first audit hook as executor and judge calls.
+The repair controller can then turn a completed repair call result into a
+same-contract `AgentExecutionReport` plus a fresh `JudgePacket` with
+`build_repair_rejudge_packet(...)`. That bridge deliberately stops before
+acceptance; the next semantic decision still belongs to an independent judge.
+The revision controller has the symmetric boundary check for drafts:
+`load_revision_draft_contract(...)` loads a revised `TaskContract` proposal
+from the `revision_drafter_piworker` result, proves it is bound to the pending
+revision record and changes the contract hash, and still requires an explicit
+authority decision before `apply_task_contract_revision(...)`.
+When a caller provides a decision ledger ref, the helpers also append
+`repair_execution_recorded` or `revision_draft_recorded` entries with only
+refs and content hashes, so ledger replay can explain the continuation without
+reading PI chat memory.
 
 `PiWorkerCall` and the Node runtime parser reject raw
 prompt/transcript/payload/body/stdout/stderr/secret fields through refs-only
 payload validation, validate safe refs and hashes, require expected outputs,
 and reject outputs outside writable refs.
+
+The dedicated PI Agent runtime keeps its full audit material under
+`attempts/<call_id>/...`, but the outer TaskContract flow does not treat those
+attempt refs as worker-owned authority. Instead, the executor writes a narrow
+runtime projection under `reports/piworker_runtime/<call_id>/...` and the
+outer flow validates that projection as runtime evidence. This keeps attempts
+available for inspection without requiring products to grant the worker write
+access to the runtime audit plane.
 
 Goal 6A implemented a deterministic faux PiWorker adapter. The adapter proves
 MissionForge's PiWorker-facing contract boundary without starting a live

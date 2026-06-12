@@ -10,6 +10,8 @@ from typing import Any, Mapping
 from .agent_packets import (
     AgentExecutionPacket,
     AgentExecutionReport,
+    AgentExecutionStatus,
+    HardCheckStatus,
     JudgePacket,
     JudgeReport,
     JudgeReportDecision,
@@ -640,6 +642,154 @@ def build_repair_execution_directive(
     return _write_or_replay_repair_execution_directive(workspace, directive)
 
 
+def build_repair_rejudge_packet(
+    *,
+    directive: RepairExecutionDirective,
+    call_result: Any,
+    workspace: RunWorkspace,
+    repair_execution_directive_ref: str | None = None,
+    repair_ticket: RepairTicket | None = None,
+    judge_packet_ref: str | None = None,
+    judge_report_ref: str | None = None,
+    hard_check_status: HardCheckStatus | str | None = None,
+    hard_check_refs: list[str] | None = None,
+) -> JudgePacket:
+    """Turn one repair PiWorker result into the next independent judge packet.
+
+    This is a continuation primitive, not an acceptance shortcut. It writes a
+    same-contract repair execution report and a judge packet; a separate judge
+    still owns semantic acceptance, repair, revision, or rejection.
+    """
+
+    from .piworker_call import PiWorkerCallResult, PiWorkerCallResultStatus, PiWorkerCallRole
+
+    directive.validate()
+    if not isinstance(call_result, PiWorkerCallResult):
+        call_result = PiWorkerCallResult.from_dict(require_mapping(call_result, "piworker_call_result"))
+    call_result.validate()
+    workspace.permission_manifest.validate()
+
+    directive_ref = repair_execution_directive_ref or _repair_execution_directive_ref_from_ticket_ref(
+        directive.repair_ticket_ref
+    )
+    _load_and_match(
+        workspace,
+        directive_ref,
+        RepairExecutionDirective,
+        directive,
+        "repair_execution_directive",
+    )
+    loaded_ticket = repair_ticket or _read_artifact(workspace, directive.repair_ticket_ref, RepairTicket, "repair_ticket")
+    if loaded_ticket.ticket_hash != directive.repair_ticket_hash:
+        raise ContractValidationError("repair_rejudge_packet ticket hash does not match directive")
+    if loaded_ticket.contract_hash != directive.contract_hash:
+        raise ContractValidationError("repair_rejudge_packet ticket contract hash does not match directive")
+    if loaded_ticket.source_result_ref != directive.source_result_ref:
+        raise ContractValidationError("repair_rejudge_packet ticket source result ref does not match directive")
+    if loaded_ticket.source_repair_brief_ref != directive.source_repair_brief_ref:
+        raise ContractValidationError("repair_rejudge_packet ticket repair brief ref does not match directive")
+
+    if call_result.role is not PiWorkerCallRole.REPAIR:
+        raise ContractValidationError("repair_rejudge_packet requires repair_piworker call result")
+    if call_result.call_id != directive.directive_id:
+        raise ContractValidationError("repair_rejudge_packet call result does not match repair directive")
+    if call_result.contract_id != directive.contract_id:
+        raise ContractValidationError("repair_rejudge_packet call result contract_id does not match directive")
+    if call_result.contract_hash != directive.contract_hash:
+        raise ContractValidationError("repair_rejudge_packet call result contract_hash does not match directive")
+    if call_result.contract_ref != loaded_ticket.contract_ref:
+        raise ContractValidationError("repair_rejudge_packet call result contract_ref does not match ticket")
+    if call_result.status is PiWorkerCallResultStatus.COMPLETED:
+        missing_outputs = sorted(set(directive.target_artifact_refs) - set(call_result.output_refs))
+        if missing_outputs:
+            raise ContractValidationError(f"repair_rejudge_packet missing repaired output refs: {missing_outputs}")
+
+    call_result_ref = _piworker_call_result_ref(call_result.call_id)
+    _match_existing_json(workspace, call_result_ref, call_result.to_dict(), "piworker_call_result")
+    execution_packet = _read_artifact(
+        workspace,
+        directive.execution_packet_ref,
+        AgentExecutionPacket,
+        "repair_execution_packet",
+    )
+    if execution_packet.contract_hash != directive.contract_hash:
+        raise ContractValidationError("repair_rejudge_packet execution packet contract hash does not match directive")
+    if execution_packet.report_ref != directive.execution_report_ref:
+        raise ContractValidationError("repair_rejudge_packet execution packet report ref does not match directive")
+
+    produced_refs = list(call_result.output_refs)
+    if call_result.status is PiWorkerCallResultStatus.COMPLETED:
+        _ensure_existing_refs(workspace, directive.target_artifact_refs, "repair_output_refs")
+    repair_execution_report = AgentExecutionReport(
+        report_id=f"{directive.directive_id}-repair-execution-report",
+        packet_id=execution_packet.packet_id,
+        packet_ref=directive.execution_packet_ref,
+        packet_hash=stable_json_hash(execution_packet.to_dict()),
+        contract_id=directive.contract_id,
+        contract_hash=directive.contract_hash,
+        contract_ref=loaded_ticket.contract_ref,
+        status=_execution_status_from_call_result(call_result.status),
+        produced_artifact_refs=produced_refs,
+        changed_refs=produced_refs,
+        evidence_refs=_unique_refs([call_result_ref, *call_result.evidence_refs]),
+        metric_refs=list(call_result.metric_refs),
+    )
+    repair_execution_report_payload = repair_execution_report.to_dict()
+    _write_or_match_json(
+        workspace,
+        directive.execution_report_ref,
+        repair_execution_report_payload,
+        "repair_execution_report",
+    )
+
+    source_judge_packet = _read_artifact(workspace, loaded_ticket.judge_packet_ref, JudgePacket, "source_judge_packet")
+    effective_hard_check_status = (
+        source_judge_packet.hard_check_status
+        if hard_check_status is None
+        else require_enum(hard_check_status, HardCheckStatus, "repair_rejudge_packet.hard_check_status")
+    )
+    if hard_check_refs is None:
+        effective_hard_check_refs = list(source_judge_packet.hard_check_refs)
+    else:
+        effective_hard_check_refs = _ref_list(hard_check_refs, "hard_check_refs")
+    next_judge_packet_ref = judge_packet_ref or _repair_judge_packet_ref(loaded_ticket.ticket_id)
+    next_judge_report_ref = judge_report_ref or _repair_judge_report_ref(loaded_ticket.ticket_id)
+    rejudge_packet = JudgePacket(
+        packet_id=f"{loaded_ticket.ticket_id}-repair-judge-packet",
+        contract_id=directive.contract_id,
+        contract_hash=directive.contract_hash,
+        contract_ref=loaded_ticket.contract_ref,
+        judge_rubric_ref=source_judge_packet.judge_rubric_ref,
+        judge_rubric_hash=source_judge_packet.judge_rubric_hash,
+        execution_packet_ref=directive.execution_packet_ref,
+        execution_packet_hash=stable_json_hash(execution_packet.to_dict()),
+        execution_report_ref=directive.execution_report_ref,
+        execution_report_hash=stable_json_hash(repair_execution_report_payload),
+        report_ref=next_judge_report_ref,
+        hard_check_status=effective_hard_check_status,
+        artifact_refs=produced_refs,
+        evidence_refs=_unique_refs(
+            [
+                directive.execution_report_ref,
+                call_result_ref,
+                *repair_execution_report.evidence_refs,
+            ]
+        ),
+        hard_check_refs=effective_hard_check_refs,
+    )
+    validate_judge_packet_for_execution(
+        rejudge_packet,
+        execution_packet,
+        repair_execution_report,
+        execution_packet_ref=directive.execution_packet_ref,
+        execution_report_ref=directive.execution_report_ref,
+        execution_packet_hash=stable_json_hash(execution_packet.to_dict()),
+        execution_report_hash=stable_json_hash(repair_execution_report_payload),
+    )
+    _write_or_match_json(workspace, next_judge_packet_ref, rejudge_packet.to_dict(), "repair_rejudge_packet")
+    return rejudge_packet
+
+
 def _source_result_ref(source_result_ref: str | None, result: AgenticFlowResult) -> str:
     if source_result_ref is not None:
         return validate_ref(source_result_ref, "source_result_ref")
@@ -704,7 +854,7 @@ def _write_or_replay_repair_execution_directive(
     workspace: RunWorkspace,
     directive: RepairExecutionDirective,
 ) -> RepairExecutionDirective:
-    directive_ref = f"repairs/{directive.repair_ticket_ref.split('/')[-2]}/repair_execution_directive.json"
+    directive_ref = _repair_execution_directive_ref_from_ticket_ref(directive.repair_ticket_ref)
     directive.validate()
     try:
         existing_payload = workspace.read_json(directive_ref)
@@ -718,6 +868,45 @@ def _write_or_replay_repair_execution_directive(
     if existing_directive.directive_hash != directive.directive_hash:
         raise ContractValidationError("repair_execution_directive replay conflict for deterministic directive_id")
     return existing_directive
+
+
+def _repair_execution_directive_ref_from_ticket_ref(ticket_ref: str) -> str:
+    safe_ref = validate_ref(ticket_ref, "repair_ticket_ref")
+    if not safe_ref.endswith("/repair_ticket.json"):
+        raise ContractValidationError("repair_ticket_ref must end with /repair_ticket.json")
+    return f"{safe_ref.removesuffix('/repair_ticket.json')}/repair_execution_directive.json"
+
+
+def _repair_judge_packet_ref(ticket_id: str) -> str:
+    return f"packets/repairs/{_validate_id(ticket_id, 'repair_ticket.ticket_id')}/judge_packet.json"
+
+
+def _repair_judge_report_ref(ticket_id: str) -> str:
+    return f"reports/repairs/{_validate_id(ticket_id, 'repair_ticket.ticket_id')}/judge_report.json"
+
+
+def _piworker_call_result_ref(call_id: str) -> str:
+    safe_call_id = _validate_id(call_id, "piworker_call.call_id")
+    return f"attempts/{safe_call_id}/piworker_call_result.json"
+
+
+def _execution_status_from_call_result(status: Any) -> AgentExecutionStatus:
+    from .piworker_call import PiWorkerCallResultStatus
+
+    call_status = require_enum(status, PiWorkerCallResultStatus, "piworker_call_result.status")
+    if call_status is PiWorkerCallResultStatus.COMPLETED:
+        return AgentExecutionStatus.COMPLETED
+    if call_status is PiWorkerCallResultStatus.BLOCKED:
+        return AgentExecutionStatus.BLOCKED
+    return AgentExecutionStatus.FAILED
+
+
+def _ensure_existing_refs(workspace: RunWorkspace, refs: list[str], field_name: str) -> None:
+    for ref in refs:
+        safe_ref = workspace.ensure_read_ref(ref)
+        path = workspace.resolve_ref(safe_ref)
+        if not path.exists() or not path.is_file():
+            raise ContractValidationError(f"{field_name} does not exist: {safe_ref}")
 
 
 def _write_or_match_json(
@@ -892,5 +1081,6 @@ __all__ = [
     "RepairTicket",
     "RepairTicketStatus",
     "build_repair_execution_directive",
+    "build_repair_rejudge_packet",
     "build_repair_ticket",
 ]

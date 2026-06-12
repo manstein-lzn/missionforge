@@ -100,6 +100,41 @@ class SkillFoundryLiveDogfoodTests(unittest.TestCase):
             self.assertEqual(report.run_status, "classified_failure")
             self.assertIn("bundle_validator:SF-PROMPT-README-EXISTS", report.issue_codes)
 
+    def test_live_dogfood_reports_task_contract_bundle_validation_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            def runner(request, **kwargs):
+                write_json_ref(
+                    root,
+                    "runs/demo-skill/qa/product_grade_report.json",
+                    _failed_product_grade_report().to_dict(),
+                )
+                return SkillFoundryProductReport(
+                    bundle_id=request.bundle_id,
+                    request_ref="runs/demo-skill/product_contract/skillfoundry_request.json",
+                    product_contract_ref="runs/demo-skill/product_contract/skill_product_contract.json",
+                    mission_ref="runs/demo-skill/contract/task_contract.json",
+                    mission_run_id="skillfoundry-demo-skill-taskcontract",
+                    verifier_refs=["runs/demo-skill/reports/judge_report.json"],
+                    product_grade_report_ref="runs/demo-skill/qa/product_grade_report.json",
+                    registry_decision_ref="runs/demo-skill/registry/skillfoundry_registry.json",
+                    package_refs=["runs/demo-skill/package/SKILL.md"],
+                    final_status=RegistryStatus.CANDIDATE_REGISTERED.value,
+                )
+
+            report = run_skillfoundry_live_dogfood(
+                sample_request(),
+                workspace=root,
+                environ={DOGFOOD_OPT_IN_ENV: "1"},
+                build_runner=runner,
+            )
+
+            self.assertEqual(
+                report.bundle_validation_report_ref,
+                "runs/demo-skill/qa/skill_bundle_validation_report.json",
+            )
+
     def test_live_dogfood_classifies_early_exception_as_product_contract_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -117,6 +152,133 @@ class SkillFoundryLiveDogfoodTests(unittest.TestCase):
             self.assertEqual(report.outcome_category, "product_contract")
             self.assertEqual(report.run_status, "classified_failure")
             self.assertIn("contract_validation_error", report.issue_codes)
+
+    def test_live_dogfood_classifies_task_contract_judge_report_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            def runner(request, **kwargs):
+                run_ref = f"runs/{request.bundle_id}"
+                write_json_ref(root, f"{run_ref}/product_contract/skillfoundry_request.json", request.to_dict())
+                write_json_ref(
+                    root,
+                    f"{run_ref}/product_contract/skill_product_contract.json",
+                    {"schema_version": "fixture.product_contract.v1", "bundle_id": request.bundle_id},
+                )
+                write_json_ref(
+                    root,
+                    f"{run_ref}/product_contract/task_contract_compile_report.json",
+                    {"schema_version": "fixture.compile_report.v1", "bundle_id": request.bundle_id},
+                )
+                write_json_ref(
+                    root,
+                    f"{run_ref}/contract/task_contract.json",
+                    {"schema_version": "fixture.task_contract.v1", "contract_id": "skillfoundry-demo-skill"},
+                )
+                write_json_ref(root, f"{run_ref}/reports/skillfoundry_hard_checks.json", {"status": "passed"})
+                write_json_ref(root, f"{run_ref}/reports/execution_report.json", {"status": "completed"})
+                _write_text(root, f"{run_ref}/package/SKILL.md", "# Demo Skill\n")
+                write_json_ref(
+                    root,
+                    f"{run_ref}/package/skillfoundry.bundle.json",
+                    {"schema_version": "skillfoundry.bundle.v1", "bundle_id": request.bundle_id},
+                )
+                _write_text(root, f"{run_ref}/package/README.md", "# Demo Skill\n")
+                _write_text(root, f"{run_ref}/reports/judge_report.json", "")
+                raise ContractValidationError("judge report artifact is invalid: Expecting value")
+
+            report = run_skillfoundry_live_dogfood(
+                sample_request(),
+                workspace=root,
+                environ={DOGFOOD_OPT_IN_ENV: "1"},
+                build_runner=runner,
+            )
+
+            self.assertEqual(report.outcome_category, "worker_execution")
+            self.assertEqual(report.run_status, "classified_failure")
+            self.assertEqual(report.request_ref, "runs/demo-skill/product_contract/skillfoundry_request.json")
+            self.assertIn("invalid_judge_report", report.issue_codes)
+            self.assertIn("contract_validation_error", report.issue_codes)
+            self.assertNotIn("product_contract_not_written", report.issue_codes)
+            self.assertIn("runs/demo-skill/reports/judge_report.json", report.evidence_refs)
+            self.assertIn("runs/demo-skill/package/SKILL.md", report.package_refs)
+
+    def test_live_dogfood_classifies_failed_runtime_before_authoritative_execution_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            def runner(request, **kwargs):
+                run_ref = f"runs/{request.bundle_id}"
+                call_id = f"skillfoundry-{request.bundle_id}-taskcontract-execution-packet"
+                write_json_ref(root, f"{run_ref}/product_contract/skillfoundry_request.json", request.to_dict())
+                write_json_ref(
+                    root,
+                    f"{run_ref}/product_contract/skill_product_contract.json",
+                    {"schema_version": "fixture.product_contract.v1", "bundle_id": request.bundle_id},
+                )
+                write_json_ref(
+                    root,
+                    f"{run_ref}/product_contract/task_contract_compile_report.json",
+                    {"schema_version": "fixture.compile_report.v1", "bundle_id": request.bundle_id},
+                )
+                write_json_ref(
+                    root,
+                    f"{run_ref}/contract/task_contract.json",
+                    {"schema_version": "fixture.task_contract.v1", "contract_id": "skillfoundry-demo-skill"},
+                )
+                write_json_ref(root, f"{run_ref}/reports/skillfoundry_hard_checks.json", {"status": "passed"})
+                write_json_ref(root, f"{run_ref}/reports/execution_report.json", {"status": "completed"})
+                _write_text(root, f"{run_ref}/ledgers/decision_ledger.jsonl", '{"event_kind":"execution_packet_issued"}\n')
+                _write_text(root, f"{run_ref}/package/SKILL.md", "# Demo Skill\n")
+                write_json_ref(
+                    root,
+                    f"{run_ref}/package/skillfoundry.bundle.json",
+                    {"schema_version": "skillfoundry.bundle.v1", "bundle_id": request.bundle_id},
+                )
+                _write_text(root, f"{run_ref}/package/README.md", "# Demo Skill\n")
+                write_json_ref(
+                    root,
+                    f"{run_ref}/attempts/{call_id}/pi_agent_output.json",
+                    {
+                        "schema_version": "missionforge.pi_agent_runtime_output.v1",
+                        "work_unit_id": call_id,
+                        "status": "failed",
+                    },
+                )
+                write_json_ref(
+                    root,
+                    f"{run_ref}/attempts/{call_id}/piworker_call_result.json",
+                    {
+                        "schema_version": "piworker_call_result.v1",
+                        "call_id": call_id,
+                        "result_id": f"{call_id}-result",
+                        "role": "executor_piworker",
+                        "contract_id": "skillfoundry-demo-skill-task-contract",
+                        "contract_hash": "sha256:" + "a" * 64,
+                        "contract_ref": "contract/task_contract.json",
+                        "status": "failed",
+                        "output_refs": [],
+                        "runtime_refs": [f"attempts/{call_id}/pi_agent_output.json"],
+                        "evidence_refs": [],
+                        "metric_refs": [],
+                    },
+                )
+                raise ContractValidationError("pi-agent runtime failed")
+
+            report = run_skillfoundry_live_dogfood(
+                sample_request(),
+                workspace=root,
+                environ={DOGFOOD_OPT_IN_ENV: "1"},
+                build_runner=runner,
+            )
+
+            self.assertEqual(report.outcome_category, "worker_execution")
+            self.assertIn("piworker_runtime_status:failed", report.issue_codes)
+            self.assertNotIn("judge_report_missing_after_execution_report", report.issue_codes)
+            self.assertIn(
+                "runs/demo-skill/attempts/skillfoundry-demo-skill-taskcontract-execution-packet/pi_agent_output.json",
+                report.evidence_refs,
+            )
 
 
 class SkillFoundryLiveDogfoodOptInTests(unittest.TestCase):
@@ -163,6 +325,12 @@ def _failed_product_grade_report() -> ProductGradeReport:
 
 def _unexpected_runner(*args, **kwargs):
     raise AssertionError("dogfood runner should not be called without opt-in")
+
+
+def _write_text(root: Path, ref: str, text: str) -> None:
+    path = root / ref
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,20 @@ The default SkillFoundry compile path emits TaskContract, WorkspacePolicy, and
 PermissionManifest refs under `runs/{bundle_id}/`; MissionIR APIs are retained
 for migration compatibility only.
 
+For TaskContract-native product execution, use:
+
+```python
+from missionforge_skillfoundry import run_skillfoundry_task_contract_bundle_build
+
+report = run_skillfoundry_task_contract_bundle_build(request, workspace=".")
+```
+
+This path compiles SkillFoundry into `TaskContract`, runs the MissionForge
+executor/judge boundary, validates the generated package, evaluates the
+product-grade gate, and writes refs-only product reports. The older
+`run_skillfoundry_bundle_build(...)` function remains as the MissionIR
+compatibility facade.
+
 Planning:
 
 - [SkillFoundry TaskContract path](docs/task_contract_path.md)

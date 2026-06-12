@@ -1,6 +1,6 @@
 # Agentic Repair
 
-Last updated: 2026-05-31
+Last updated: 2026-06-12
 
 Status: TaskContract-native repair/revision artifact surface plus thin
 controller records for the simplified agentic runtime.
@@ -122,6 +122,22 @@ RevisionPendingRecord
   + approved TaskRevisionDecision
   + revised TaskContract
   -> RevisionAppliedRecord + TaskContractRevision
+
+RevisionAppliedRecord
+  + revised TaskContract
+  + WorkspacePolicy
+  + PermissionManifest
+  -> RevisionExecutionDirective + revised AgentExecutionPacket
+
+RevisionExecutionDirective
+  + revised-contract PiWorkerCallResult
+  -> revised AgentExecutionReport + revised JudgeRubric + JudgePacket
+
+RevisionExecutionDirective
+  + revised-contract JudgePacket
+  + independent revised-contract JudgeReport
+  -> revised AgenticFlowResult
+  -> revised FinalPackage when accepted
 ```
 
 The revision controller is deliberately stricter than repair because it changes
@@ -142,5 +158,26 @@ task authority:
   from the previous frozen contract hash;
 - applying a revision writes a `TaskContractRevision` plus
   `revisions/{request_id}/revision_applied.json` idempotently;
+- building revision execution writes a revised-contract `WorkerBrief`,
+  `AgentExecutionPacket`, and
+  `revisions/{request_id}/revision_execution_directive.json` idempotently;
+- the revision execution directive cites the pending, applied, decision,
+  contract revision, revised contract, and source revision request refs instead
+  of embedding judge rationale or raw Pi transcripts;
+- building a revision rejudge packet writes the revised execution report,
+  revised judge rubric, and independent judge packet idempotently;
+- the revised executor result cannot self-accept. It only becomes evidence for
+  the next judge packet;
+- building a revised judge result validates the directive, applied revision,
+  revised execution packet, revised execution report, judge packet, and
+  independent judge report before writing a revised `AgenticFlowResult`;
+- an accepted revised result requires completed execution and accepted expected
+  artifacts;
+- revised repair and revision-required results must point to judge-authored
+  repair or revision artifacts;
+- accepted revised results emit a final package under
+  `revisions/{request_id}/packages/final_package.json`;
+- the decision ledger records `revision_applied` before revised judge/final
+  events, and that is the only allowed contract-hash transition;
 - rejected or redesign-required decisions do not weaken the contract or apply a
   new contract.

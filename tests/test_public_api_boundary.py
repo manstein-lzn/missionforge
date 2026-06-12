@@ -55,6 +55,54 @@ class PublicApiBoundaryTests(unittest.TestCase):
             self.assertIn(symbol, missionforge.__all__)
             self.assertTrue(hasattr(missionforge, symbol), symbol)
 
+    def test_package_root_exposes_primary_task_contract_piworker_surface(self) -> None:
+        expected = {
+            "AgentExecutionPacket",
+            "AgentExecutionReport",
+            "AgenticFlowResult",
+            "AgenticFlowRunner",
+            "AgenticFlowStatus",
+            "DecisionLedgerEventKind",
+            "FinalPackage",
+            "JudgePacket",
+            "JudgeReport",
+            "JudgeRubric",
+            "PermissionManifest",
+            "PiWorkerCall",
+            "PiWorkerCallResult",
+            "PiWorkerCallResultStatus",
+            "PiWorkerCallRole",
+            "RepairBrief",
+            "RepairExecutionDirective",
+            "RepairTicket",
+            "RevisionAppliedRecord",
+            "RevisionExecutionDirective",
+            "RevisionPendingRecord",
+            "TaskContract",
+            "TaskContractDecisionLedgerEntry",
+            "TaskRevisionDecision",
+            "TaskRevisionRequest",
+            "WorkerBrief",
+            "WorkspacePolicy",
+            "apply_task_contract_revision",
+            "build_repair_execution_directive",
+            "build_repair_rejudge_packet",
+            "build_repair_ticket",
+            "build_revision_execution_directive",
+            "build_revision_judge_result",
+            "build_revision_pending_record",
+            "build_revision_rejudge_packet",
+            "create_default_task_contract_flow",
+            "load_revision_draft_contract",
+            "replay_decision_ledger",
+            "run_repair_directive_with_default_piworker",
+            "run_revision_draft_with_default_piworker",
+        }
+
+        for symbol in expected:
+            self.assertIn(symbol, missionforge.__all__)
+            self.assertTrue(hasattr(missionforge, symbol), symbol)
+
     def test_package_root_exposes_task_contract_default_flow(self) -> None:
         with TemporaryDirectory() as tmpdir:
             preset = missionforge.create_default_task_contract_flow(

@@ -49,7 +49,9 @@ not contaminated by FrontDesk or product-specific behavior.
   run result is finalized.
 - Executor-produced artifacts must be under declared artifact roots and worker
   writable refs.
-- Executor evidence, metrics, repair, and revision refs must be worker-writable.
+- Executor evidence, metrics, repair, and revision refs must be worker-writable,
+  except for runtime-owned projections under `reports/piworker_runtime`, which
+  the outer flow writes and validates as runtime evidence.
 - Judge rationale, repair, and revision refs must be judge-writable.
 - Executor and judge nodes receive scoped workspace facades that deny writes to
   runtime-owned contract, packet, report, ledger, and checkpoint refs.
@@ -185,6 +187,8 @@ The runner fails closed when:
 - judge reports accept failed, missing, or unsupported hard checks;
 - judge reports accept an execution that did not complete;
 - accepted runs omit required artifact refs or cite artifacts that do not exist;
+- worker-written runtime projection refs are missing when the outer flow expects
+  them to exist;
 - ledger/checkpoint/result payloads contain raw prompt, transcript, body,
   payload, stdout/stderr, or secret-like fields.
 

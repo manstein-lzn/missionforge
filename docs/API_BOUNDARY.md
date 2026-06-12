@@ -1,6 +1,6 @@
 # API Boundary
 
-Last updated: 2026-05-29
+Last updated: 2026-06-12
 
 Status: `reference`
 
@@ -9,90 +9,203 @@ Status: `reference`
 Keep the public MissionForge surface small enough that application teams extend
 the system through contracts instead of patching runtime internals.
 
-The package root is the stable import surface. Module-level imports may exist
-for internal implementation and focused tests, but they should not be treated as
-application contracts unless this document says so.
+The package root is the stable programmer import surface. Module-level imports
+may exist for implementation and focused tests, but product integrations should
+depend on the root surface first unless this document explicitly marks a module
+as adapter-specific.
 
-## Stable Root Surface
+## Primary Kernel Surface
 
-Application code may depend on these categories from `missionforge`:
+New product integrations should start with the TaskContract/PiWorker kernel:
 
-- Mission contracts: `MissionIR`, `MissionObjective`, `MissionConstraint`,
-  `CapabilityProfileRef`
-- Runtime facade: `MissionRuntime`, `MissionResult`
-- Freeze and contract outputs: `ExpandedMission`, `FrozenMissionContract`,
-  `ContractManifest`, `expand_mission`, `freeze_mission`
-- Evidence contracts and stores: `ArtifactRef`, `EvidenceRef`,
-  `EvidenceLedger`, `EvidenceRecord`, `EvidenceSnapshot`,
-  `FileEvidenceStore`, `InMemoryEvidenceStore`
-- Metrics: `MetricEvent`, `MetricProjection`, `MetricTrustLevel`,
-  `MetricStore`, `project_metric_events`
-- Profiles: `CapabilityProfile`, `VerificationProfile`, `ProfileExpansion`,
-  `ProfilePack`, `ProfileRegistry`
-- Revision contracts: `MissionRevision`, `MissionRevisionRequest`,
-  `MissionRevisionDecision`, `MissionRevisionWorkflow`,
-  `MissionRevisionStore`, `apply_mission_revision`
-- Store protocols and JSON backend: `RunStore`, `ArtifactStore`,
-  `EventLogStore`, `JsonWorkspaceStore`
-- Operator-safe audit: `MissionRunAudit`, `build_run_audit`
-- Verifier contracts: `VerificationSpec`, `VerificationResult`,
-  `ValidatorSpec`, `ValidatorResult`, `Verifier`, `verify_spec`,
-  `run_validator`
-- Shared enums and errors: `ContractValidationError`, `MissionValidationError`,
-  `VerificationStatus`, `ValidatorMode`, `ValidatorSeverity`,
-  `EvidenceTrustLevel`
+- Task authority:
+  - `TaskContract`
+  - `TaskContractRevision`
+  - `ContractClause`
+- Workspace and permission authority:
+  - `WorkspacePolicy`
+  - `PermissionManifest`
+  - `NetworkPolicy`
+  - `RunWorkspace`
+- Projections:
+  - `WorkerBrief`
+  - `JudgeRubric`
+  - `build_worker_brief`
+  - `build_judge_rubric`
+  - `project_worker_brief`
+  - `project_judge_rubric`
+- PiWorker call boundary:
+  - `PiWorkerCall`
+  - `PiWorkerCallResult`
+  - `PiWorkerCallRole`
+  - `PiWorkerCallResultStatus`
+- Execution and judgment packets:
+  - `AgentExecutionPacket`
+  - `AgentExecutionReport`
+  - `AgentExecutionStatus`
+  - `JudgePacket`
+  - `JudgeReport`
+  - `JudgeReportDecision`
+  - `validate_execution_report_for_packet`
+  - `validate_judge_packet_for_execution`
+  - `validate_judge_report_for_packet`
+- Default flow:
+  - `AgenticFlowRunner`
+  - `AgenticFlowResult`
+  - `AgenticFlowStatus`
+  - `AgenticFlowRefs`
+  - `TaskContractFlowPreset`
+  - `PiWorkerRuntimeFactory`
+  - `create_default_task_contract_flow`
+  - `create_default_piworker_adapter`
+- Refs-first ledger and package:
+  - `DecisionLedgerEventKind`
+  - `TaskContractDecisionLedgerEntry`
+  - `FinalPackage`
+  - `RunReplayStatus`
+  - `RunReplaySummary`
+  - `replay_decision_ledger`
+- Repair:
+  - `RepairBrief`
+  - `RepairTicket`
+  - `RepairTicketStatus`
+  - `RepairExecutionDirective`
+  - `RepairExecutionDirectiveStatus`
+  - `build_repair_ticket`
+  - `build_repair_execution_directive`
+  - `build_repair_rejudge_packet`
+  - `run_repair_directive_with_default_piworker`
+- Revision:
+  - `TaskRevisionRequest`
+  - `TaskRevisionDecision`
+  - `TaskRevisionDecisionStatus`
+  - `TaskRevisionAuthority`
+  - `RevisionPendingRecord`
+  - `RevisionPendingStatus`
+  - `RevisionAppliedRecord`
+  - `RevisionAppliedStatus`
+  - `RevisionExecutionDirective`
+  - `RevisionExecutionDirectiveStatus`
+  - `build_revision_pending_record`
+  - `load_revision_draft_contract`
+  - `apply_task_contract_revision`
+  - `build_revision_execution_directive`
+  - `build_revision_rejudge_packet`
+  - `build_revision_judge_result`
+  - `run_revision_draft_with_default_piworker`
+- Product integration contracts:
+  - `ProductIntegration`
+  - `TaskContractProductIntegration`
+  - `ProductTaskContractCompileResult`
+  - `ProductCompileResult`
+  - `ProductCompileStatus`
+  - `ProductArtifactRefs`
+  - `ProductGateSpec`
+  - `ProductGateResult`
+  - `ProductGateStatus`
 
-## Formal Authoring Surface
+These are product-neutral primitives. They define authority, workspace shape,
+tool access, artifact refs, semantic judgment packets, repair/revision records,
+and replay. They do not contain product-specific meaning.
 
-FrontDesk is the formal requirements-discovery and intent-authoring surface.
-The root surface exposes only generic authoring contracts and facade methods,
-not product-specific SkillFoundry or Codexarium behavior.
+## FrontDesk Surface
 
-Stable categories:
+FrontDesk is the high-intelligence requirements-discovery and intent-authoring
+surface. It may discover needs and prepare intent bundles, but product-aware
+output must pass through a product integration before becoming executable task
+authority.
+
+Stable root categories include:
 
 - `FrontDesk` authoring facade
 - `FrontDeskAuthoringSession`
-- semantic lock, mission brief, profile recommendation, mission plan, audit,
-  approval, and freeze manifest contracts
-- `FrontDeskIntentBundle` and ProductInquiryProfile contracts once Phase 22
-  lands
-- deterministic generic fallback compiler from approved FrontDesk artifacts to
-  `MissionIR`
-- refs-only inspect and handoff results
-- runtime feedback recommendations that may draft revision requests but cannot
-  approve or apply them
+- `FrontDeskIntentBundle`
+- `ProductInquiryProfile`
+- mission brief, semantic lock, solution plan, audit, approval, and freeze
+  manifest records
+- refs-only inspect and handoff records
 
-Product-aware FrontDesk output must pass through Product Integration before it
-becomes MissionIR. Generic fallback output must still enter the normal
-`MissionIR -> expand_mission -> freeze_mission -> MissionRuntime` path.
+FrontDesk output is not operational task truth by itself. The frozen
+`TaskContract`, or an explicit revision of it, remains task authority.
 
-## Experimental Root Surface
+## Compatibility Surface
 
-These are currently exported but should be treated as lower-level or
-experimental:
+These exports remain available for older code and migration paths, but they are
+not the recommended conceptual API for new product work:
 
-- `RuntimeEngine`
-- controlled steering proposal/review contract objects
-- work-unit and harness internals
+- MissionIR and freeze path:
+  - `MissionIR`
+  - `MissionObjective`
+  - `MissionConstraint`
+  - `CapabilityProfileRef`
+  - `ExpandedMission`
+  - `FrozenMissionContract`
+  - `ContractManifest`
+  - `expand_mission`
+  - `freeze_mission`
+- Older runtime facade:
+  - `MissionRuntime`
+  - `MissionResult`
+  - `RuntimeEngine`
+- Older revision contracts:
+  - `MissionRevision`
+  - `MissionRevisionRequest`
+  - `MissionRevisionDecision`
+  - `MissionRevisionWorkflow`
+  - `MissionRevisionStore`
+  - `apply_mission_revision`
+- Work-unit and harness compatibility:
+  - `WorkUnitContract`
+  - `WorkUnitCompiler`
+  - `WorkUnitHarness`
+  - `WorkerInvocation`
+  - `WorkerResult`
+  - `AttemptInputManifest`
+- Controlled steering and metric-dict surfaces.
 
-They are useful for MissionForge development and advanced integration tests.
-They should not be the default path for product integrations.
+Compatibility APIs may stay importable, but new features should not be added to
+them unless the change intentionally preserves migration behavior.
 
-## Internal Surface
+## Evidence, Store, And Verifier Surface
 
-These are implementation details and should not be re-exported from the package
-root:
+These generic infrastructure contracts are stable because they are product
+neutral and support both current and compatibility paths:
 
-- `ActiveMissionContract`
-- `RuntimeContractView`
-- PI Agent adapter classes
-- faux PiWorker adapter classes
-- product integration compilers such as SkillFoundry
-- adapter-private runtime modules
-
-Internal modules may import these directly when needed. Applications should use
-`MissionRuntime`, `MissionIR`, profiles, validators, evidence refs, metrics,
-and revision contracts instead.
+- evidence refs and stores:
+  - `ArtifactRef`
+  - `EvidenceRef`
+  - `EvidenceLedger`
+  - `EvidenceRecord`
+  - `EvidenceSnapshot`
+  - `FileEvidenceStore`
+  - `InMemoryEvidenceStore`
+- stores:
+  - `RunStore`
+  - `ArtifactStore`
+  - `EventLogStore`
+  - `JsonWorkspaceStore`
+  - `JsonArtifactStore`
+  - `JsonEventLogStore`
+  - `JsonRunStore`
+- verifier contracts:
+  - `VerificationSpec`
+  - `VerificationResult`
+  - `ValidatorSpec`
+  - `ValidatorResult`
+  - `Verifier`
+  - `verify_spec`
+  - `run_validator`
+- shared errors and helpers:
+  - `ContractValidationError`
+  - `MissionValidationError`
+  - `MissionForgeError`
+  - `VerificationStatus`
+  - `ValidatorMode`
+  - `ValidatorSeverity`
+  - `EvidenceTrustLevel`
+  - `stable_json_hash`
+  - `validate_ref`
+  - `assert_refs_only_payload`
 
 ## Adapter Boundary
 
@@ -101,37 +214,48 @@ carry product-specific MissionForge truth.
 
 Allowed:
 
-- CLI or host shell command envelopes;
-- refs-only operator results;
-- PI Agent / PiWorker construction boundary;
-- external integration code under `integrations/*`;
-- adapter contracts that emit `MissionIR`, `WorkUnitContract`, evidence refs,
-  metric events, or review decisions.
+- CLI or host shell command envelopes
+- refs-only operator results
+- Pi Agent / PiWorker construction boundaries
+- external integration code under `integrations/*`
+- compatibility projections such as `WorkUnitContract`
 
-Not allowed:
+Adapter-specific classes such as `PiAgentRuntimeConfig`,
+`PiAgentExecutorNode`, and `PiAgentJudgeNode` live under
+`missionforge.adapters.pi_agent_runtime`. They are intentionally not exported
+from the package root.
 
-- SkillFoundry-specific branches under `src/missionforge`;
-- mission-name branches;
-- benchmark-name branches;
-- customer-specific validators under `missionforge.*`;
-- adapter-private metric keys that change runtime routing;
-- worker output that closes verification without the verifier.
+## Internal Surface
+
+These are implementation details and should not be re-exported from the package
+root:
+
+- `ActiveMissionContract`
+- `RuntimeContractView`
+- `PiAgentRuntimeAdapter`
+- `FauxPiWorkerAdapter`
+- product integration compilers such as SkillFoundry
+- adapter-private runtime modules
+- product-specific package names or branch selectors
+
+Internal modules may import these directly when needed. Applications should use
+the primary kernel surface or explicit adapter modules.
 
 ## Product Integration Rule
 
 Product integrations should depend on MissionForge in this order:
 
-1. Use ProductInquiryProfile metadata to drive FrontDesk questioning when
-   product-scoped intake is needed.
-2. Consume `FrontDeskIntentBundle` or external source refs in product
-   integration code.
-3. Compile product facts into ProductContract and `MissionIR`.
-4. Use profile refs and `ProfilePack` for reusable capability semantics.
-5. Use validators and manual gates for completion checks.
-6. Use evidence refs for proof.
-7. Use ProductGate results for product readiness.
-8. Use metric events for diagnostics.
-9. Use mission revisions for frozen-contract changes.
-10. Use `MissionRuntime` for execution.
+1. Gather product facts through FrontDesk, product UI, config, source refs, or
+   external systems.
+2. Compile product facts into `TaskContract`, `WorkspacePolicy`, and
+   `PermissionManifest`.
+3. Project `WorkerBrief` and `JudgeRubric`.
+4. Run through `create_default_task_contract_flow(...)` or the same packet
+   primitives.
+5. Use product hard checks and product gates outside core.
+6. Record refs-only ledgers, results, final packages, repair records, and
+   revision records.
+7. Keep MissionIR only for compatibility and migration.
 
-If a product needs a branch in runtime code, the product boundary has failed.
+If a product needs a branch in `src/missionforge`, the product boundary has
+failed.

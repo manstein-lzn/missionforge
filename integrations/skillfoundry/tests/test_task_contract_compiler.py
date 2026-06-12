@@ -32,13 +32,18 @@ from missionforge.frontdesk import (
     SlotValueStatus,
 )
 from missionforge_skillfoundry import (
+    SkillBundleManifest,
     SkillFoundryFrontDeskIntegration,
     SkillFoundryTaskContractCompileResult,
     compile_frontdesk_task_contract,
     compile_skillfoundry_task_contract,
     load_skillfoundry_task_contract,
 )
-from missionforge_skillfoundry.task_contract_compiler import SKILLFOUNDRY_HARD_CHECK_RESULT_REF
+from missionforge_skillfoundry.task_contract_compiler import (
+    SKILLFOUNDRY_HARD_CHECK_RESULT_REF,
+    SKILLFOUNDRY_MANIFEST_CONTRACT_REF,
+    SKILLFOUNDRY_MANIFEST_TEMPLATE_REF,
+)
 from missionforge.adapters.pi_agent_runtime import (
     PI_AGENT_OUTPUT_SCHEMA_VERSION,
     PiAgentCommandResult,
@@ -72,13 +77,55 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             )
             self.assertTrue(all(item.refs for item in task_contract.semantic_acceptance))
             self.assertIn("product_contract/skill_product_contract.json", task_contract.product_contract_refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_TEMPLATE_REF, task_contract.product_contract_refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_CONTRACT_REF, task_contract.product_contract_refs)
             self.assertIn("frontdesk/sanitized_task.json", task_contract.source_refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_TEMPLATE_REF, task_contract.source_refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_CONTRACT_REF, task_contract.source_refs)
             self.assertIn("frontdesk", workspace_policy.input_refs)
             self.assertIn("frontdesk", permission_manifest.readable_refs)
+            manifest_clause = next(
+                clause
+                for clause in task_contract.required_outputs
+                if clause.refs[0] == "package/skillfoundry.bundle.json"
+            )
+            self.assertEqual(manifest_clause.refs, ["package/skillfoundry.bundle.json"])
+            self.assertIn("entrypoint must be SKILL.md", manifest_clause.text)
+            manifest_constraint = next(
+                clause
+                for clause in task_contract.hard_constraints
+                if clause.clause_id == "sf-hard-manifest-contract"
+            )
+            self.assertIn(SKILLFOUNDRY_MANIFEST_TEMPLATE_REF, manifest_constraint.refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_CONTRACT_REF, manifest_constraint.refs)
             self.assertTrue((root / result.task_contract_ref).exists())
             self.assertTrue((root / result.workspace_policy_ref).exists())
             self.assertTrue((root / result.permission_manifest_ref).exists())
+            self.assertTrue((root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_TEMPLATE_REF).exists())
+            self.assertTrue((root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_CONTRACT_REF).exists())
             self.assertTrue((root / result.run_workspace_ref / "frontdesk/sanitized_task.json").exists())
+
+    def test_task_contract_manifest_template_is_valid_package_manifest_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            result = compile_skillfoundry_task_contract(sample_request(), workspace=root)
+            template_payload = json.loads(
+                (root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_TEMPLATE_REF).read_text(encoding="utf-8")
+            )
+            contract_payload = json.loads(
+                (root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_CONTRACT_REF).read_text(encoding="utf-8")
+            )
+
+            manifest = SkillBundleManifest.from_dict(template_payload)
+            self.assertEqual(SkillBundleManifest.from_dict(manifest.to_dict()), manifest)
+            self.assertEqual(manifest.bundle_id, "demo-skill")
+            self.assertEqual(manifest.entrypoint, "SKILL.md")
+            self.assertEqual(contract_payload["field_contract"], template_payload)
+            self.assertTrue(contract_payload["forbidden_extra_keys"])
+            self.assertEqual(contract_payload["template_ref"], SKILLFOUNDRY_MANIFEST_TEMPLATE_REF)
+            self.assertNotIn("name", template_payload)
+            self.assertNotIn("description", template_payload)
 
     def test_missing_source_refs_are_not_advertised_as_worker_readable_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -89,6 +136,7 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             compile_report = json.loads((root / result.compile_report_ref).read_text(encoding="utf-8"))
 
             self.assertNotIn("frontdesk/sanitized_task.json", task_contract.source_refs)
+            self.assertIn(SKILLFOUNDRY_MANIFEST_TEMPLATE_REF, task_contract.source_refs)
             self.assertNotIn("frontdesk", workspace_policy.input_refs)
             self.assertNotIn("frontdesk", permission_manifest.readable_refs)
             self.assertEqual(compile_report["materialized_source_refs"], [])
@@ -198,7 +246,9 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             self.assertEqual(result.status, AgenticFlowStatus.ACCEPTED)
             self.assertEqual(result.accepted_artifact_refs, ["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"])
             self.assertTrue((root / compile_result.run_workspace_ref / "attempts/skillfoundry-pi-runtime-demo-execution-packet/pi_agent_input.json").exists())
-            self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["package", "attempts", "reports", "ledgers"])
+            self.assertEqual(runner.captured_input["permission_manifest"]["writable_refs"], ["package", "reports", "ledgers"])
+            execution_report = json.loads((root / compile_result.run_workspace_ref / "reports/execution_report.json").read_text(encoding="utf-8"))
+            self.assertNotIn("attempts", json.dumps(execution_report, sort_keys=True))
 
     def test_pi_runtime_executor_boundary_preserves_changed_refs_for_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

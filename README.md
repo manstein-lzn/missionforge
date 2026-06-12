@@ -16,6 +16,15 @@ MissionForge is not a broad workflow framework, a provider marketplace, or a
 product-specific automation system. It is a thin, inspectable shell for safely
 delegating work to an unreliable but capable model.
 
+If you are using MissionForge as a programmer, start here:
+
+- [Getting Started](docs/GETTING_STARTED.md)
+- [User Manual](docs/USER_MANUAL.md)
+- [Primitive Reference](docs/PRIMITIVE_REFERENCE.md)
+- [Cookbook](docs/COOKBOOK.md)
+- [Migration Guide](docs/MIGRATION_GUIDE.md)
+- [Live Runtime Guide](docs/LIVE_RUNTIME_GUIDE.md)
+
 ## Current Status
 
 This branch is centered on the TaskContract-native PiWorker runtime:
@@ -407,8 +416,12 @@ testing adapter-specific behavior.
 
 Start here:
 
-- [Pi-Based Minimal Kernel Development Plan](docs/PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md)
-- [TaskContract Native Cutover Plan](docs/TASKCONTRACT_NATIVE_CUTOVER_PLAN.md)
+- [Getting Started](docs/GETTING_STARTED.md)
+- [User Manual](docs/USER_MANUAL.md)
+- [Primitive Reference](docs/PRIMITIVE_REFERENCE.md)
+- [Cookbook](docs/COOKBOOK.md)
+- [Migration Guide](docs/MIGRATION_GUIDE.md)
+- [Live Runtime Guide](docs/LIVE_RUNTIME_GUIDE.md)
 - [Module: PiWorker](docs/modules/piworker.md)
 - [Module: Agentic Flow](docs/modules/agentic_flow.md)
 - [Module: FrontDesk](docs/modules/frontdesk.md)

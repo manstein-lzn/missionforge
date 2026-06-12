@@ -13,6 +13,12 @@ from missionforge.adapters.pi_agent_runtime import (
     PiAgentRuntimeConfig,
 )
 from missionforge import stable_json_hash
+from missionforge.agentic_ledger import (
+    DecisionLedgerEventKind,
+    TaskContractDecisionLedgerEntry,
+    read_decision_ledger,
+    replay_decision_ledger,
+)
 from missionforge.agentic_repair_controller import RepairExecutionDirective
 from missionforge.agentic_revision_controller import RevisionPendingRecord
 from missionforge.piworker_call import PiWorkerCallResultStatus
@@ -55,16 +61,27 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         directive = _repair_directive()
 
         with TemporaryDirectory() as tmpdir:
+            _write_initial_ledger(Path(tmpdir))
             result = PiWorkerRuntimeFactory(config=config, runner=runner).run_repair_directive(
                 directive,
                 workspace=tmpdir,
                 contract_ref="contract/task_contract.json",
                 permission_manifest_ref="policy/permission_manifest.json",
                 writable_refs=["artifacts", "reports"],
+                decision_ledger_ref="ledgers/decision_ledger.jsonl",
             )
+            call_result_payload = json.loads(
+                Path(tmpdir, f"attempts/{result.call_id}/piworker_call_result.json").read_text(encoding="utf-8")
+            )
+            ledger_entries = read_decision_ledger(tmpdir, decision_ledger_ref="ledgers/decision_ledger.jsonl")
+            replay = replay_decision_ledger(tmpdir, decision_ledger_ref="ledgers/decision_ledger.jsonl")
 
         self.assertEqual(result.status, PiWorkerCallResultStatus.COMPLETED)
         self.assertEqual(result.output_refs, ["artifacts/final.md"])
+        self.assertEqual(call_result_payload, result.to_dict())
+        self.assertEqual(ledger_entries[-1].event_kind, DecisionLedgerEventKind.REPAIR_EXECUTION_RECORDED)
+        self.assertEqual(ledger_entries[-1].ref_map["piworker_call_result_ref"], f"attempts/{result.call_id}/piworker_call_result.json")
+        self.assertEqual(replay.status.value, "repair")
         self.assertEqual(runner.captured_role, "repair_piworker")
 
     def test_repair_directive_helper_uses_default_piworker_factory(self) -> None:
@@ -85,8 +102,12 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
             input_payload = json.loads(
                 Path(tmpdir, f"attempts/{result.call_id}/pi_agent_input.json").read_text(encoding="utf-8")
             )
+            call_result_payload = json.loads(
+                Path(tmpdir, f"attempts/{result.call_id}/piworker_call_result.json").read_text(encoding="utf-8")
+            )
 
         self.assertEqual(result.output_refs, ["artifacts/final.md"])
+        self.assertEqual(call_result_payload, result.to_dict())
         self.assertEqual(input_payload["piworker_call"]["role"], "repair_piworker")
         self.assertEqual(runner.captured_role, "repair_piworker")
 
@@ -96,6 +117,7 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         expected_ref = "revisions/revision-request-001/revised_task_contract.json"
 
         with TemporaryDirectory() as tmpdir:
+            _write_initial_ledger(Path(tmpdir))
             result = run_revision_draft_with_default_piworker(
                 _revision_pending_record(),
                 workspace=tmpdir,
@@ -104,13 +126,23 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
                 expected_output_ref=expected_ref,
                 piworker_config=config,
                 runner=runner,
+                decision_ledger_ref="ledgers/decision_ledger.jsonl",
             )
             input_payload = json.loads(
                 Path(tmpdir, f"attempts/{result.call_id}/pi_agent_input.json").read_text(encoding="utf-8")
             )
+            call_result_payload = json.loads(
+                Path(tmpdir, f"attempts/{result.call_id}/piworker_call_result.json").read_text(encoding="utf-8")
+            )
+            ledger_entries = read_decision_ledger(tmpdir, decision_ledger_ref="ledgers/decision_ledger.jsonl")
+            replay = replay_decision_ledger(tmpdir, decision_ledger_ref="ledgers/decision_ledger.jsonl")
 
         self.assertEqual(result.status, PiWorkerCallResultStatus.COMPLETED)
         self.assertEqual(result.output_refs, [expected_ref])
+        self.assertEqual(call_result_payload, result.to_dict())
+        self.assertEqual(ledger_entries[-1].event_kind, DecisionLedgerEventKind.REVISION_DRAFT_RECORDED)
+        self.assertEqual(ledger_entries[-1].ref_map["piworker_call_result_ref"], f"attempts/{result.call_id}/piworker_call_result.json")
+        self.assertEqual(replay.status.value, "revision_required")
         self.assertEqual(input_payload["piworker_call"]["role"], "revision_drafter_piworker")
         self.assertEqual(runner.captured_role, "revision_drafter_piworker")
 
@@ -249,3 +281,17 @@ def _revision_pending_record() -> RevisionPendingRecord:
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _write_initial_ledger(root: Path) -> None:
+    ledger = root / "ledgers/decision_ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    entry = TaskContractDecisionLedgerEntry(
+        entry_id="ledger-entry-000001",
+        run_id="run-001",
+        event_kind=DecisionLedgerEventKind.CONTRACT_FROZEN,
+        contract_id="contract-001",
+        contract_hash="sha256:" + ("a" * 64),
+        ref_map={"contract_ref": "contract/task_contract.json"},
+    )
+    ledger.write_text(json.dumps(entry.to_dict(), sort_keys=True) + "\n", encoding="utf-8")
