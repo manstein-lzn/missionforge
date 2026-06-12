@@ -221,7 +221,11 @@ Allowed:
 - refs-only operator results
 - Pi Agent / PiWorker construction boundaries
 - external integration code under `integrations/*`
-- compatibility projections such as `WorkUnitContract`
+
+Legacy adapters may still accept explicit `WorkUnitContract` values for
+migration behavior. New PiWorker adapter paths should project `PiWorkerCall`
+into a minimal runtime input/sidecar contract instead of constructing
+`WorkUnitContract`.
 
 Adapter-specific classes such as `PiAgentRuntimeConfig`,
 `PiAgentExecutorNode`, and `PiAgentJudgeNode` live under

@@ -39,22 +39,25 @@ inside it.
 The TaskContract-native runtime now constructs role-separated
 `AgentExecutionPacket` and `JudgePacket` objects, projects each runtime call
 through `PiWorkerCall`, then writes a direct `PiAgentRuntimeInput` for
-`PiAgentRuntimeAdapter`. The input still carries a `WorkUnitContract`
-projection as a compatibility field for the current Node sidecar prompt
-builder, but the MissionForge authority is the call-shaped boundary:
+`PiAgentRuntimeAdapter`. The direct adapter path projects each call into a
+minimal `PiAgentRuntimeContract` payload for the current Node sidecar. The JSON
+field is still named `contract` for sidecar compatibility, but the
+MissionForge authority is the call-shaped boundary, not a legacy
+`WorkUnitContract` object:
 
 - packets carry role-specific semantic context and hash bindings;
 - `PiWorkerCall` carries the shared invocation boundary;
 - `PiAgentRuntimeInput` carries call id, refs, expected outputs, permission
-  manifest, runtime metadata, repair/resume envelope, and the compatibility
-  work-unit projection;
-- `WorkUnitContract` remains a compatibility projection, not the conceptual
-  runtime API;
+  manifest, runtime metadata, repair/resume envelope, and the minimal
+  sidecar contract projection;
+- `WorkUnitContract` remains available only through explicit legacy wrapper
+  paths and older submodules, not the direct PiWorker runtime API;
 - PI Agent runtime owns the inner loop, tools, hooks, session artifacts, and
   model calls.
 
-FrontDesk PiWorker authoring nodes use the same boundary with
-`frontdesk_author_piworker` role before projecting to `WorkUnitContract`.
+FrontDesk PiWorker authoring nodes still have a legacy projection path with
+`frontdesk_author_piworker` role before `WorkUnitContract`. That is a remaining
+compatibility edge, not the target runtime shape.
 Repair directives and revision pending records also use the same runtime
 boundary through `repair_piworker` and `revision_drafter_piworker` calls.
 Those helper paths now persist their `PiWorkerCallResult` under
@@ -127,7 +130,8 @@ Current core boundary:
 - `PiWorkerCall`
 - `PiWorkerCallRole`
 
-Implemented in Goal 6A as the older compatibility path:
+Older compatibility/faux runtime contracts remain in submodules for migration
+tests and offline reference behavior:
 
 - `WorkerAdapter`
 - `WorkerAdapterResult`
@@ -143,7 +147,7 @@ Implemented in Goal 6A as the older compatibility path:
 ## Contract Sketch
 
 `PiWorkerCall` is derived from role-specific packets or FrontDesk authoring
-profiles and can be projected into a committed `WorkUnitContract`:
+profiles and is the direct boundary for PiAgent runtime calls:
 
 ```json
 {
@@ -170,17 +174,37 @@ profiles and can be projected into a committed `WorkUnitContract`:
 }
 ```
 
-`PiWorkerInput` should be derived from a committed `WorkUnitContract` and an
-attempt manifest:
+`PiAgentRuntimeInput` is the runtime sidecar envelope. The direct path derives
+it from `PiWorkerCall` plus a minimal `PiAgentRuntimeContract` projection:
 
 ```json
 {
-  "input_id": "piworker-input-001",
-  "work_unit_ref": "work_units/WU-000001.json",
-  "attempt_manifest_ref": "attempts/WU-000001/input_manifest.json",
-  "allowed_scope": ["attempts/WU-000001"],
-  "visible_refs": ["mission/frozen_contract.json"],
-  "expected_outputs": ["attempts/WU-000001/artifact.txt"]
+  "schema_version": "missionforge.pi_agent_runtime_input.v1",
+  "work_unit_id": "WU-000001",
+  "mission_id": "contract-001",
+  "input_ref": "attempts/WU-000001/pi_agent_input.json",
+  "output_ref": "attempts/WU-000001/pi_agent_output.json",
+  "piworker_call": {
+    "schema_version": "piworker_call.v1",
+    "call_id": "WU-000001"
+  },
+  "contract": {
+    "work_unit_id": "WU-000001",
+    "mission_id": "contract-001",
+    "allowed_scope": ["artifacts", "reports"],
+    "visible_refs": [
+      "mission/task_contract.json",
+      "projections/worker_brief.json",
+      "policy/workspace_policy.json",
+      "policy/permission_manifest.json"
+    ],
+    "expected_outputs": ["artifacts/final.md"]
+  },
+  "permission_manifest": {
+    "schema_version": "permission_manifest.v1",
+    "writable_refs": ["artifacts", "reports"],
+    "network_policy": "disabled"
+  }
 }
 ```
 
@@ -202,7 +226,7 @@ attempt manifest:
 Provider, cache, token, and tool metrics are metrics/evidence. They are not
 runtime route logic.
 
-## Implemented Adapter Behavior
+## Legacy Faux Adapter Behavior
 
 - `FauxPiWorkerAdapter` accepts committed `WorkUnitContract` objects only.
 - Raw `MissionIR`, raw `SteeringProposal`, dict-like input, and output refs
@@ -228,12 +252,12 @@ runtime reached offline parity.
 
 ## Legacy Invariants
 
-- PiWorker receives a bounded work-unit contract.
+- PiWorker receives a bounded call/runtime contract.
 - PiWorker writes only through allowed tools or write scopes.
 - PiWorker output is evidence, not acceptance.
 - Metrics are preserved in MissionResult evidence.
-- PiWorker consumes committed WorkUnitContract objects, not raw steering
-  proposals.
+- Legacy/faux adapters consume committed WorkUnitContract objects, not raw
+  steering proposals.
 - PiWorker command execution is optional and is not the default runtime path.
 - Live provider credentials are child-process environment only.
 - Any worker-requested contract adjustment is evidence for controlled steering,

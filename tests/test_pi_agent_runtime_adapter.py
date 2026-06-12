@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from missionforge.adapters.pi_agent_provider_config import load_codex_current_provider
 from missionforge.adapters.pi_agent_runtime import (
@@ -14,13 +15,14 @@ from missionforge.adapters.pi_agent_runtime import (
     PiAgentExecutorNode,
     PiAgentJudgeNode,
     PiAgentRuntimeAdapter,
+    PiAgentRuntimeContract,
     PiAgentRuntimeConfig,
     SubprocessPiAgentCommandRunner,
 )
 from missionforge.agent_packets import AgentExecutionPacket, AgentExecutionStatus, HardCheckStatus, JudgePacket, JudgeReportDecision
 from missionforge.contracts import ContractValidationError, stable_json_hash
 from missionforge.evidence_store import InMemoryEvidenceStore
-from missionforge.piworker_call import PiWorkerCallResult
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult
 from missionforge.work_unit import WorkUnitContract
 
 
@@ -591,6 +593,63 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         call_result = PiWorkerCallResult.from_dict(call_result_payload)
         self.assertEqual(call_result.output_refs, ["package/SKILL.md"])
         self.assertEqual(call_result.metric_refs, ["attempts/WU-000001/pi_agent_metrics.json"])
+
+    def test_pi_agent_executor_node_does_not_project_to_work_unit_contract(self) -> None:
+        runner = RecordingRunner()
+        adapter = PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=runner)
+        packet = AgentExecutionPacket(
+            packet_id="WU-000001",
+            contract_id="contract-001",
+            contract_hash="sha256:" + "a" * 64,
+            contract_ref="contract/task_contract.json",
+            worker_brief_ref="projections/worker_brief.json",
+            workspace_policy_ref="policy/workspace_policy.json",
+            permission_manifest_ref="policy/permission_manifest.json",
+            report_ref="reports/execution_report.json",
+            expected_artifact_refs=["package/SKILL.md"],
+            allowed_input_refs=["contract/task_contract.json", "projections/worker_brief.json"],
+            writable_refs=["package", "reports"],
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with patch.object(PiWorkerCall, "to_work_unit_contract", side_effect=AssertionError("legacy projection called")):
+                report = PiAgentExecutorNode(workspace_root=tempdir, adapter=adapter).execute(
+                    packet,
+                    packet_ref="packets/execution_packet.json",
+                    workspace=object(),
+                )
+
+        self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
+        self.assertIsNotNone(runner.captured_input)
+        self.assertNotIn("work_unit_contract", runner.captured_input)
+        self.assertEqual(runner.captured_input["contract"]["work_unit_id"], "WU-000001")  # type: ignore[index]
+        self.assertEqual(runner.captured_input["contract"]["allowed_scope"], ["package", "reports"])  # type: ignore[index]
+
+    def test_run_call_rejects_runtime_contract_that_widens_piworker_scope(self) -> None:
+        packet = AgentExecutionPacket(
+            packet_id="WU-000001",
+            contract_id="contract-001",
+            contract_hash="sha256:" + "a" * 64,
+            contract_ref="contract/task_contract.json",
+            worker_brief_ref="projections/worker_brief.json",
+            workspace_policy_ref="policy/workspace_policy.json",
+            permission_manifest_ref="policy/permission_manifest.json",
+            report_ref="reports/execution_report.json",
+            expected_artifact_refs=["package/SKILL.md"],
+            allowed_input_refs=["contract/task_contract.json", "projections/worker_brief.json"],
+            writable_refs=["package"],
+        )
+        call = PiWorkerCall.from_execution_packet(packet, packet_ref="packets/execution_packet.json")
+        widened_contract = replace(PiAgentRuntimeContract.from_call(call), allowed_scope=["package", "outside"])
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with self.assertRaisesRegex(ContractValidationError, "allowed_scope"):
+                PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=RecordingRunner()).run_call(
+                    call,
+                    workspace=tempdir,
+                    evidence_store=InMemoryEvidenceStore(),
+                    runtime_contract=widened_contract,
+                )
 
     def test_pi_agent_judge_node_preserves_packet_hash_and_report_ref(self) -> None:
         runner = JudgeRecordingRunner()
