@@ -1,13 +1,15 @@
 # Implementation Status And Next Phases
 
-Last updated: 2026-05-30
+Last updated: 2026-06-12
 
 Status: `reference`
 
 ## Document Role
 
 This document summarizes the current MissionForge implementation after the
-Phase 12-16 decoupling work and the Phase 15 runtime revision repair.
+PiWorker kernel cutover. Older Phase 12-23 notes remain useful as historical
+and compatibility context, but the active architecture is now
+TaskContract/PiWorker-first.
 
 Its purpose is to make future development decisions easier:
 
@@ -18,45 +20,37 @@ Its purpose is to make future development decisions easier:
   adding broad new concepts.
 
 This is a planning and audit reference, not a new architecture fork. The
-authoritative design documents remain:
+authoritative active design documents are:
 
-- `docs/ARCHITECTURE.md`
-- `docs/MISSION_IR.md`
-- `docs/DESIGN_PROGRAM.md`
-- `docs/PRODUCT_INTEGRATION_BOUNDARY.md`
-- `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md`
-- `docs/PHASE12_TO_16_DECOUPLING_ROADMAP.md`
-- `docs/PHASE15_REVISION_RUNTIME_REPAIR_PLAN.md`
-- `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md`
-- `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`
-- `docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md`
-- `docs/FRONTDESK_SPEC_GRILL_DESIGN.md`
-- `docs/FRONTDESK_SPEC_GRILL_IMPLEMENTATION_PLAN.md`
+- `AGENTS.md`
+- `README.md`
+- `docs/MISSIONFORGE_AGENTIC_CONSTITUTION.md`
+- `docs/PIWORKER_KERNEL_CUTOVER_DEVELOPMENT_PLAN.md`
+- `docs/CURRENT_BRANCH_DEVELOPMENT_PLAN.md`
+- `docs/API_BOUNDARY.md`
+- `docs/USER_MANUAL.md`
+- `docs/PRIMITIVE_REFERENCE.md`
 - `docs/modules/*.md`
 
 Update note:
 
-Phase 17-22 first slices have now been implemented. Phase 23 is the next
-planned FrontDesk implementation phase for wiring real PiWorker-backed AI
-authoring without reintroducing deterministic requirement extraction. This
-document remains the
-status and rationale record; `docs/PHASE17_TO_21_IMPLEMENTATION_GUIDE.md` and
-`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md` are the concise development
-references for the landed boundaries, while
-`docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md` is the concise
-development reference for the next live FrontDesk AI path.
+Phase 17-23 work remains part of the repository history. The current branch has
+since cut over to the smaller PiWorker kernel shape: product integrations
+compile to `TaskContract`, MissionForge enforces deterministic boundaries,
+PiWorker nodes execute and judge semantic work, and repair/revision are
+durable refs-first continuations.
 
 ## Executive Position
 
-MissionForge is now a working generic mission runtime substrate. It can run
-structured Mission IR through PiWorker/PI Agent execution, evidence gates,
-controlled steering proposals, verifier-owned closure, metric projection, and
-conservative mission revision.
+MissionForge is now a working TaskContract-native PiWorker delegation kernel.
+It can run product-neutral contracts through Pi Agent execution, independent
+judge acceptance, same-contract repair, explicit contract revision, refs-first
+decision ledgers, and external product integrations such as SkillFoundry.
 
 However, the current implementation should be read as:
 
 ```text
-Phase 12-16 first slices implemented
+PiWorker kernel cutover implemented and validated
 ```
 
 not:
@@ -65,43 +59,50 @@ not:
 the final long-running mission platform is complete
 ```
 
-The architecture direction is right. The next work should be hardening and
-convergence, not a new layer of broad abstractions.
+MissionIR, old runtime, steering, work-unit, and metric-dict surfaces remain as
+compatibility and migration surfaces. New product work should start with the
+TaskContract/PiWorker path.
 
 ## Current Architecture Target
 
-The stable MissionForge substrate should remain explainable as:
+The stable MissionForge substrate should now be explainable as:
 
 ```text
-MissionIR + Profiles + FrozenMissionContract
-  -> WorkUnitContract
-  -> PiWorker
-  -> EvidenceLedger + MetricLedger
-  -> Verifier
-  -> MissionRun + Revision
-  -> MissionResult
+ProductIntegration
+  -> TaskContract
+  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> PiWorker executor
+  -> artifact refs + execution report
+  -> independent Judge PiWorker
+  -> accepted | repair | revision_required | rejected
+  -> refs-first DecisionLedger + FinalPackage
 ```
 
 Core rules:
 
-1. Mission semantics live in Mission IR, profiles, validators, evidence
-   requirements, and external integrations.
-2. Runtime code must not branch on product names, mission names, benchmarks, or
+1. Product semantics live in external integrations, inquiry profiles,
+   `TaskContract`, judge rubrics, product hard checks, fixtures, and product
+   gates.
+2. Core code must not branch on product names, mission names, benchmarks, or
    customer scenarios.
 3. PiWorker/PI Agent remains the only LLM worker direction.
-4. Metrics are diagnostics, never acceptance evidence or route authority.
-5. LLM output is proposal, hypothesis, or review evidence; it is never closure.
-6. Revision is a controlled state transition, not a workflow engine.
-7. JSON remains the default backend until store protocols are stable enough to
-   justify another backend.
-8. Users should extend MissionForge through profiles, validators, evidence
-   contracts, and external integrations, not by modifying runtime or adapters.
+4. The frozen `TaskContract`, or an explicit revision of it, is task truth.
+5. Executor completion is boundary evidence, never acceptance.
+6. Acceptance requires an independent judge role.
+7. Repair preserves the same contract hash.
+8. Revision creates explicit new task authority before continuation.
+9. Metrics are diagnostics and cost evidence, never semantic route or
+   acceptance authority.
+10. Runtime and operator state should cite refs instead of embedding raw
+    prompts, transcripts, provider payloads, stdout/stderr bodies, artifact
+    bodies, or secrets.
 
 ## Current Implementation Status
 
 | Area | Status | Judgment |
 | --- | --- | --- |
-| Mission IR, profiles, freeze | Implemented kernel | Sound base, but profile ecosystem is still small |
+| TaskContract/PiWorker kernel | Implemented and validated | Primary path for new product work |
+| Mission IR, profiles, freeze | Compatibility kernel | Useful legacy/high-detail shape, no longer the conceptual center |
 | Evidence and verifier | Implemented | Strongest architecture anchor; verifier still owns closure |
 | Controlled steering | Implemented first product-neutral slice | Default remains deterministic; provider mode is opt-in |
 | Phase 12 metric ledger | Implemented first slice | Typed events and projection exist; dict compatibility remains |
@@ -117,6 +118,8 @@ Core rules:
 | FrontDesk authoring | Implemented product module with spec-grill and intent-bundle slices | FrontDesk records conversation, scouts workspace/profile facts, validates semantic/intent artifacts, emits `FrontDeskIntentBundle`, supports Product Integration compilation, and now fails closed before need grilling, solution architecture, MissionIR mapping, or intent bundle authoring when LLM/PiWorker-authored artifacts are absent. |
 | Product boundary | Implemented and tested | SkillFoundry is external under `integrations/skillfoundry/` |
 | Product context boundary | Implemented Phase 22 first slice | `ProductInquiryProfile`, `FrontDeskIntentBundle`, `ProductIntegration`, `ProductCompileResult`, and generic `ProductGate` contracts are implemented and tested. SkillFoundry provides the reference external bridge. |
+| Repair and revision | Implemented TaskContract-native lifecycle | Repair rejudges under the same contract; revision requires pending, applied, revised execution, rejudge, and revised result records |
+| SkillFoundry dogfood | Implemented and live-validated | TaskContract-native facade completed a fresh live product-grade run outside core |
 | Operator surface | Implemented refs-only core | Useful for run/inspect/diagnose/resume/review/frontdesk, not yet a complete visual operator product |
 
 ## Verification Snapshot
@@ -124,56 +127,34 @@ Core rules:
 The current working tree was validated with:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
-# Ran 359 tests: OK (skipped=2)
-
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
-# Node runtime: 5 tests passed
-# Python: Ran 359 tests: OK (skipped=2)
+# Node runtime: 8 tests passed
+# Python: Ran 511 tests: OK (skipped=5)
 # MissionForge validation passed
 
 ./scripts/validate_integrations.sh skillfoundry
-# Ran 84 tests: OK (skipped=1)
+# Ran 112 tests: OK (skipped=1)
 
-PYTHONPATH=src python3 -m unittest \
-  tests/test_frontdesk_schema.py \
-  tests/test_frontdesk_state.py \
-  tests/test_frontdesk_workspace.py \
-  tests/test_frontdesk_compiler.py \
-  tests/test_frontdesk_freeze_gate.py \
-  tests/test_frontdesk_profile_integration.py \
-  tests/test_frontdesk_service.py \
-  tests/test_frontdesk_elicitor.py \
-  tests/test_frontdesk_planner.py \
-  tests/test_frontdesk_auditor.py \
-  tests/test_frontdesk_llm_boundaries.py \
-  tests/test_frontdesk_cli.py \
-  tests/test_frontdesk_runtime_feedback.py \
-  tests/test_frontdesk_spec_grill_schema.py \
-  tests/test_frontdesk_scout.py \
-  tests/test_frontdesk_need_griller.py \
-  tests/test_frontdesk_semantic_coverage.py \
-  tests/test_frontdesk_solution_architect.py \
-  tests/test_frontdesk_plan_review.py \
-  tests/test_frontdesk_mission_mapper.py \
-  tests/test_frontdesk_mapping_auditor.py \
-  tests/test_frontdesk_spec_grill_freeze_gate.py \
-  tests/test_frontdesk_spec_grill_service.py \
-  tests/test_frontdesk_spec_grill_e2e.py \
-  tests/test_frontdesk_spec_grill_acceptance.py \
-  tests/test_frontdesk_spec_grill_boundaries.py \
-  tests/test_frontdesk_pi_node_runner.py
-# Ran 77 tests: OK
+PYTHONPATH=src python3 -m unittest tests.test_public_api_boundary tests.test_agentic_ledger tests.test_agentic_flow tests.test_piworker_call tests.test_piworker_runtime_boundary
+# Ran 43 tests: OK (skipped=1)
 
-PYTHONPATH=src python3 -m unittest tests/test_adapter_import_boundaries.py tests/test_pi_agent_runtime_import_boundaries.py tests/test_piworker_runtime_boundary.py
-# Ran 10 tests: OK
-
-PYTHONPATH=src python3 -m unittest tests/test_metrics_contracts.py tests/test_metric_store.py tests/test_runtime_metric_boundaries.py tests/test_operator_metric_projection.py tests/test_store_contracts.py tests/test_json_store_backend.py tests/test_runtime_store_integration.py tests/test_mission_revision_contracts.py tests/test_mission_revision_workflow.py tests/test_revision_authority_boundaries.py tests/test_runtime_revision_preservation.py tests/test_operator_revision_surface.py tests/test_runtime_revision_consumption.py
-# Ran 25 tests: OK
+PYTHONPATH=src python3 -m unittest tests.test_agentic_repair_controller tests.test_agentic_ledger
+# Ran 36 tests: OK
 
 git diff --check
 # passed
 ```
+
+Opt-in live validation also passed on 2026-06-12:
+
+- product-neutral TaskContract live smoke:
+  `tests.test_agentic_flow.AgenticFlowTests.test_live_codex_current_default_task_contract_flow_accepts`
+  passed with `provider_config_source="codex_current"`;
+- SkillFoundry live dogfood completed at
+  `/tmp/mf-skillfoundry-live-xxxbuoj9` with
+  `outcome_category=completed`, `run_status=completed`,
+  `product_grade=true`, registry status `product_grade_registered`, and
+  MissionForge ledger replay status `accepted`.
 
 ## Distance To The Vision
 
@@ -181,15 +162,15 @@ Approximate current maturity against the long-term vision:
 
 | Vision slice | Current maturity | Notes |
 | --- | --- | --- |
-| Task-independent core | High | Import-boundary tests protect the product boundary |
-| PiWorker-only LLM worker direction | High | Construction is isolated behind a PiWorker-specific factory |
-| Verifier-owned closure | High | Worker and LLM output still cannot close missions |
-| Metric decoupling | Medium-high | Ledger/projection drives operator diagnosis; compatibility dicts remain only as envelopes |
-| Runtime maintainability | Medium | Helpers exist, but `RuntimeEngine` remains the main complexity hotspot |
-| Mission revision | Medium | Conservative durable revision works; richer contract evolution is future work |
-| Store abstraction | Medium | Main durable writes route through `JsonWorkspaceStore`; legacy state read helpers still preserve layout compatibility |
-| Arbitrary long-running complex tasks | Medium | Core primitives, profile packs, run audit, and stale-ref diagnosis exist; replay and richer revision remain future work |
-| Product-aware FrontDesk | Medium | FrontDesk emits intent bundles from LLM-authored artifacts, ProductInquiryProfile drives product slots, SkillFoundry proves the external bridge, and service entrypoints fail closed without LLM artifacts. Future work should wire live PiWorker-backed authoring nodes and richer product CLI ergonomics without adding product branches to core. |
+| Product-neutral core | High | Import-boundary tests and source search keep product branches out of core |
+| PiWorker-only LLM worker direction | High | Default factories and live runtime use PiWorker/Pi Agent, not a provider zoo |
+| TaskContract authority | High | New product work starts from frozen TaskContract plus projections |
+| Independent acceptance | High | Executor completion cannot self-accept; judge packets/reports are separate |
+| Repair/revision lifecycle | High | Same-contract repair and explicit revised-contract continuation are covered |
+| Refs-first evidence | High | Ledgers, final packages, runtime projections, and dogfood reports cite refs |
+| SkillFoundry product dogfood | High | Fresh live dogfood reached product-grade registration outside core |
+| Legacy compatibility | Medium | MissionIR/runtime/steering paths remain and must not receive new feature gravity |
+| Product-aware FrontDesk | Medium | FrontDesk intent remains important; live authoring ergonomics can improve without moving product semantics into core |
 
 ## Important Current Gaps
 
@@ -206,7 +187,7 @@ FrontDesk + ProductInquiryProfile
   -> FrontDeskIntentBundle
   -> ProductIntegration
   -> ProductContract
-  -> MissionIR
+  -> TaskContract
   -> ProductGateSpec
 ```
 
@@ -272,15 +253,17 @@ changes, validator additions, scope expansion under reviewer or human authority,
 and possibly new run branches. Those should be added incrementally under
 authority gates, not as a general workflow engine.
 
-### 5. Public API Surface Is Slightly Too Wide
+### 5. Public API Surface Is TaskContract/PiWorker-First
 
 The package root no longer re-exports `RuntimeContractView` or
 `ActiveMissionContract`. Stable, experimental, and internal surfaces are
 documented in `docs/API_BOUNDARY.md`.
 
-`RuntimeEngine` remains exported as an experimental low-level surface. Product
-integrations should default to `MissionRuntime`, Mission IR, profiles,
-validators, evidence refs, metric events, and mission revision.
+`RuntimeEngine`, MissionIR, steering, and work-unit surfaces remain exported for
+compatibility. Product integrations should default to `TaskContract`,
+`WorkspacePolicy`, `PermissionManifest`, `WorkerBrief`, `JudgeRubric`,
+`create_default_task_contract_flow(...)`, repair/revision primitives, and
+refs-first ledgers.
 
 ### 6. Profiles Are Not Yet Strong Enough To Prevent Core Patching
 
@@ -300,12 +283,10 @@ authoring path. It may scout metadata offline; when need grilling, solution
 planning, MissionIR mapping, or intent bundle authoring needs LLM-authored
 artifacts and they are absent, it fails closed with `configure_frontdesk_llm`.
 
-The next FrontDesk architecture work should follow
-`docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md` and
-`docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The direct MissionIR mapping
-inside FrontDesk should become generic fallback behavior while product
-integrations provide ProductInquiryProfile metadata and compile final
-product-domain MissionIR.
+The next FrontDesk architecture work should follow the TaskContract/PiWorker
+kernel shape. Direct MissionIR mapping inside FrontDesk is compatibility
+fallback behavior, while product integrations provide ProductInquiryProfile
+metadata and compile final product-domain `TaskContract` authority.
 
 Follow-on hardening after the boundary work:
 
@@ -443,8 +424,9 @@ Primary goals:
 
 - document external profile pack shape;
 - document validator pack shape and trust/authority requirements;
-- allow product integrations to compile task facts into MissionIR and profile
-  refs without importing into `missionforge`;
+- allow product integrations to compile task facts into TaskContract-native
+  refs, or compatibility MissionIR/profile refs when migration requires them,
+  without importing into `missionforge`;
 - keep profile names capability-oriented, not product-oriented;
 - add a second non-SkillFoundry fixture to prove reuse.
 
@@ -459,8 +441,8 @@ Candidate files:
 
 Acceptance:
 
-- an external integration can generate MissionIR plus profile refs without core
-  changes;
+- an external integration can generate TaskContract-native refs, or
+  compatibility MissionIR/profile refs, without core changes;
 - unknown executable validators still fail closed;
 - manual and unsupported validators route to review/human/unsupported states;
 - no product names appear under `missionforge.*` namespaces or core runtime
@@ -519,13 +501,16 @@ should come after the Python contracts stop moving quickly.
 
 When a new requirement arrives:
 
-1. If it is a task fact, put it in `MissionIR`.
-2. If it is a reusable task feature, make it a profile.
-3. If it is a completion check, make it a validator or evidence requirement.
-4. If it is product-specific compilation, put it under `integrations/`.
-5. If it is an external protocol, make an adapter that emits core contracts.
-6. If it is diagnostic, make a metric event and projection.
-7. If it changes a frozen contract, make a mission revision.
+1. If it is a task obligation, put it in `TaskContract` or an explicit
+   `TaskContractRevision`.
+2. If it is workspace or tool authority, put it in `WorkspacePolicy` or
+   `PermissionManifest`.
+3. If it is semantic execution or judgment, delegate it to a PiWorker role.
+4. If it is a completion check, make it a judge rubric, hard-check ref,
+   validator, or product gate outside core.
+5. If it is product-specific compilation, put it under `integrations/`.
+6. If it is an external protocol, make an adapter that emits core contracts.
+7. If it is diagnostic, make a metric event/projection or refs-first report.
 8. If it requires runtime branching by product name, reject the design.
 
 ## Near-Term Definition Of Done
