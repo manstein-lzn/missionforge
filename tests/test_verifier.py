@@ -4,8 +4,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import InMemoryEvidenceStore, ReviewerDecision, VerificationSpec, Verifier
+from missionforge import InMemoryEvidenceStore
 from missionforge.contracts import EvidenceTrustLevel, VerificationStatus
+from missionforge.review import ReviewerDecision
+from missionforge.verification import VerificationSpec
+from missionforge.verifier import Verifier
 
 
 class VerifierTests(unittest.TestCase):

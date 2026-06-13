@@ -55,13 +55,13 @@ artifacts, evidence, execution reports, metrics, docs, or logs.
 - `PiWorkerCallResult`
 - `PiWorkerCallResultStatus`
 - `PiWorkerCallAdapter`
-- `PiWorkerRuntimeFactory`
 - `create_default_piworker_adapter`
 - `create_default_task_contract_flow`
-- `run_repair_directive_with_default_piworker`
-- `run_revision_draft_with_default_piworker`
+- `run_piworker_call`
 
-Adapter internals such as `PiAgentRuntimeAdapter`, `PiAgentRuntimeConfig`,
+`PiWorkerRuntimeFactory`, repair helpers, and revision helpers live under
+`missionforge.piworker_runtime` for explicit advanced composition. Adapter
+internals such as `PiAgentRuntimeAdapter`, `PiAgentRuntimeConfig`,
 `PiAgentExecutorNode`, and `PiAgentJudgeNode` live under
 `missionforge.adapters.pi_agent_runtime` and are intentionally not exported
 from the package root.

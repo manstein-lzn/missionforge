@@ -3,7 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import ContractValidationError, FrontDesk
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.solution_architect import SolutionArchitect, solution_architect_node_template
 
 

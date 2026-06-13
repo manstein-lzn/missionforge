@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from missionforge import ContractValidationError, FrontDesk
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDesk
 from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
 from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 

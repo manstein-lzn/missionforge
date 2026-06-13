@@ -3,7 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import ContractValidationError, FrontDesk
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.need_griller import NeedGriller, need_griller_node_template
 
 

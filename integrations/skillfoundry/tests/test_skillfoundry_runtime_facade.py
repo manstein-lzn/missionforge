@@ -5,15 +5,15 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import (
+from missionforge.agent_packets import (
     AgentExecutionPacket,
     AgentExecutionReport,
     AgentExecutionStatus,
-    AgentWorkspace,
     JudgePacket,
     JudgeReport,
     JudgeReportDecision,
 )
+from missionforge.agentic_flow import AgentWorkspace
 from missionforge.adapters.pi_agent_runtime import (
     PI_AGENT_OUTPUT_SCHEMA_VERSION,
     PiAgentCommandResult,

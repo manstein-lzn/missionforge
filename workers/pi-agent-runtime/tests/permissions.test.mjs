@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { runMissionForgePiAgent } from "../dist/runtime.js";
 import { createMissionForgeTools } from "../dist/tools.js";
+import { ToolGateway } from "../dist/tool-gateway.js";
 import { filterEnvByAllowlist, refIsUnder } from "../dist/permissions.js";
 import { parseRuntimeInput } from "../dist/contract.js";
 import { appendJsonLine, writeJsonFile } from "../dist/paths.js";
@@ -52,6 +53,53 @@ test("file tools enforce read, write, and denied refs", async () => {
     );
     await assert.rejects(
       () => write.execute("write-outside", { path: "other/result.txt", content: "no\n" }),
+      /outside (allowed|writable) roots/,
+    );
+  });
+});
+
+test("sandbox profile narrows the effective tool boundary", async () => {
+  await withWorkspace(async (root) => {
+    await mkdir(join(root, "inputs"), { recursive: true });
+    await mkdir(join(root, "outputs"), { recursive: true });
+    await writeFile(join(root, "inputs/public.txt"), "public\n", "utf-8");
+    await writeFile(join(root, "inputs/hidden.txt"), "hidden\n", "utf-8");
+
+    const tools = createMissionForgeTools({
+      workspaceRoot: root,
+      permissionManifest: samplePermissionManifest({
+        readable_refs: ["inputs"],
+        writable_refs: ["outputs"],
+        denied_refs: [],
+      }),
+      sandboxProfile: {
+        schema_version: "sandbox_profile.v1",
+        profile_id: "narrow-profile",
+        mode: "bubblewrap",
+        workspace_root_ref: "attempts/WU-000001/workspace_view",
+        readable_refs: ["inputs/public.txt"],
+        writable_refs: ["outputs/result.txt"],
+        denied_refs: [],
+        network_enabled: false,
+        env_allowlist: [],
+        command_allowlist: [],
+        resource_budget: {},
+      },
+      toolTimeoutSeconds: 30,
+    });
+    const read = tool(tools, "read");
+    const write = tool(tools, "write");
+
+    const readResult = await read.execute("read-public", { path: "inputs/public.txt" });
+    assert.equal(readResult.content[0].text.includes("public"), true);
+    await assert.rejects(
+      () => read.execute("read-hidden", { path: "inputs/hidden.txt" }),
+      /outside allowed roots/,
+    );
+
+    await write.execute("write-result", { path: "outputs/result.txt", content: "ok\n" });
+    await assert.rejects(
+      () => write.execute("write-other", { path: "outputs/other.txt", content: "no\n" }),
       /outside (allowed|writable) roots/,
     );
   });
@@ -105,22 +153,70 @@ test("bash requires explicit command permission and exposes only allowlisted env
   });
 });
 
-test("bash is disabled when manifest has ref-scoped or network-deny permissions", async () => {
+test("bash runs inside ref-scoped sandbox when command is explicitly allowed", async () => {
   await withWorkspace(async (root) => {
-    const command = "node -e \"process.stdout.write('ok')\"";
-    assert.throws(
-      () =>
-        createMissionForgeTools({
-          workspaceRoot: root,
-          permissionManifest: {
-            ...samplePermissionManifest(),
-            allowed_commands: [command],
-          },
-          toolTimeoutSeconds: 30,
-        }),
-      /bash cannot enforce ref-scoped or network-deny permissions/,
-    );
+    await mkdir(join(root, "inputs/private"), { recursive: true });
+    await mkdir(join(root, "outputs/private"), { recursive: true });
+    await writeFile(join(root, "inputs/public.txt"), "public\n", "utf-8");
+    await writeFile(join(root, "inputs/private/secret.txt"), "secret\n", "utf-8");
+    const command = [
+      "cat inputs/public.txt",
+      "if [ -e inputs/private/secret.txt ]; then echo private-visible; else echo private-hidden; fi",
+      "printf ok > outputs/result.txt",
+      "if printf no > outputs/private/result.txt 2>/dev/null; then echo denied-write-succeeded; else echo denied-write-blocked; fi",
+    ].join("; ");
+    const tools = createMissionForgeTools({
+      workspaceRoot: root,
+      permissionManifest: {
+        ...samplePermissionManifest(),
+        allowed_commands: [command],
+        env_allowlist: ["PATH"],
+      },
+      toolTimeoutSeconds: 30,
+      knownFileRefs: ["inputs/public.txt", "inputs/private/secret.txt", "outputs/result.txt"],
+    });
+    const bash = tool(tools, "bash");
+
+    const result = await bash.execute("bash-sandboxed", { command });
+
+    assert.equal(result.content[0].text.includes("public"), true);
+    assert.equal(result.content[0].text.includes("private-hidden"), true);
+    assert.equal(result.content[0].text.includes("denied-write-blocked"), true);
+    assert.equal(await readFile(join(root, "outputs/result.txt"), "utf-8"), "ok");
+    await assert.rejects(() => access(join(root, "outputs/private/result.txt")));
   });
+});
+
+test("sandboxed bash cannot read host paths outside the workspace view", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "mf-pi-agent-host-"));
+  try {
+    await withWorkspace(async (root) => {
+      await mkdir(join(root, "outputs"), { recursive: true });
+      await writeFile(join(outside, "secret.txt"), "outside secret\n", "utf-8");
+      const command = `if cat ${JSON.stringify(join(outside, "secret.txt"))} 2>/dev/null; then echo host-visible; else echo host-hidden; fi`;
+      const tools = createMissionForgeTools({
+        workspaceRoot: root,
+        permissionManifest: {
+          ...samplePermissionManifest({
+            readable_refs: [],
+            writable_refs: ["outputs"],
+            denied_refs: [],
+          }),
+          allowed_commands: [command],
+          env_allowlist: ["PATH"],
+        },
+        toolTimeoutSeconds: 30,
+      });
+      const bash = tool(tools, "bash");
+
+      const result = await bash.execute("bash-host-hidden", { command });
+
+      assert.equal(result.content[0].text.includes("host-hidden"), true);
+      assert.equal(result.content[0].text.includes("outside secret"), false);
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("write tool can create a root-level file when that exact ref is writable", async () => {
@@ -219,6 +315,47 @@ test("env filtering keeps only allowlisted names", () => {
       VISIBLE_ENV: "visible",
     },
   );
+});
+
+test("tool gateway records refs-first decisions without raw command or env values", async () => {
+  await withWorkspace(async (root) => {
+    await mkdir(join(root, "inputs"), { recursive: true });
+    await writeFile(join(root, "inputs/public.txt"), "public\n", "utf-8");
+    const decisions = [];
+    const gateway = new ToolGateway({
+      workspaceRoot: root,
+      permissionManifest: {
+        ...samplePermissionManifest({
+          readable_refs: ["inputs"],
+          writable_refs: ["outputs"],
+          denied_refs: ["inputs/private"],
+          allowed_commands: ["echo allowed-secret-text"],
+          env_allowlist: ["VISIBLE_ENV"],
+        }),
+      },
+      onDecision: (decision) => decisions.push(decision),
+    });
+
+    gateway.authorizeReadPath("read", join(root, "inputs/public.txt"));
+    assert.throws(
+      () => gateway.authorizeCommand("echo denied-secret-text"),
+      /allowed_commands/,
+    );
+    gateway.filterEnv({
+      VISIBLE_ENV: "visible-secret-value",
+      SECRET_ENV: "hidden-secret-value",
+    });
+
+    const serialized = JSON.stringify(decisions);
+    assert.equal(serialized.includes("inputs/public.txt"), true);
+    assert.equal(serialized.includes("echo allowed-secret-text"), false);
+    assert.equal(serialized.includes("echo denied-secret-text"), false);
+    assert.equal(serialized.includes("visible-secret-value"), false);
+    assert.equal(serialized.includes("hidden-secret-value"), false);
+    assert.equal(decisions.some((decision) => decision.operation === "read_path" && decision.status === "allowed"), true);
+    assert.equal(decisions.some((decision) => decision.operation === "bash_command" && decision.status === "denied"), true);
+    assert.equal(decisions.some((decision) => decision.operation === "env" && decision.env_names.includes("VISIBLE_ENV")), true);
+  });
 });
 
 test("unsupported hard policies fail before worker tools run and are reported in output", async () => {

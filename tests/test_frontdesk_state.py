@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ContractValidationError, FrontDeskAuthoringSession
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDeskAuthoringSession
 from missionforge.frontdesk.schema import FrontDeskStatus
 
 

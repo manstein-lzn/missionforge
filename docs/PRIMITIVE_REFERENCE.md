@@ -37,6 +37,59 @@ Declares read/write authority:
 - `network_policy`
 - `env_allowlist`
 
+## CapabilityGrant
+
+Short-lived runtime authority for one agent role in one sandbox:
+
+- `grant_id`
+- `grant_hash`
+- `role`
+- `contract_hash`
+- `workspace_policy_ref`
+- `permission_manifest_ref`
+- `workspace_view_ref`
+- `sandbox_profile_ref`
+- `expires_at`
+- `revoked_at`
+- `issued_by`
+- `issued_at`
+- `parent_grant_ref`
+
+In the Pi runtime input envelope, this grant is paired with
+`SandboxProfile` and validated against the permission manifest before tools run.
+
+## SandboxProfile
+
+Declarative execution view for one sandboxed agent:
+
+- `profile_id`
+- `mode`
+- `workspace_root_ref`
+- `readable_refs`
+- `writable_refs`
+- `denied_refs`
+- `network_enabled`
+- `env_allowlist`
+- `command_allowlist`
+- `resource_budget`
+
+## ToolGateway
+
+Runtime front door for tool requests:
+
+- `tool_name`
+- `operation`
+- `ref`
+- `command_hash`
+- `cwd_ref`
+- `env_names`
+- `status`
+- `reason`
+
+It authorizes requests against the permission boundary and records refs-first
+decisions. It must not record artifact bodies, raw commands, stdout/stderr
+bodies, environment values, provider payloads, or secrets.
+
 ## PiWorkerCall
 
 The bounded intelligence RPC:

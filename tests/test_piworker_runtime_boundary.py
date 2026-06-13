@@ -22,12 +22,15 @@ from missionforge.agentic_ledger import (
 from missionforge.agentic_repair_controller import RepairExecutionDirective
 from missionforge.agentic_revision_controller import RevisionPendingRecord
 from missionforge.piworker_call import PiWorkerCallResultStatus
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole
 from missionforge.piworker_runtime import (
     PiWorkerRuntimeFactory,
     create_default_piworker_adapter,
+    run_piworker_call,
     run_repair_directive_with_default_piworker,
     run_revision_draft_with_default_piworker,
 )
+from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 
 
 class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
@@ -40,6 +43,30 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         self.assertTrue(callable(getattr(adapter, "run_call", None)))
         self.assertEqual(adapter.config.command, ("pi-agent-runtime",))
         self.assertIsInstance(create_default_piworker_adapter(config), PiAgentRuntimeAdapter)
+
+    def test_run_piworker_call_normalizes_one_bounded_rpc(self) -> None:
+        call = PiWorkerCall(
+            call_id="call-001",
+            role=PiWorkerCallRole.EXECUTOR,
+            contract_id="contract-001",
+            contract_hash="sha256:" + ("a" * 64),
+            contract_ref="contract/task_contract.json",
+            objective="Write the expected artifact.",
+            visible_refs=["contract/task_contract.json"],
+            writable_refs=["artifacts"],
+            expected_output_refs=["artifacts/final.md"],
+            permission_manifest_ref="policy/permission_manifest.json",
+        )
+        adapter = _DirectCallAdapter()
+
+        result = run_piworker_call(call, workspace="/tmp/mf-direct-call-test", adapter=adapter)
+
+        self.assertEqual(adapter.seen_call, call)
+        self.assertEqual(result.call_id, call.call_id)
+        self.assertEqual(result.role, PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(result.status, PiWorkerCallResultStatus.COMPLETED)
+        self.assertEqual(result.output_refs, ["artifacts/final.md"])
+        self.assertEqual(result.execution_report_ref, "attempts/call-001/pi_agent_execution_report.json")
 
     def test_retired_runtime_modules_are_removed_and_factory_keeps_adapter_import_local(self) -> None:
         retired_paths = [
@@ -210,6 +237,33 @@ class _RepairRuntimeRunner:
             + "\n",
         )
         return PiAgentCommandResult(returncode=0)
+
+
+class _DirectCallAdapter:
+    adapter_family = "test-direct"
+
+    def __init__(self) -> None:
+        self.seen_call: PiWorkerCall | None = None
+
+    def run_call(self, call, *, workspace=".", evidence_store=None, call_spec=None, exit_criteria=None, stop_conditions=None):
+        self.seen_call = call
+        return WorkerAdapterResult(
+            execution_report=ExecutionReport(
+                report_id="R-call-001",
+                call_id=call.call_id,
+                status="completed",
+                produced_artifacts=["artifacts/final.md"],
+                changed_refs=["artifacts/final.md", "attempts/call-001/pi_agent_output.json"],
+                evidence_refs=["evidence/adapter_event_001.json"],
+                metrics={"token_count": 7},
+            ),
+            worker_result=WorkerResult(
+                status="completed",
+                execution_report_ref="attempts/call-001/pi_agent_execution_report.json",
+            ),
+            event_evidence_refs=["evidence/adapter_event_002.json"],
+            metrics={"duration_ms": 1},
+        )
 
 
 def _repair_directive() -> RepairExecutionDirective:

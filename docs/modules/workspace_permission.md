@@ -42,6 +42,10 @@ S2 adds `PermissionEnforcer` in `src/missionforge/permissions.py` and
 S7 pushes the same boundary into `workers/pi-agent-runtime`:
 
 - `permission_manifest` is required in the Pi runtime input envelope;
+- `capability_grant` and `sandbox_profile` are now required in the Pi runtime
+  input envelope and are validated together with the permission manifest;
+- read, write, edit, and bash requests pass through the worker-side
+  `ToolGateway` decision layer before touching local operations;
 - read, write, and edit tools translate absolute tool paths back to workspace
   refs and reject paths outside readable/writable roots;
 - denied refs override readable/writable refs at tool execution time;
@@ -51,11 +55,18 @@ S7 pushes the same boundary into `workers/pi-agent-runtime`:
 - direct benchmark workspace and source refs use the same symlink-aware read and
   write path preparation as the main Pi runtime path;
 - bash rejects commands that are not exact `allowed_commands` entries;
-- bash is disabled when a manifest also declares readable/writable/denied ref
-  restrictions or a non-enabled network policy, because local shell execution is
-  not a filesystem or network sandbox;
-- bash receives only `env_allowlist` variables when explicitly enabled by an
-  unrestricted manifest;
+- when bash is explicitly enabled, the command executes through the
+  `bubblewrap`-backed sandbox view rather than host-local shell execution;
+- sandboxed bash receives only readable refs as readonly mounts, writable refs
+  as writable mounts, and denied refs as masked readonly paths;
+- sandboxed bash receives only `env_allowlist` variables plus a minimal
+  runtime PATH/HOME/TMPDIR;
+- `network_policy: disabled` runs bash in an unshared network namespace,
+  `network_policy: enabled` shares the host network, and `restricted` still
+  fails closed as an unsupported hard policy;
+- gateway decisions are appended to runtime event logs as refs-first audit
+  evidence using refs, command hashes, cwd refs, environment variable names,
+  status, and safe reason codes;
 - unsupported hard policies are reported as runtime failures before worker tool
   execution.
 
@@ -63,6 +74,10 @@ The Pi runtime evidence plane also records structure summaries for messages,
 tool args, and tool results instead of raw transcript or tool-output bodies by
 default. This keeps permissioned reads and write bodies from being copied into
 session or event artifacts.
+
+ToolGateway evidence intentionally does not store artifact bodies, raw command
+strings, raw stdout/stderr, host paths, environment values, provider payloads,
+or secrets.
 
 Runtime `worker_claims` are not durable free text. Node runtime output stores
 final assistant text as a length summary, and the Python adapter re-summarizes

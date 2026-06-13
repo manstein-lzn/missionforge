@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from missionforge import FrontDesk
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.schema import ProfileRecommendation, ProfileRecommendationKind, ProfileRecommendationSet
 from missionforge.frontdesk.pi_node_runner import FrontDeskPiNodeRunner
 from missionforge.frontdesk.spec_grill_schema import (

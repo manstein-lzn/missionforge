@@ -1,17 +1,7 @@
 # Getting Started
 
-MissionForge is a TaskContract-first PiWorker runtime. The normal entry path
-is:
-
-```text
-TaskContract
-  -> WorkspacePolicy
-  -> PermissionManifest
-  -> create_default_task_contract_flow()
-  -> executor
-  -> judge
-  -> refs-first result
-```
+MissionForge is a small Python kernel for bounded model calls. Start with the
+direct primitive, then opt into higher-level flows only when you need them.
 
 ## Install
 
@@ -25,7 +15,42 @@ If you are working on SkillFoundry:
 python3 -m pip install -e integrations/skillfoundry
 ```
 
-## Run The Default Lane
+## Minimal Shape
+
+```text
+TaskContract + WorkspacePolicy + PermissionManifest
+  -> PiWorkerCall
+  -> run_piworker_call(...)
+  -> PiWorkerCallResult
+```
+
+The result is boundary evidence. It is not semantic acceptance.
+
+## Direct Call
+
+```python
+from missionforge import PiWorkerCall, PiWorkerCallRole, run_piworker_call
+
+call = PiWorkerCall(
+    call_id="call-001",
+    role=PiWorkerCallRole.EXECUTOR,
+    contract_id="contract-001",
+    contract_hash="sha256:...",
+    contract_ref="contract/task_contract.json",
+    objective="Produce package/output.md from the visible refs.",
+    visible_refs=["contract/task_contract.json", "inputs/request.json"],
+    writable_refs=["package", "reports"],
+    expected_output_refs=["package/output.md"],
+    permission_manifest_ref="policy/permission_manifest.json",
+)
+
+result = run_piworker_call(call, workspace="/tmp/missionforge-run")
+```
+
+## Default Executor/Judge Lane
+
+Use the bundled flow when you want the standard executor -> independent judge
+composition:
 
 ```python
 from missionforge import create_default_task_contract_flow
@@ -63,10 +88,16 @@ The runner writes:
 
 - `TaskContract` is frozen task truth.
 - `PiWorkerCallResult` is boundary evidence, not acceptance.
+- The executor cannot accept its own work.
 - Judge acceptance requires completed execution plus passed hard checks.
-- `attempts/<call_id>/...` is runtime audit material.
-- `reports/piworker_runtime/<call_id>/...` is the runtime evidence projection
-  used by the outer flow.
+- Runtime state should cite refs, not raw prompts, provider payloads, stdout,
+  stderr, artifact bodies, or secrets.
+
+## Standalone Example
+
+```bash
+PYTHONPATH=src python3 examples/standalone_product_shell.py /tmp/mf-standalone-demo
+```
 
 ## Validate
 

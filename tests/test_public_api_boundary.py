@@ -1,123 +1,128 @@
 from __future__ import annotations
 
-import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import unittest
 
 import missionforge
 from missionforge.adapters.pi_agent_runtime import PiAgentExecutorNode, PiAgentJudgeNode, PiAgentRuntimeConfig
+from missionforge.agentic_flow import AgenticFlowRunner
 
 
 class PublicApiBoundaryTests(unittest.TestCase):
-    def test_package_root_does_not_export_runtime_contract_internals(self) -> None:
+    def test_package_root_is_the_programmer_kernel_surface(self) -> None:
+        expected = {
+            "ArtifactRef",
+            "ContractClause",
+            "ContractValidationError",
+            "CapabilityGrant",
+            "EvidenceLedger",
+            "EvidenceRecord",
+            "EvidenceRef",
+            "FileEvidenceStore",
+            "FinalPackage",
+            "HostSandboxRunner",
+            "InMemoryEvidenceStore",
+            "JudgeRubric",
+            "MissionForgeError",
+            "NetworkPolicy",
+            "PermissionManifest",
+            "PiWorkerCall",
+            "PiWorkerCallAdapter",
+            "PiWorkerCallResult",
+            "PiWorkerCallResultStatus",
+            "PiWorkerCallRole",
+            "ProductCompileStatus",
+            "ProductIntegration",
+            "ProductTaskContractCompileResult",
+            "Ref",
+            "SandboxMode",
+            "SandboxProfile",
+            "ToolGateway",
+            "ToolGatewayRequest",
+            "ToolGatewayResult",
+            "TaskContract",
+            "TaskContractFlowPreset",
+            "TaskContractProductIntegration",
+            "TaskContractRevision",
+            "WorkerBrief",
+            "WorkspacePolicy",
+            "assert_refs_only_payload",
+            "build_judge_rubric",
+            "build_worker_brief",
+            "create_capability_grant",
+            "create_default_piworker_adapter",
+            "create_default_task_contract_flow",
+            "create_sandbox_profile_from_workspace",
+            "project_judge_rubric",
+            "project_worker_brief",
+            "replay_decision_ledger",
+            "run_piworker_call",
+            "stable_json_hash",
+            "validate_ref",
+        }
+
+        self.assertEqual(set(missionforge.__all__), expected)
+        for symbol in expected:
+            self.assertTrue(hasattr(missionforge, symbol), symbol)
+
+    def test_package_root_does_not_export_internal_or_high_level_surfaces(self) -> None:
         forbidden = {
             "ActiveMissionContract",
-            "RuntimeContractView",
-            "PiAgentRuntimeAdapter",
-            "FauxPiWorkerAdapter",
-            "SkillFoundryMissionCompiler",
+            "AgentExecutionPacket",
+            "AgentExecutionReport",
+            "AgenticFlowRunner",
+            "AgenticFlowStatus",
             "AttemptInputManifest",
+            "CapabilityProfile",
             "ContractManifest",
+            "DecisionLedgerEventKind",
             "ExecutionReport",
             "ExpandedMission",
+            "FrontDesk",
             "FrozenMissionContract",
+            "JudgePacket",
+            "JudgeReport",
+            "MetricEvent",
             "MissionIR",
             "MissionResult",
             "MissionRevision",
+            "MissionRunAudit",
             "MissionRuntime",
+            "PiAgentRuntimeAdapter",
+            "PiWorkerRuntimeFactory",
+            "ProfilePack",
+            "RepairBrief",
+            "RepairTicket",
+            "RevisionAppliedRecord",
+            "RevisionPendingRecord",
+            "RuntimeContractView",
             "RuntimeEngine",
+            "SkillFoundryMissionCompiler",
+            "TaskRevisionDecision",
+            "TaskRevisionRequest",
+            "Verifier",
             "WorkUnitCompiler",
             "WorkUnitContract",
             "WorkUnitHarness",
             "WorkerInvocation",
             "WorkerResult",
             "apply_mission_revision",
+            "build_run_audit",
             "expand_mission",
             "freeze_mission",
-            "skillfoundry",
             "pi_agent_runtime",
             "piworker",
+            "run_repair_directive_with_default_piworker",
+            "run_revision_draft_with_default_piworker",
+            "skillfoundry",
         }
 
         for symbol in forbidden:
             self.assertNotIn(symbol, missionforge.__all__)
             self.assertFalse(hasattr(missionforge, symbol), symbol)
 
-    def test_package_root_keeps_stable_extension_contracts(self) -> None:
-        expected = {
-            "MetricEvent",
-            "MetricProjection",
-            "JsonWorkspaceStore",
-            "RunStore",
-            "ArtifactStore",
-            "EventLogStore",
-            "ProfilePack",
-            "ProfileRegistry",
-            "MissionRunAudit",
-            "build_run_audit",
-            "TaskContractFlowPreset",
-            "create_default_task_contract_flow",
-            "PiWorkerRuntimeFactory",
-            "create_default_piworker_adapter",
-            "PiWorkerCall",
-            "PiWorkerCallResult",
-            "PiWorkerCallRole",
-            "PiWorkerCallResultStatus",
-        }
-
-        for symbol in expected:
-            self.assertIn(symbol, missionforge.__all__)
-            self.assertTrue(hasattr(missionforge, symbol), symbol)
-
-    def test_package_root_exposes_primary_task_contract_piworker_surface(self) -> None:
-        expected = {
-            "AgentExecutionPacket",
-            "AgentExecutionReport",
-            "AgenticFlowResult",
-            "AgenticFlowRunner",
-            "AgenticFlowStatus",
-            "DecisionLedgerEventKind",
-            "FinalPackage",
-            "JudgePacket",
-            "JudgeReport",
-            "JudgeRubric",
-            "PermissionManifest",
-            "PiWorkerCall",
-            "PiWorkerCallResult",
-            "PiWorkerCallResultStatus",
-            "PiWorkerCallRole",
-            "RepairBrief",
-            "RepairExecutionDirective",
-            "RepairTicket",
-            "RevisionAppliedRecord",
-            "RevisionExecutionDirective",
-            "RevisionPendingRecord",
-            "TaskContract",
-            "TaskContractDecisionLedgerEntry",
-            "TaskRevisionDecision",
-            "TaskRevisionRequest",
-            "WorkerBrief",
-            "WorkspacePolicy",
-            "apply_task_contract_revision",
-            "build_repair_execution_directive",
-            "build_repair_rejudge_packet",
-            "build_repair_ticket",
-            "build_revision_execution_directive",
-            "build_revision_judge_result",
-            "build_revision_pending_record",
-            "build_revision_rejudge_packet",
-            "create_default_task_contract_flow",
-            "load_revision_draft_contract",
-            "replay_decision_ledger",
-            "run_repair_directive_with_default_piworker",
-            "run_revision_draft_with_default_piworker",
-        }
-
-        for symbol in expected:
-            self.assertIn(symbol, missionforge.__all__)
-            self.assertTrue(hasattr(missionforge, symbol), symbol)
-
-    def test_package_root_exposes_task_contract_default_flow(self) -> None:
+    def test_package_root_exposes_task_contract_default_flow_factory_only(self) -> None:
         with TemporaryDirectory() as tmpdir:
             preset = missionforge.create_default_task_contract_flow(
                 tmpdir,
@@ -125,7 +130,7 @@ class PublicApiBoundaryTests(unittest.TestCase):
             )
 
             self.assertIsInstance(preset, missionforge.TaskContractFlowPreset)
-            self.assertIsInstance(preset.runner, missionforge.AgenticFlowRunner)
+            self.assertIsInstance(preset.runner, AgenticFlowRunner)
             self.assertIsInstance(preset.executor, PiAgentExecutorNode)
             self.assertIsInstance(preset.judge, PiAgentJudgeNode)
             self.assertEqual(Path(preset.runner.root), Path(tmpdir))

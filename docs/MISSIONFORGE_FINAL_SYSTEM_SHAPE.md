@@ -1,6 +1,6 @@
 # MissionForge Final System Shape
 
-Last updated: 2026-05-31
+Last updated: 2026-06-13
 
 Status: target architecture for the simplified PiWorker-centered MissionForge.
 
@@ -193,6 +193,38 @@ Expected fields:
 
 Near-term implementation may enforce a subset. The final shape should enforce
 file and command boundaries at the PiWorker runtime/tool layer.
+
+### 6b. Capability Grants And Sandboxed Execution
+
+The permission system is not the full runtime control plane.
+
+Add a short-lived capability grant layer between contract compilation and tool
+execution:
+
+```text
+TaskContract
+  -> PermissionManifest
+  -> CapabilityGrant
+  -> ToolGateway
+  -> SandboxRunner
+  -> isolated agent process
+```
+
+Expected properties:
+
+- one grant authorizes one agent role in one workspace view for one time window;
+- grants are revocable and replaceable;
+- grants select a sandbox profile, they do not replace it;
+- multiple agents can operate in one outer run, but each receives its own
+  sandboxed execution context by default;
+- filesystem, network, cwd, environment, and resource scope should be enforced
+  by the sandbox, not by prompt wording alone;
+- privilege escalation should require a new grant and usually a new sandbox;
+- inter-agent handoff should happen through refs, ledgers, or explicit
+  promoted artifacts, not shared writable process memory.
+
+This is the mechanism that lets a model keep broad autonomy while still being
+boxed into a precisely defined world.
 
 Known risk:
 

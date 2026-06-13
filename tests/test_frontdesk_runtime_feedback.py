@@ -3,17 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from missionforge import (
-    AuthorityRequirement,
-    ContractValidationError,
+from missionforge import ContractValidationError
+from missionforge.contracts import AuthorityRequirement, VerificationStatus
+from missionforge.frontdesk.runtime_feedback import (
     RuntimeFeedbackAction,
     RuntimeFeedbackRecommendation,
     RuntimeFeedbackSourceKind,
-    VerificationResult,
-    VerificationStatus,
-    ValidatorResult,
-)
-from missionforge.frontdesk.runtime_feedback import (
     contract_mismatch_feedback,
     human_review_feedback,
     recommend_from_mission_result,
@@ -21,6 +16,7 @@ from missionforge.frontdesk.runtime_feedback import (
     unsupported_validator_feedback,
 )
 from missionforge.runtime_results import MissionResult
+from missionforge.verification import VerificationResult, ValidatorResult
 
 
 class FrontDeskRuntimeFeedbackTests(unittest.TestCase):

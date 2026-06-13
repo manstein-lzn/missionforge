@@ -4,7 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import ContractValidationError, FrontDesk
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk import (
     CompilerReadiness,
     FrontDeskIntentBundle,

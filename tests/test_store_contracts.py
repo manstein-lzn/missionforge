@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ArtifactStore, EventLogStore, JsonWorkspaceStore, RunStore
+from missionforge.json_store import JsonWorkspaceStore
+from missionforge.stores import ArtifactStore, EventLogStore, RunStore
 
 
 class StoreContractTests(unittest.TestCase):

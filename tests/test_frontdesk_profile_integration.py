@@ -3,7 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import CapabilityProfile, ContractValidationError, ProfileRegistry, VerificationProfile
+from missionforge import ContractValidationError
+from missionforge.profiles import CapabilityProfile, ProfileRegistry, VerificationProfile
 from missionforge.frontdesk.compiler import compile_frontdesk_artifacts
 from missionforge.frontdesk.schema import ProfileRecommendation, ProfileRecommendationKind, ProfileRecommendationSet
 from tests.test_frontdesk_compiler import sample_frontdesk_artifacts

@@ -4,6 +4,7 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { RuntimeInput } from "./contract.js";
 import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
 import { redactJson, redactText } from "./redaction.js";
+import type { ToolGatewayDecision } from "./tool-gateway.js";
 
 export interface RuntimeMetrics {
   turn_count: number;
@@ -35,6 +36,7 @@ export class EvidenceRecorder {
   private sequence = 0;
   private readonly startedAtMs = Date.now();
   private readonly toolStarts = new Map<string, { toolName: string; startedAtMs: number }>();
+  private readonly toolGatewayDecisions: ToolGatewayDecision[] = [];
   private hasRecordedFirstTool = false;
   private hasRecordedFirstArtifact = false;
   readonly metrics: RuntimeMetrics = {
@@ -102,7 +104,15 @@ export class EvidenceRecorder {
     await writeText(path, `${lines.join("\n")}${lines.length ? "\n" : ""}`, this.workspaceRoot);
   }
 
+  recordToolGatewayDecision(decision: ToolGatewayDecision): void {
+    this.toolGatewayDecisions.push({
+      ...decision,
+      env_names: decision.env_names ? [...decision.env_names] : undefined,
+    });
+  }
+
   async writeMetrics(durationMs: number): Promise<void> {
+    await this.flushToolGatewayDecisions();
     await this.recordFirstArtifactIfPresent();
     await writeJsonFile(
       resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref),
@@ -193,6 +203,25 @@ export class EvidenceRecorder {
       }, this.env),
       { workspaceRoot: this.workspaceRoot },
     );
+  }
+
+  private async flushToolGatewayDecisions(): Promise<void> {
+    while (this.toolGatewayDecisions.length > 0) {
+      const decision = this.toolGatewayDecisions.shift();
+      if (!decision) continue;
+      await appendJsonLine(
+        resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+        {
+          schema_version: "missionforge.pi_agent_runtime_event.v1",
+          event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
+          created_at: new Date().toISOString(),
+          call_id: this.input.call_id,
+          event_type: "tool_gateway_decision",
+          payload: redactJson(decision, this.env),
+        },
+        { workspaceRoot: this.workspaceRoot },
+      );
+    }
   }
 
   private updateMetrics(event: AgentEvent): void {

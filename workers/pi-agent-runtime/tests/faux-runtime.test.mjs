@@ -49,6 +49,23 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
     assert.equal(savepoints.includes("missionforge.pi_agent_runtime_savepoint.v1"), true);
     assert.equal(savepoints.includes("after_completed_turn"), true);
+    assert.equal(eventsContainGatewayDecision(await readFile(join(root, input.events_ref), "utf-8"), "write"), true);
+  });
+});
+
+test("runtime event log records gateway decisions without artifact bodies", async () => {
+  await withWorkspace(async (root) => {
+    const input = sampleInput();
+    await writeInput(root, input);
+    process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+    await runMissionForgePiAgent(parseRuntimeInput(input), root);
+
+    const events = await readFile(join(root, input.events_ref), "utf-8");
+    assert.equal(events.includes('"event_type":"tool_gateway_decision"'), true);
+    assert.equal(events.includes('"operation":"write_container"'), true);
+    assert.equal(events.includes('"operation":"write_path"'), true);
+    assert.equal(events.includes("pi-agent-runtime faux artifact"), false);
+    assert.equal(gatewayDecisionPayloadHasKey(events, "content"), false);
   });
 });
 
@@ -72,6 +89,28 @@ test("faux runtime does not serialize api keys", async () => {
     assert.deepEqual(outputData.worker_claims, ["assistant_final_text_present:length=20"]);
   });
 });
+
+function eventsContainGatewayDecision(events, toolName) {
+  return events
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .some((line) => {
+      const event = JSON.parse(line);
+      return event.event_type === "tool_gateway_decision" && event.payload.tool_name === toolName;
+    });
+}
+
+function gatewayDecisionPayloadHasKey(events, key) {
+  return events
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .some((line) => {
+      const event = JSON.parse(line);
+      return event.event_type === "tool_gateway_decision" && Object.hasOwn(event.payload, key);
+    });
+}
 
 test("faux runtime cancellation writes normalized non-success output", async () => {
   await withWorkspace(async (root) => {

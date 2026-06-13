@@ -6,6 +6,11 @@ PiWorker owns semantic work. MissionForge owns durable task authority, workspace
 boundaries, permission checks, refs-first evidence, role separation, independent
 judgment, repair, revision, and replay.
 
+The runtime boundary is not just a manifest check. Long-lived autonomy requires a
+capability-grant layer and a per-agent sandbox boundary so different agents can
+see different file trees, network access, command sets, and resource budgets
+inside one outer run.
+
 The architecture is:
 
 ```text
@@ -79,6 +84,22 @@ constraints:
 The PI Agent runtime sidecar executes the bounded call. MissionForge validates
 the returned `PiWorkerCallResult`, records refs-only evidence, and feeds those
 refs into the next deterministic boundary.
+
+For fine-grained autonomy, the runtime should treat a `CapabilityGrant` as the
+short-lived authority that selects a sandbox profile and workspace view. The
+grant is not the sandbox; it is the ticket that creates one. Multiple agents in
+the same outer job should normally receive separate sandboxes and exchange only
+refs or promoted artifacts.
+
+The bundled Pi runtime has started this migration at the tool boundary:
+`read`, `write`, `edit`, and `bash` all pass through a worker-side
+`ToolGateway` decision layer that records refs-first audit evidence. The
+runtime input envelope now carries a `CapabilityGrant` and `SandboxProfile`,
+and the worker-side tool boundary uses the profile as the effective execution
+view. Bash commands are still exact-allowlist gated, and execute through a
+`bubblewrap` sandbox view instead of the host shell. The next runtime-control
+step is the full per-agent process sandbox lifecycle and grant revocation
+flow.
 
 ## Evidence Plane
 

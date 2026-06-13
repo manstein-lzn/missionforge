@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import (
+from missionforge import ContractValidationError
+from missionforge.frontdesk.schema import (
+    ApprovalAuthority,
     AuthoringApproval,
-    ContractValidationError,
     FrontDeskFreezeManifest,
     MissionBrief,
     MissionSemanticLock,
     ProfileRecommendation,
+    ProfileRecommendationKind,
     ProfileRecommendationSet,
     SanitizedSourceSet,
 )
-from missionforge.frontdesk.schema import ApprovalAuthority, ProfileRecommendationKind
 
 
 class FrontDeskSchemaTests(unittest.TestCase):

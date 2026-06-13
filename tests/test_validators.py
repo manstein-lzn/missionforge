@@ -6,8 +6,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import InMemoryEvidenceStore, ValidatorSpec, run_validator
+from missionforge import InMemoryEvidenceStore
 from missionforge.contracts import ContractValidationError, EvidenceTrustLevel
+from missionforge.validators import run_validator
+from missionforge.verification import ValidatorSpec
 
 
 class ValidatorTests(unittest.TestCase):

@@ -3,7 +3,8 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import ContractValidationError, FrontDesk
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.frontdesk.spec_grill_schema import PlanReviewDecision

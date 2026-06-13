@@ -30,7 +30,11 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     const tools = createMissionForgeTools({
       workspaceRoot,
       permissionManifest: input.permission_manifest,
+      sandboxProfile: input.sandbox_profile,
       toolTimeoutSeconds: provider.toolTimeoutSeconds,
+      knownFileRefs: runtimeKnownFileRefs(input),
+      knownDirectoryRefs: runtimeKnownDirectoryRefs(input),
+      onToolGatewayDecision: (decision) => recorder.recordToolGatewayDecision(decision),
     });
     permissionBoundaryReady = true;
 
@@ -136,6 +140,30 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     recommendedNextSteps: cancelled ? ["Run was cancelled at a MissionForge safe point."] : undefined,
   });
   await writeRuntimeOutput(workspaceRoot, input, output);
+}
+
+function runtimeKnownFileRefs(input: RuntimeInput): string[] {
+  return [
+    input.input_ref,
+    input.output_ref,
+    input.session_ref,
+    input.events_ref,
+    input.metrics_ref,
+    input.savepoints_ref,
+    input.piworker_call.contract_ref,
+    ...input.piworker_call.visible_refs,
+    ...input.piworker_call.expected_output_refs,
+    ...input.call_spec.visible_refs,
+    ...input.call_spec.expected_outputs,
+  ];
+}
+
+function runtimeKnownDirectoryRefs(input: RuntimeInput): string[] {
+  return [
+    input.attempt_dir_ref,
+    ...input.piworker_call.writable_refs,
+    ...input.call_spec.allowed_scope,
+  ];
 }
 
 export async function stripUnreplayableResponsesReasoning(messages: any[]): Promise<any[]> {

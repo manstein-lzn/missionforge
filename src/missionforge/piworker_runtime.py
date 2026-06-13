@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from .agentic_repair_controller import RepairExecutionDirective
 from .agentic_revision_controller import RevisionPendingRecord
@@ -164,6 +164,47 @@ def create_default_piworker_adapter(config: Any | None = None, *, runner: Any | 
     """Return the default PiWorkerCall adapter."""
 
     return PiWorkerRuntimeFactory(config=config, runner=runner).create_default_worker()
+
+
+def run_piworker_call(
+    call: PiWorkerCall,
+    *,
+    workspace: str | Path = ".",
+    adapter: PiWorkerCallAdapter | None = None,
+    piworker_config: Any | None = None,
+    runner: Any | None = None,
+    evidence_store: EvidenceLedger | None = None,
+    call_spec: Any | None = None,
+    exit_criteria: list[str] | None = None,
+    stop_conditions: list[str] | None = None,
+    result_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> PiWorkerCallResult:
+    """Run one bounded PiWorker call and return its refs-first result.
+
+    This is the smallest programmer-facing execution primitive. It does not
+    decide semantic acceptance and does not prescribe a product workflow; it
+    only normalizes the adapter result for one unreliable intelligence RPC.
+    """
+
+    call.validate()
+    worker = adapter or create_default_piworker_adapter(piworker_config, runner=runner)
+    worker_result = worker.run_call(
+        call,
+        workspace=workspace,
+        evidence_store=evidence_store,
+        call_spec=call_spec,
+        exit_criteria=exit_criteria,
+        stop_conditions=stop_conditions,
+    )
+    result = PiWorkerCallResult.from_worker_adapter_result(
+        call,
+        worker_result,
+        result_id=result_id,
+        metadata=metadata,
+    )
+    result.validate_against_call(call)
+    return result
 
 
 def run_repair_directive_with_default_piworker(

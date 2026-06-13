@@ -4,6 +4,7 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { DirectRuntimeInput } from "./direct-contract.js";
 import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
 import { redactText } from "./redaction.js";
+import type { ToolGatewayDecision } from "./tool-gateway.js";
 
 export interface DirectRuntimeMetrics {
   turn_count: number;
@@ -35,6 +36,7 @@ export class DirectEvidenceRecorder {
   private sequence = 0;
   private readonly startedAtMs = Date.now();
   private readonly toolStarts = new Map<string, { toolName: string; startedAtMs: number }>();
+  private readonly toolGatewayDecisions: ToolGatewayDecision[] = [];
   private hasRecordedFirstTool = false;
   private hasRecordedFirstArtifact = false;
   readonly metrics: DirectRuntimeMetrics = {
@@ -104,7 +106,15 @@ export class DirectEvidenceRecorder {
     );
   }
 
+  recordToolGatewayDecision(decision: ToolGatewayDecision): void {
+    this.toolGatewayDecisions.push({
+      ...decision,
+      env_names: decision.env_names ? [...decision.env_names] : undefined,
+    });
+  }
+
   async writeMetrics(durationMs: number): Promise<void> {
+    await this.flushToolGatewayDecisions();
     await this.recordFirstArtifactIfPresent();
     await writeJsonFile(
       resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref),
@@ -197,6 +207,27 @@ export class DirectEvidenceRecorder {
       this.metrics.cache_write_cost_usd += usage?.cost?.cacheWrite ?? 0;
       this.metrics.provider_reported_cost_usd += usage?.cost?.total ?? 0;
       this.metrics.stop_reason = event.message.stopReason;
+    }
+  }
+
+  private async flushToolGatewayDecisions(): Promise<void> {
+    while (this.toolGatewayDecisions.length > 0) {
+      const decision = this.toolGatewayDecisions.shift();
+      if (!decision) continue;
+      await appendJsonLine(
+        resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+        {
+          schema_version: "missionforge.pi_agent_direct_event.v1",
+          event_id: `pi-agent-direct-event-${String(++this.sequence).padStart(6, "0")}`,
+          created_at: new Date().toISOString(),
+          benchmark_run_id: this.input.benchmark_run_id,
+          task_id: this.input.task_id,
+          seed: this.input.seed,
+          event_type: "tool_gateway_decision",
+          payload: decision,
+        },
+        { workspaceRoot: this.workspaceRoot },
+      );
     }
   }
 

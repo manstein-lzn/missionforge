@@ -66,6 +66,8 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
           workspaceRoot: toolWorkspaceRoot,
           permissionManifest: deriveDirectPermissionManifest(input.task_id, input.expected_output_refs),
           toolTimeoutSeconds: provider.toolTimeoutSeconds,
+          knownFileRefs: input.expected_output_refs,
+          onToolGatewayDecision: (decision) => recorder.recordToolGatewayDecision(decision),
         }),
       },
       streamFn: streamSimple,

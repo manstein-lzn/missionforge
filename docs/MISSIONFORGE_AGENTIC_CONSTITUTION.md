@@ -1,6 +1,6 @@
 # MissionForge Agentic Constitution
 
-Last updated: 2026-05-31
+Last updated: 2026-06-13
 
 Status: guiding constitution for the simplified PiWorker-centered system shape.
 
@@ -194,6 +194,37 @@ Code should not pretend to do the things LLMs are needed for:
 - mapping vague desires to a useful solution;
 - judging semantic quality of an artifact;
 - choosing a repair strategy from ambiguous evidence.
+
+### Runtime Capability Leases And Sandboxed Agents
+
+MissionForge should separate three concepts that are easy to blur:
+
+- capability profiles: reusable capability descriptions compiled from product
+  or mission context;
+- permission manifests: declarative policy inputs for read, write, command,
+  network, and environment scope;
+- capability grants: short-lived runtime authority for one role, one workspace
+  view, one sandbox profile, and one time window.
+
+Capability grants are not the security boundary by themselves. The sandbox is
+the boundary. The grant selects and authenticates the sandbox. Tool calls should
+flow through a ToolGateway and execute inside an isolated sandbox process.
+
+```text
+CapabilityGrant -> ToolGateway -> SandboxRunner -> isolated agent process
+```
+
+The runtime topology should support:
+
+- one outer run hosting multiple sandboxes;
+- one sandbox per role, agent, or phase by default;
+- refs-only handoff between sandboxes;
+- revocation or privilege changes by minting a new grant and, when needed, a
+  new sandbox;
+- no in-place privilege escalation of a live sandbox.
+
+This is how MissionForge gives maximum freedom inside a precisely defined
+world instead of relying on soft rules around a shared process.
 
 ### Execution Worker Does Not Self-Accept
 

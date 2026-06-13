@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import (
+from missionforge.agent_packets import (
     AgentRole,
     HardCheckStatus,
     JudgePacket,
     JudgeReport,
     JudgeReportDecision,
+)
+from missionforge.agentic_repair import (
     RepairBrief,
     TaskRevisionAuthority,
     TaskRevisionDecision,

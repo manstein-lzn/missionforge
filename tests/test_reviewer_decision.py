@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import ReviewerDecision
 from missionforge.contracts import ContractValidationError
+from missionforge.review import ReviewerDecision
 
 
 class ReviewerDecisionTests(unittest.TestCase):

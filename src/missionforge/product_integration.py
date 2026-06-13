@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, Self, runtime_checkable
 
 from .contracts import (
     ContractValidationError,
@@ -18,8 +18,9 @@ from .contracts import (
     require_str_list,
     validate_ref,
 )
-from .frontdesk.inquiry_profile import ProductInquiryProfile
-from .frontdesk.intent_bundle import FrontDeskIntentBundle
+if TYPE_CHECKING:
+    from .frontdesk.inquiry_profile import ProductInquiryProfile
+    from .frontdesk.intent_bundle import FrontDeskIntentBundle
 
 
 PRODUCT_COMPILE_RESULT_SCHEMA_VERSION = "missionforge.product_compile_result.v1"

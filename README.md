@@ -335,7 +335,7 @@ a `RepairBrief`, which can be bound into a `RepairTicket`, then into a
 `RepairExecutionDirective`, then executed through the same PiWorker boundary:
 
 ```python
-from missionforge import run_repair_directive_with_default_piworker
+from missionforge.piworker_runtime import run_repair_directive_with_default_piworker
 
 call_result = run_repair_directive_with_default_piworker(
     directive,
@@ -350,7 +350,7 @@ Revision changes task truth only after an explicit pending record, authority
 decision, revised contract, and applied record:
 
 ```python
-from missionforge import run_revision_draft_with_default_piworker
+from missionforge.piworker_runtime import run_revision_draft_with_default_piworker
 
 draft_result = run_revision_draft_with_default_piworker(
     pending,
@@ -404,27 +404,28 @@ belongs in the TaskContract-native PiWorker lane.
 
 ## Public API Guidance
 
-Use these as the primary MissionForge kernel surface:
+Use the package root as the small MissionForge programmer kernel:
 
 - `TaskContract`
 - `WorkspacePolicy`
 - `PermissionManifest`
 - `WorkerBrief`
 - `JudgeRubric`
-- `AgenticFlowRunner`
-- `create_default_task_contract_flow`
 - `PiWorkerCall`
 - `PiWorkerCallAdapter`
 - `PiWorkerCallResult`
+- `run_piworker_call`
+- `create_default_piworker_adapter`
+- `create_default_task_contract_flow`
 - `FinalPackage`
-- `TaskContractDecisionLedgerEntry`
 - `replay_decision_ledger`
-- `run_repair_directive_with_default_piworker`
-- `run_revision_draft_with_default_piworker`
 
-Adapter internals such as `PiAgentRuntimeAdapter` are intentionally not
-exported from the package root. Import them directly only when building or
-testing adapter-specific behavior.
+Higher-level flow packets, FrontDesk authoring, repair/revision controllers,
+profiles, verifiers, stores, metrics, and adapter internals are available from
+explicit modules such as `missionforge.agentic_flow`,
+`missionforge.agent_packets`, `missionforge.frontdesk`, and
+`missionforge.adapters.pi_agent_runtime`. They are intentionally not exported
+from the package root.
 
 Retired runtime and work-unit symbols such as `MissionRuntime`, `RuntimeEngine`,
 and `WorkUnitContract` have been removed. `MissionIR` remains available from

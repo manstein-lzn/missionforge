@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import FrontDesk
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
 from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts

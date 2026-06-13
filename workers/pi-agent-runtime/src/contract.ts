@@ -1,8 +1,11 @@
 export const INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1";
 export const OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1";
 export const PERMISSION_MANIFEST_SCHEMA_VERSION = "permission_manifest.v1";
+export const CAPABILITY_GRANT_SCHEMA_VERSION = "runtime_capability_grant.v1";
+export const SANDBOX_PROFILE_SCHEMA_VERSION = "sandbox_profile.v1";
 
 export type NetworkPolicy = "disabled" | "restricted" | "enabled";
+export type SandboxMode = "bubblewrap" | "nsjail" | "subprocess" | "unsupported";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -34,6 +37,8 @@ export interface RuntimeInput {
   piworker_call: PiWorkerCall;
   call_spec: PiAgentCallSpec;
   permission_manifest: PermissionManifest;
+  capability_grant: CapabilityGrant;
+  sandbox_profile: SandboxProfile;
   runtime: {
     runtime_name: string;
     timeout_seconds: number;
@@ -42,6 +47,39 @@ export interface RuntimeInput {
   };
   repair: RepairInput;
   resume: ResumeInput;
+}
+
+export interface CapabilityGrant {
+  schema_version: typeof CAPABILITY_GRANT_SCHEMA_VERSION;
+  grant_id: string;
+  role: PiWorkerCall["role"];
+  contract_hash: string;
+  workspace_policy_ref: string;
+  permission_manifest_ref: string;
+  workspace_view_ref: string;
+  sandbox_profile_ref: string;
+  issued_by: string;
+  issued_at: string;
+  expires_at: string;
+  parent_grant_ref: string | null;
+  revoked_at: string | null;
+  metadata: JsonObject;
+  grant_hash?: string;
+}
+
+export interface SandboxProfile {
+  schema_version: typeof SANDBOX_PROFILE_SCHEMA_VERSION;
+  profile_id: string;
+  mode: SandboxMode;
+  workspace_root_ref: string;
+  readable_refs: string[];
+  writable_refs: string[];
+  denied_refs: string[];
+  network_enabled: boolean;
+  env_allowlist: string[];
+  command_allowlist: string[];
+  resource_budget: JsonObject;
+  profile_hash?: string;
 }
 
 export interface PiWorkerCall {
@@ -144,6 +182,8 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     piworker_call: parsePiWorkerCall(data.piworker_call),
     call_spec: callSpec,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
+    capability_grant: parseCapabilityGrant(data.capability_grant),
+    sandbox_profile: parseSandboxProfile(data.sandbox_profile),
     runtime: parseRuntime(data.runtime),
     repair: parseRepair(data.repair),
     resume: parseResume(data.resume),
@@ -166,6 +206,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
       throw new Error("input.piworker_call expected output must be present in call_spec.expected_outputs");
     }
   }
+  validateRuntimeAuthority(result);
   return result;
 }
 
@@ -206,6 +247,89 @@ export function parsePermissionManifest(value: unknown): PermissionManifest {
       "permission_manifest.unsupported_hard_policies",
     ),
     schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
+  };
+}
+
+export function parseCapabilityGrant(value: unknown): CapabilityGrant {
+  const data = requireObject(value, "capability_grant");
+  const schemaVersion = requireString(
+    data.schema_version ?? CAPABILITY_GRANT_SCHEMA_VERSION,
+    "capability_grant.schema_version",
+  );
+  if (schemaVersion !== CAPABILITY_GRANT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported capability_grant.schema_version: ${schemaVersion}`);
+  }
+  const role = requireString(data.role, "capability_grant.role") as PiWorkerCall["role"];
+  if (
+    ![
+      "frontdesk_author_piworker",
+      "executor_piworker",
+      "judge_piworker",
+      "repair_piworker",
+      "revision_drafter_piworker",
+    ].includes(role)
+  ) {
+    throw new Error("capability_grant.role is invalid");
+  }
+  const grantHash =
+    data.grant_hash === undefined || data.grant_hash === null
+      ? undefined
+      : requireSha256(data.grant_hash, "capability_grant.grant_hash");
+  return {
+    schema_version: CAPABILITY_GRANT_SCHEMA_VERSION,
+    grant_id: requireString(data.grant_id, "capability_grant.grant_id"),
+    role,
+    contract_hash: requireSha256(data.contract_hash, "capability_grant.contract_hash"),
+    workspace_policy_ref: requireRef(data.workspace_policy_ref, "capability_grant.workspace_policy_ref"),
+    permission_manifest_ref: requireRef(data.permission_manifest_ref, "capability_grant.permission_manifest_ref"),
+    workspace_view_ref: requireRef(data.workspace_view_ref, "capability_grant.workspace_view_ref"),
+    sandbox_profile_ref: requireRef(data.sandbox_profile_ref, "capability_grant.sandbox_profile_ref"),
+    issued_by: requireString(data.issued_by, "capability_grant.issued_by"),
+    issued_at: requireIsoTimestamp(data.issued_at, "capability_grant.issued_at"),
+    expires_at: requireIsoTimestamp(data.expires_at, "capability_grant.expires_at"),
+    parent_grant_ref:
+      data.parent_grant_ref === undefined || data.parent_grant_ref === null
+        ? null
+        : requireRef(data.parent_grant_ref, "capability_grant.parent_grant_ref"),
+    revoked_at:
+      data.revoked_at === undefined || data.revoked_at === null
+        ? null
+        : requireIsoTimestamp(data.revoked_at, "capability_grant.revoked_at"),
+    metadata: data.metadata === undefined ? {} : requireObject(data.metadata, "capability_grant.metadata"),
+    ...(grantHash ? { grant_hash: grantHash } : {}),
+  };
+}
+
+export function parseSandboxProfile(value: unknown): SandboxProfile {
+  const data = requireObject(value, "sandbox_profile");
+  const schemaVersion = requireString(
+    data.schema_version ?? SANDBOX_PROFILE_SCHEMA_VERSION,
+    "sandbox_profile.schema_version",
+  );
+  if (schemaVersion !== SANDBOX_PROFILE_SCHEMA_VERSION) {
+    throw new Error(`Unsupported sandbox_profile.schema_version: ${schemaVersion}`);
+  }
+  const mode = requireString(data.mode, "sandbox_profile.mode") as SandboxMode;
+  if (!["bubblewrap", "nsjail", "subprocess", "unsupported"].includes(mode)) {
+    throw new Error("sandbox_profile.mode is invalid");
+  }
+  const profileHash =
+    data.profile_hash === undefined || data.profile_hash === null
+      ? undefined
+      : requireSha256(data.profile_hash, "sandbox_profile.profile_hash");
+  return {
+    schema_version: SANDBOX_PROFILE_SCHEMA_VERSION,
+    profile_id: requireString(data.profile_id, "sandbox_profile.profile_id"),
+    mode,
+    workspace_root_ref: requireRef(data.workspace_root_ref, "sandbox_profile.workspace_root_ref"),
+    readable_refs: requireRefList(data.readable_refs ?? [], "sandbox_profile.readable_refs"),
+    writable_refs: requireRefList(data.writable_refs ?? [], "sandbox_profile.writable_refs"),
+    denied_refs: requireRefList(data.denied_refs ?? [], "sandbox_profile.denied_refs"),
+    network_enabled: requireBoolean(data.network_enabled ?? false, "sandbox_profile.network_enabled"),
+    env_allowlist: requireStringList(data.env_allowlist ?? [], "sandbox_profile.env_allowlist"),
+    command_allowlist: requireStringList(data.command_allowlist ?? [], "sandbox_profile.command_allowlist"),
+    resource_budget: data.resource_budget === undefined ? {} : requireObject(data.resource_budget, "sandbox_profile.resource_budget"),
+    ...(profileHash ? { profile_hash: profileHash } : {}),
   };
 }
 
@@ -436,6 +560,57 @@ function parseRepair(value: unknown): RepairInput {
   };
 }
 
+function validateRuntimeAuthority(input: RuntimeInput): void {
+  const grant = input.capability_grant;
+  const profile = input.sandbox_profile;
+  const manifest = input.permission_manifest;
+
+  if (grant.role !== input.piworker_call.role) {
+    throw new Error("capability_grant.role must match piworker_call.role");
+  }
+  if (grant.contract_hash !== input.piworker_call.contract_hash) {
+    throw new Error("capability_grant.contract_hash must match piworker_call.contract_hash");
+  }
+  if (grant.workspace_policy_ref !== manifest.workspace_policy_ref) {
+    throw new Error("capability_grant.workspace_policy_ref must match permission_manifest.workspace_policy_ref");
+  }
+  if (grant.workspace_view_ref !== profile.workspace_root_ref) {
+    throw new Error("capability_grant.workspace_view_ref must match sandbox_profile.workspace_root_ref");
+  }
+  if (grant.revoked_at !== null) {
+    throw new Error("capability_grant must not be revoked");
+  }
+  if (Date.parse(grant.expires_at) <= Date.now()) {
+    throw new Error("capability_grant must be active");
+  }
+  if (profile.mode === "unsupported") {
+    throw new Error("sandbox_profile.mode must be supported");
+  }
+  requireSameStringSet(profile.readable_refs, manifest.readable_refs, "sandbox_profile.readable_refs");
+  requireSameStringSet(profile.writable_refs, manifest.writable_refs, "sandbox_profile.writable_refs");
+  requireSameStringSet(profile.denied_refs, manifest.denied_refs, "sandbox_profile.denied_refs");
+  requireSameStringList(profile.command_allowlist, manifest.allowed_commands, "sandbox_profile.command_allowlist");
+  requireSameStringList(profile.env_allowlist, manifest.env_allowlist, "sandbox_profile.env_allowlist");
+  const networkEnabled = manifest.network_policy === "enabled";
+  if (profile.network_enabled !== networkEnabled) {
+    throw new Error("sandbox_profile.network_enabled must match permission_manifest.network_policy");
+  }
+}
+
+function requireSameStringSet(actual: readonly string[], expected: readonly string[], field: string): void {
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  if (actualSet.size !== expectedSet.size || [...actualSet].some((item) => !expectedSet.has(item))) {
+    throw new Error(`${field} must match permission_manifest refs`);
+  }
+}
+
+function requireSameStringList(actual: readonly string[], expected: readonly string[], field: string): void {
+  if (actual.length !== expected.length || actual.some((item, index) => item !== expected[index])) {
+    throw new Error(`${field} must match permission_manifest`);
+  }
+}
+
 function requireRefList(value: unknown, field: string): string[] {
   return requireArray(value, field).map((item, index) => requireRef(item, `${field}[${index}]`));
 }
@@ -469,6 +644,22 @@ function requireSha256(value: unknown, field: string): string {
     throw new Error(`${field} must be a sha256 hash`);
   }
   return text;
+}
+
+function requireIsoTimestamp(value: unknown, field: string): string {
+  const text = requireString(value, field);
+  const timestamp = Date.parse(text);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`${field} must be an ISO timestamp`);
+  }
+  return text;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} must be a boolean`);
+  }
+  return value;
 }
 
 function requirePositiveInteger(value: unknown, field: string): number {

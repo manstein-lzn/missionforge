@@ -12,6 +12,10 @@ test("parseRuntimeInput accepts valid input", () => {
   assert.deepEqual(input.piworker_call.expected_output_refs, ["attempts/WU-000001/artifact.txt"]);
   assert.equal(input.permission_manifest.schema_version, "permission_manifest.v1");
   assert.deepEqual(input.permission_manifest.writable_refs, ["attempts/WU-000001"]);
+  assert.equal(input.capability_grant.schema_version, "runtime_capability_grant.v1");
+  assert.equal(input.capability_grant.role, "executor_piworker");
+  assert.equal(input.sandbox_profile.schema_version, "sandbox_profile.v1");
+  assert.deepEqual(input.sandbox_profile.writable_refs, ["attempts/WU-000001"]);
 });
 
 test("parseRuntimeInput fails closed without PiWorkerCall", () => {
@@ -48,6 +52,136 @@ test("parseRuntimeInput fails closed without permission manifest", () => {
   const payload = sampleInput();
   delete payload.permission_manifest;
   assert.throws(() => parseRuntimeInput(payload), /permission_manifest/);
+});
+
+test("parseRuntimeInput fails closed without runtime authority envelope", () => {
+  const missingGrant = sampleInput();
+  delete missingGrant.capability_grant;
+  assert.throws(() => parseRuntimeInput(missingGrant), /capability_grant/);
+
+  const missingProfile = sampleInput();
+  delete missingProfile.sandbox_profile;
+  assert.throws(() => parseRuntimeInput(missingProfile), /sandbox_profile/);
+});
+
+test("parseRuntimeInput rejects runtime authority mismatches", () => {
+  const base = sampleInput();
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          capability_grant: {
+            ...base.capability_grant,
+            role: "judge_piworker",
+          },
+        }),
+      ),
+    /role must match/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          capability_grant: {
+            ...base.capability_grant,
+            contract_hash: `sha256:${"b".repeat(64)}`,
+          },
+        }),
+      ),
+    /contract_hash must match/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          sandbox_profile: {
+            ...base.sandbox_profile,
+            workspace_root_ref: "attempts/WU-000001/other_view",
+          },
+        }),
+      ),
+    /workspace_view_ref must match/,
+  );
+});
+
+test("parseRuntimeInput rejects inactive grants and unsupported sandbox profiles", () => {
+  const base = sampleInput();
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          capability_grant: {
+            ...base.capability_grant,
+            expires_at: "2000-01-01T00:00:00.000Z",
+          },
+        }),
+      ),
+    /must be active/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          capability_grant: {
+            ...base.capability_grant,
+            revoked_at: "2026-06-13T00:01:00.000Z",
+          },
+        }),
+      ),
+    /must not be revoked/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          sandbox_profile: {
+            ...base.sandbox_profile,
+            mode: "unsupported",
+          },
+        }),
+      ),
+    /sandbox_profile.mode must be supported/,
+  );
+});
+
+test("parseRuntimeInput rejects sandbox profile and permission manifest drift", () => {
+  const base = sampleInput();
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          sandbox_profile: {
+            ...base.sandbox_profile,
+            readable_refs: ["other"],
+          },
+        }),
+      ),
+    /readable_refs must match/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          sandbox_profile: {
+            ...base.sandbox_profile,
+            command_allowlist: ["python3 -m unittest"],
+          },
+        }),
+      ),
+    /command_allowlist must match/,
+  );
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          sandbox_profile: {
+            ...base.sandbox_profile,
+            network_enabled: true,
+          },
+        }),
+      ),
+    /network_enabled must match/,
+  );
 });
 
 test("parseRuntimeInput defaults missing repair to none", () => {

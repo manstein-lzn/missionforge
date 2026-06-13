@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from missionforge import ContractValidationError, FrontDeskWorkspace
+from missionforge import ContractValidationError
+from missionforge.frontdesk import FrontDeskWorkspace
 
 
 class FrontDeskWorkspaceTests(unittest.TestCase):

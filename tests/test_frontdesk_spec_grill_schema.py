@@ -2,29 +2,26 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge import (
-    ContractValidationError,
-    CoreNeedBrief,
-    DecisionTree,
-    FrontDeskFreezeGateResult,
-    MissionSemanticCoverageReport,
-    MissionSolutionPlan,
-    NeedGrillingReport,
-    PlanReviewRecord,
-    WorkspaceFacts,
-)
+from missionforge import ContractValidationError
 from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.frontdesk.spec_grill_schema import (
+    CoreNeedBrief,
     CoreNeedOpenQuestion,
+    DecisionTree,
     DecisionNode,
     DecisionOption,
     DecisionStatus,
     FactConfidence,
     FreezeGateDecision,
+    FrontDeskFreezeGateResult,
     GrillingQuestion,
     MappingStatus,
     MissionIRMappingReport,
+    MissionSemanticCoverageReport,
+    MissionSolutionPlan,
     NeedGrillingReadiness,
+    NeedGrillingReport,
+    PlanReviewRecord,
     PlanReviewDecision,
     ProfileCatalogSnapshot,
     QuestionAnswerType,
@@ -35,6 +32,7 @@ from missionforge.frontdesk.spec_grill_schema import (
     SolutionPlanStatus,
     SourceAdmissionReport,
     WorkspaceFact,
+    WorkspaceFacts,
     stable_bundle_hash,
 )
 

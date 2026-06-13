@@ -5,16 +5,16 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import (
+from missionforge.agent_packets import (
     AgentExecutionPacket,
     AgentExecutionReport,
     AgentExecutionStatus,
-    AgentWorkspace,
-    FrontDesk,
     JudgePacket,
     JudgeReport,
     JudgeReportDecision,
 )
+from missionforge.agentic_flow import AgentWorkspace
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.ir import MissionIR

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import FrontDesk
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.scout import WorkspaceScout
 from missionforge.frontdesk.semantic_coverage import SemanticCoverageChecker
 from missionforge.frontdesk.spec_grill_schema import CoreNeedBrief, CoreNeedOpenQuestion, DomainLanguage

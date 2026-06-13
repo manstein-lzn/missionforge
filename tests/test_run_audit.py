@@ -5,8 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge import build_run_audit
 from missionforge.adapters.cli import MissionCLI
+from missionforge.run_audit import build_run_audit
 from tests.operator_state_fixtures import seed_operator_run
 
 

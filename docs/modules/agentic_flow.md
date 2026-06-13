@@ -102,7 +102,7 @@ not contaminated by FrontDesk or product-specific behavior.
   ref, and a judge-scoped workspace capability.
 `TaskContractFlowPreset`, `create_default_task_contract_flow`
 :: Convenience assembly for the TaskContract-native lane. The public
-  entrypoint lives in `missionforge.piworker_runtime` and package root exports;
+  factory lives in `missionforge.piworker_runtime` and the package root;
   `missionforge.adapters.task_contract_runtime` remains a compatibility import.
   It packages an `AgenticFlowRunner` with PiWorker-backed executor and judge
   nodes while keeping adapter internals out of the root API.

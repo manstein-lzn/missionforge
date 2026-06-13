@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,8 @@ from ..contracts import (
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult
 from ..runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
+from ..runtime_control import CapabilityGrant, SandboxMode, SandboxProfile, create_capability_grant
+from ..task_contract import PermissionManifest
 from .pi_agent_provider_config import resolve_pi_agent_provider_environment
 
 
@@ -135,6 +138,8 @@ class PiAgentRuntimeInput:
     savepoints_ref: str
     attempt_dir_ref: str
     permission_manifest: Mapping[str, Any]
+    capability_grant: Mapping[str, Any]
+    sandbox_profile: Mapping[str, Any]
     call_spec: PiAgentCallSpec
     config: "PiAgentRuntimeConfig"
     schema_version: str = PI_AGENT_INPUT_SCHEMA_VERSION
@@ -148,10 +153,21 @@ class PiAgentRuntimeInput:
         permission_manifest: Mapping[str, Any],
         config: "PiAgentRuntimeConfig",
         call_spec: PiAgentCallSpec | None = None,
+        capability_grant: Mapping[str, Any] | None = None,
+        sandbox_profile: Mapping[str, Any] | None = None,
     ) -> "PiAgentRuntimeInput":
         call.validate()
         spec = call_spec or PiAgentCallSpec.from_call(call)
         spec.validate()
+        if capability_grant is None or sandbox_profile is None:
+            generated_grant, generated_profile = _runtime_authority_payloads(
+                call,
+                refs=refs,
+                permission_manifest=permission_manifest,
+                timeout_seconds=config.timeout_seconds,
+            )
+            capability_grant = capability_grant or generated_grant
+            sandbox_profile = sandbox_profile or generated_profile
         runtime_input = cls(
             piworker_call=call,
             input_ref=validate_ref(refs["input"], "pi_agent_runtime_input.input_ref"),
@@ -162,6 +178,8 @@ class PiAgentRuntimeInput:
             savepoints_ref=validate_ref(refs["savepoints"], "pi_agent_runtime_input.savepoints_ref"),
             attempt_dir_ref=validate_ref(refs["attempt_dir"], "pi_agent_runtime_input.attempt_dir_ref"),
             permission_manifest=permission_manifest,
+            capability_grant=capability_grant,
+            sandbox_profile=sandbox_profile,
             call_spec=spec,
             config=config,
         )
@@ -184,7 +202,24 @@ class PiAgentRuntimeInput:
             "attempt_dir_ref",
         ):
             validate_ref(getattr(self, field_name), f"pi_agent_runtime_input.{field_name}")
-        ensure_json_value(require_mapping(self.permission_manifest, "pi_agent_runtime_input.permission_manifest"), "pi_agent_runtime_input.permission_manifest")
+        ensure_json_value(
+            require_mapping(self.permission_manifest, "pi_agent_runtime_input.permission_manifest"),
+            "pi_agent_runtime_input.permission_manifest",
+        )
+        ensure_json_value(
+            require_mapping(self.capability_grant, "pi_agent_runtime_input.capability_grant"),
+            "pi_agent_runtime_input.capability_grant",
+        )
+        ensure_json_value(
+            require_mapping(self.sandbox_profile, "pi_agent_runtime_input.sandbox_profile"),
+            "pi_agent_runtime_input.sandbox_profile",
+        )
+        _validate_runtime_authority(
+            call=self.piworker_call,
+            permission_manifest=PermissionManifest.from_dict(self.permission_manifest),
+            capability_grant=CapabilityGrant.from_dict(self.capability_grant),
+            sandbox_profile=SandboxProfile.from_dict(self.sandbox_profile),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -206,6 +241,14 @@ class PiAgentRuntimeInput:
             "permission_manifest": ensure_json_value(
                 dict(self.permission_manifest),
                 "pi_agent_runtime_input.permission_manifest",
+            ),
+            "capability_grant": ensure_json_value(
+                dict(self.capability_grant),
+                "pi_agent_runtime_input.capability_grant",
+            ),
+            "sandbox_profile": ensure_json_value(
+                dict(self.sandbox_profile),
+                "pi_agent_runtime_input.sandbox_profile",
             ),
             "runtime": {
                 "runtime_name": self.config.runtime_name,
@@ -715,6 +758,9 @@ class PiAgentRuntimeAdapter:
         )
 
         input_payload = self._build_input_payload(call, spec, refs)
+        _write_json(_resolve_workspace_ref(root, refs["workspace_policy"]), _runtime_workspace_policy_payload(spec, refs))
+        _write_json(_resolve_workspace_ref(root, refs["permission_manifest"]), input_payload["permission_manifest"])  # type: ignore[index]
+        _write_json(_resolve_workspace_ref(root, refs["sandbox_profile"]), input_payload["sandbox_profile"])  # type: ignore[index]
         input_path = _resolve_workspace_ref(root, refs["input"])
         _write_json(input_path, input_payload)
         event_refs = [
@@ -871,10 +917,11 @@ class PiAgentRuntimeAdapter:
         call_spec: PiAgentCallSpec,
         refs: Mapping[str, str],
     ) -> dict[str, Any]:
+        permission_manifest = _permission_manifest_payload(call_spec, workspace_policy_ref=refs["workspace_policy"])
         runtime_input = PiAgentRuntimeInput.from_call(
             call,
             refs=refs,
-            permission_manifest=_permission_manifest_payload(call_spec),
+            permission_manifest=permission_manifest,
             config=self.config,
             call_spec=call_spec,
         )
@@ -1318,6 +1365,10 @@ def _pi_agent_refs(call_id: str) -> dict[str, str]:
         "events": f"{attempt_dir}/pi_agent_events.jsonl",
         "metrics": f"{attempt_dir}/pi_agent_metrics.json",
         "savepoints": f"{attempt_dir}/pi_agent_savepoints.jsonl",
+        "workspace_policy": f"{attempt_dir}/runtime_workspace_policy.json",
+        "permission_manifest": f"{attempt_dir}/runtime_permission_manifest.json",
+        "sandbox_profile": f"{attempt_dir}/sandbox_profile.json",
+        "workspace_view": f"{attempt_dir}/workspace_view",
         "report": f"{attempt_dir}/pi_agent_execution_report.json",
     }
 
@@ -1328,7 +1379,7 @@ def _reject_outputs_outside_scope(spec: PiAgentCallSpec) -> None:
             raise ContractValidationError(f"PI Agent runtime output outside allowed scope: {output_ref}")
 
 
-def _permission_manifest_payload(spec: PiAgentCallSpec) -> dict[str, Any]:
+def _permission_manifest_payload(spec: PiAgentCallSpec, *, workspace_policy_ref: str | None = None) -> dict[str, Any]:
     readable_refs = _dedupe_refs([
         *spec.visible_refs,
         *spec.allowed_scope,
@@ -1337,7 +1388,7 @@ def _permission_manifest_payload(spec: PiAgentCallSpec) -> dict[str, Any]:
     return {
         "manifest_id": f"{spec.call_id}-pi-runtime-permissions",
         "schema_version": "permission_manifest.v1",
-        "workspace_policy_ref": None,
+        "workspace_policy_ref": workspace_policy_ref,
         "readable_refs": readable_refs,
         "writable_refs": _dedupe_refs(list(spec.allowed_scope)),
         "denied_refs": [],
@@ -1347,6 +1398,93 @@ def _permission_manifest_payload(spec: PiAgentCallSpec) -> dict[str, Any]:
         "secret_ref": None,
         "unsupported_hard_policies": [],
     }
+
+
+def _runtime_workspace_policy_payload(spec: PiAgentCallSpec, refs: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "policy_id": f"{spec.call_id}-pi-runtime-workspace-policy",
+        "schema_version": "workspace_policy.v1",
+        "workspace_root_ref": validate_ref(refs["workspace_view"], "pi_agent_refs.workspace_view"),
+        "input_refs": _dedupe_refs(list(spec.visible_refs)),
+        "artifact_root_refs": _dedupe_refs(list(spec.allowed_scope)),
+        "scratch_root_refs": [validate_ref(refs["attempt_dir"], "pi_agent_refs.attempt_dir")],
+        "denied_refs": [],
+    }
+
+
+def _runtime_authority_payloads(
+    call: PiWorkerCall,
+    *,
+    refs: Mapping[str, str],
+    permission_manifest: Mapping[str, Any],
+    timeout_seconds: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = PermissionManifest.from_dict(permission_manifest)
+    workspace_policy_ref = manifest.workspace_policy_ref or validate_ref(
+        refs["workspace_policy"],
+        "pi_agent_refs.workspace_policy",
+    )
+    permission_manifest_ref = validate_ref(refs["permission_manifest"], "pi_agent_refs.permission_manifest")
+    sandbox_profile = SandboxProfile(
+        profile_id=f"{call.call_id}-pi-runtime-sandbox",
+        mode=SandboxMode.BUBBLEWRAP,
+        workspace_root_ref=validate_ref(refs["workspace_view"], "pi_agent_refs.workspace_view"),
+        readable_refs=list(manifest.readable_refs),
+        writable_refs=list(manifest.writable_refs),
+        denied_refs=list(manifest.denied_refs),
+        network_enabled=manifest.network_policy.value == "enabled",
+        env_allowlist=list(manifest.env_allowlist),
+        command_allowlist=list(manifest.allowed_commands),
+        resource_budget={"timeout_seconds": timeout_seconds},
+    )
+    now = datetime.now(timezone.utc)
+    grant = create_capability_grant(
+        grant_id=f"{call.call_id}-pi-runtime-grant",
+        role=call.role.value,
+        contract_hash=call.contract_hash,
+        workspace_policy_ref=workspace_policy_ref,
+        permission_manifest_ref=permission_manifest_ref,
+        workspace_view_ref=sandbox_profile.workspace_root_ref,
+        sandbox_profile_ref=validate_ref(refs["sandbox_profile"], "pi_agent_refs.sandbox_profile"),
+        issued_by="missionforge.pi_agent_runtime_adapter",
+        issued_at=now.isoformat(),
+        expires_at=(now + timedelta(seconds=max(timeout_seconds, 1) + 60)).isoformat(),
+        metadata={
+            "call_id": call.call_id,
+            "runtime": "missionforge.pi_agent_runtime",
+            "source_permission_manifest_ref": call.permission_manifest_ref,
+        },
+    )
+    return grant.to_dict(), sandbox_profile.to_dict()
+
+
+def _validate_runtime_authority(
+    *,
+    call: PiWorkerCall,
+    permission_manifest: PermissionManifest,
+    capability_grant: CapabilityGrant,
+    sandbox_profile: SandboxProfile,
+) -> None:
+    if capability_grant.role != call.role.value:
+        raise ContractValidationError("capability_grant.role must match PiWorkerCall role")
+    if capability_grant.contract_hash != call.contract_hash:
+        raise ContractValidationError("capability_grant.contract_hash must match PiWorkerCall contract_hash")
+    if capability_grant.workspace_view_ref != sandbox_profile.workspace_root_ref:
+        raise ContractValidationError("capability_grant.workspace_view_ref must match sandbox_profile.workspace_root_ref")
+    if capability_grant.revoked_at is not None:
+        raise ContractValidationError("capability_grant must not be revoked")
+    if not capability_grant.is_active():
+        raise ContractValidationError("capability_grant must be active")
+    _require_same_refs(sandbox_profile.readable_refs, permission_manifest.readable_refs, "sandbox_profile.readable_refs")
+    _require_same_refs(sandbox_profile.writable_refs, permission_manifest.writable_refs, "sandbox_profile.writable_refs")
+    _require_same_refs(sandbox_profile.denied_refs, permission_manifest.denied_refs, "sandbox_profile.denied_refs")
+    if sandbox_profile.command_allowlist != permission_manifest.allowed_commands:
+        raise ContractValidationError("sandbox_profile.command_allowlist must match permission_manifest.allowed_commands")
+    if sandbox_profile.env_allowlist != permission_manifest.env_allowlist:
+        raise ContractValidationError("sandbox_profile.env_allowlist must match permission_manifest.env_allowlist")
+    expected_network_enabled = permission_manifest.network_policy.value == "enabled"
+    if sandbox_profile.network_enabled != expected_network_enabled:
+        raise ContractValidationError("sandbox_profile.network_enabled must match permission_manifest.network_policy")
 
 
 def _validate_call_spec_for_call(spec: PiAgentCallSpec, call: PiWorkerCall) -> None:

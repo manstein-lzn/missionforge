@@ -25,6 +25,9 @@ for the repaired artifact roots.
 Then bridge the repair result back to an independent judge:
 
 ```python
+from missionforge.piworker_runtime import run_repair_directive_with_default_piworker
+from missionforge.agentic_repair_controller import build_repair_rejudge_packet
+
 call_result = run_repair_directive_with_default_piworker(
     directive,
     workspace=run_root,
@@ -51,6 +54,9 @@ revision output root.
 Then load the draft as a proposal, not as new authority:
 
 ```python
+from missionforge.agentic_revision_controller import load_revision_draft_contract
+from missionforge.piworker_runtime import run_revision_draft_with_default_piworker
+
 call_result = run_revision_draft_with_default_piworker(
     pending,
     workspace=run_root,

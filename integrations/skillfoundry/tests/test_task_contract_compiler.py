@@ -7,21 +7,27 @@ import unittest
 from typing import Any, cast
 
 from missionforge.contracts import ContractValidationError
-from missionforge import (
+from missionforge.agent_packets import (
     AgentExecutionPacket,
     AgentExecutionReport,
     AgentExecutionStatus,
-    AgenticFlowRunner,
-    AgenticFlowStatus,
-    AgentWorkspace,
     HardCheckStatus,
     JudgePacket,
     JudgeReport,
     JudgeReportDecision,
+)
+from missionforge.agentic_flow import (
+    AgentWorkspace,
+    AgenticFlowRunner,
+    AgenticFlowStatus,
+)
+from missionforge.product_integration import (
     ProductCompileStatus,
     ProductTaskContractCompileResult,
-    TaskContract,
     TaskContractProductIntegration,
+)
+from missionforge.task_contract import (
+    TaskContract,
 )
 from missionforge.frontdesk import (
     FrontDeskIntentBundle,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 
-from missionforge import FrontDesk
+from missionforge.frontdesk import FrontDesk
 from missionforge.frontdesk.scout import WorkspaceScout
 
 
