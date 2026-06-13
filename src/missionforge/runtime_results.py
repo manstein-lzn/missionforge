@@ -58,7 +58,7 @@ class ExecutionReport:
     """Refs-only execution report for one PiWorker call."""
 
     report_id: str
-    work_unit_id: str
+    call_id: str
     status: str
     produced_artifacts: list[str] = field(default_factory=list)
     changed_refs: list[str] = field(default_factory=list)
@@ -71,7 +71,7 @@ class ExecutionReport:
         data = require_mapping(payload, "execution_report")
         report = cls(
             report_id=require_non_empty_str(data.get("report_id"), "execution_report.report_id"),
-            work_unit_id=require_non_empty_str(data.get("work_unit_id"), "execution_report.work_unit_id"),
+            call_id=require_non_empty_str(data.get("call_id"), "execution_report.call_id"),
             status=require_non_empty_str(data.get("status"), "execution_report.status"),
             produced_artifacts=require_str_list(data.get("produced_artifacts", []), "execution_report.produced_artifacts"),
             changed_refs=require_str_list(data.get("changed_refs", []), "execution_report.changed_refs"),
@@ -84,7 +84,7 @@ class ExecutionReport:
 
     def validate(self) -> None:
         require_non_empty_str(self.report_id, "execution_report.report_id")
-        require_non_empty_str(self.work_unit_id, "execution_report.work_unit_id")
+        require_non_empty_str(self.call_id, "execution_report.call_id")
         require_non_empty_str(self.status, "execution_report.status")
         for ref in self.produced_artifacts:
             validate_ref(ref, "execution_report.produced_artifacts[]")
@@ -99,7 +99,7 @@ class ExecutionReport:
         self.validate()
         return {
             "report_id": self.report_id,
-            "work_unit_id": self.work_unit_id,
+            "call_id": self.call_id,
             "status": self.status,
             "produced_artifacts": list(self.produced_artifacts),
             "changed_refs": list(self.changed_refs),

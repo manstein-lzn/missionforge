@@ -241,7 +241,7 @@ class SkillFoundryLiveDogfoodTests(unittest.TestCase):
                     f"{run_ref}/attempts/{call_id}/pi_agent_output.json",
                     {
                         "schema_version": "missionforge.pi_agent_runtime_output.v1",
-                        "work_unit_id": call_id,
+                        "call_id": call_id,
                         "status": "failed",
                     },
                 )

@@ -27,7 +27,7 @@ test("direct faux runner writes comparable safe artifacts without runtime-contra
     try {
       const parsed = parseDirectRuntimeInput(input);
       const systemPrompt = buildDirectSystemPrompt(parsed);
-      for (const forbidden of ["Work unit", "PiAgentRuntimeContract", "MissionIR", "FrontDesk", "ProductGate", "verifier"]) {
+      for (const forbidden of ["Work unit", "PiAgentCallSpec", "MissionIR", "FrontDesk", "ProductGate", "verifier"]) {
         assert.equal(systemPrompt.includes(forbidden), false);
       }
       await runDirectPiWorkerBenchmark(parsed, root);
@@ -81,7 +81,7 @@ test("direct prompt exposes public allowed source refs without MissionForge inte
   assert.equal(userPrompt.includes("Public source refs to inspect before writing"), true);
   assert.equal(userPrompt.includes("benchmarks/tasks/task-001/public_contract.md"), true);
   assert.equal(userPrompt.includes("skillfoundry.bundle.v1"), true);
-  assert.equal(userPrompt.includes("PiAgentRuntimeContract"), false);
+  assert.equal(userPrompt.includes("PiAgentCallSpec"), false);
   assert.equal(userPrompt.includes("MissionIR"), false);
   assert.equal(userPrompt.includes("FrontDesk"), false);
 });

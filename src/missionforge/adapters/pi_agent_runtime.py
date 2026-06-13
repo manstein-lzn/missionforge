@@ -54,14 +54,10 @@ SAFE_WORKER_CLAIM_NAMES = {"assistant_final_text_present", "worker_claim_present
 
 
 @dataclass(frozen=True)
-class PiAgentRuntimeContract:
-    """Minimal sidecar contract projected from PiWorkerCall.
+class PiAgentCallSpec:
+    """Minimal sidecar execution spec projected from PiWorkerCall."""
 
-    The Node sidecar still receives this payload under the historical
-    ``contract`` field, but the Python runtime path is PiWorkerCall-native.
-    """
-
-    work_unit_id: str
+    call_id: str
     mission_id: str
     iteration: int
     next_objective: str
@@ -79,12 +75,12 @@ class PiAgentRuntimeContract:
         iteration: int = 1,
         exit_criteria: list[str] | None = None,
         stop_conditions: list[str] | None = None,
-    ) -> "PiAgentRuntimeContract":
+    ) -> "PiAgentCallSpec":
         call.validate()
-        contract = cls(
-            work_unit_id=call.call_id,
+        call_spec = cls(
+            call_id=call.call_id,
             mission_id=call.contract_id,
-            iteration=require_int_at_least(iteration, "pi_agent_runtime_contract.iteration", 1),
+            iteration=require_int_at_least(iteration, "pi_agent_call_spec.iteration", 1),
             next_objective=call.objective,
             allowed_scope=list(call.writable_refs),
             visible_refs=_dedupe_refs(
@@ -97,24 +93,24 @@ class PiAgentRuntimeContract:
             exit_criteria=exit_criteria or ["Write all expected output refs through the PiWorker runtime."],
             stop_conditions=stop_conditions or ["Stop if the PiWorker runtime reports failed or blocked."],
         )
-        contract.validate()
-        return contract
+        call_spec.validate()
+        return call_spec
 
     def validate(self) -> None:
-        require_non_empty_str(self.work_unit_id, "pi_agent_runtime_contract.work_unit_id")
-        require_non_empty_str(self.mission_id, "pi_agent_runtime_contract.mission_id")
-        require_int_at_least(self.iteration, "pi_agent_runtime_contract.iteration", 1)
-        require_non_empty_str(self.next_objective, "pi_agent_runtime_contract.next_objective")
-        _validate_ref_list(self.allowed_scope, "pi_agent_runtime_contract.allowed_scope")
-        _validate_ref_list(self.visible_refs, "pi_agent_runtime_contract.visible_refs")
-        _validate_ref_list(self.expected_outputs, "pi_agent_runtime_contract.expected_outputs")
-        require_str_list(self.exit_criteria, "pi_agent_runtime_contract.exit_criteria")
-        require_str_list(self.stop_conditions, "pi_agent_runtime_contract.stop_conditions")
+        require_non_empty_str(self.call_id, "pi_agent_call_spec.call_id")
+        require_non_empty_str(self.mission_id, "pi_agent_call_spec.mission_id")
+        require_int_at_least(self.iteration, "pi_agent_call_spec.iteration", 1)
+        require_non_empty_str(self.next_objective, "pi_agent_call_spec.next_objective")
+        _validate_ref_list(self.allowed_scope, "pi_agent_call_spec.allowed_scope")
+        _validate_ref_list(self.visible_refs, "pi_agent_call_spec.visible_refs")
+        _validate_ref_list(self.expected_outputs, "pi_agent_call_spec.expected_outputs")
+        require_str_list(self.exit_criteria, "pi_agent_call_spec.exit_criteria")
+        require_str_list(self.stop_conditions, "pi_agent_call_spec.stop_conditions")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
         return {
-            "work_unit_id": self.work_unit_id,
+            "call_id": self.call_id,
             "mission_id": self.mission_id,
             "iteration": self.iteration,
             "next_objective": self.next_objective,
@@ -128,7 +124,7 @@ class PiAgentRuntimeContract:
 
 @dataclass(frozen=True)
 class PiAgentRuntimeInput:
-    """Direct MissionForge input contract for the Pi Agent runtime sidecar."""
+    """Direct MissionForge input spec for the Pi Agent runtime sidecar."""
 
     piworker_call: PiWorkerCall
     input_ref: str
@@ -139,7 +135,7 @@ class PiAgentRuntimeInput:
     savepoints_ref: str
     attempt_dir_ref: str
     permission_manifest: Mapping[str, Any]
-    runtime_contract: PiAgentRuntimeContract
+    call_spec: PiAgentCallSpec
     config: "PiAgentRuntimeConfig"
     schema_version: str = PI_AGENT_INPUT_SCHEMA_VERSION
 
@@ -151,11 +147,11 @@ class PiAgentRuntimeInput:
         refs: Mapping[str, str],
         permission_manifest: Mapping[str, Any],
         config: "PiAgentRuntimeConfig",
-        runtime_contract: PiAgentRuntimeContract | None = None,
+        call_spec: PiAgentCallSpec | None = None,
     ) -> "PiAgentRuntimeInput":
         call.validate()
-        contract = runtime_contract or PiAgentRuntimeContract.from_call(call)
-        contract.validate()
+        spec = call_spec or PiAgentCallSpec.from_call(call)
+        spec.validate()
         runtime_input = cls(
             piworker_call=call,
             input_ref=validate_ref(refs["input"], "pi_agent_runtime_input.input_ref"),
@@ -166,7 +162,7 @@ class PiAgentRuntimeInput:
             savepoints_ref=validate_ref(refs["savepoints"], "pi_agent_runtime_input.savepoints_ref"),
             attempt_dir_ref=validate_ref(refs["attempt_dir"], "pi_agent_runtime_input.attempt_dir_ref"),
             permission_manifest=permission_manifest,
-            runtime_contract=contract,
+            call_spec=spec,
             config=config,
         )
         runtime_input.validate()
@@ -176,8 +172,8 @@ class PiAgentRuntimeInput:
         if self.schema_version != PI_AGENT_INPUT_SCHEMA_VERSION:
             raise ContractValidationError(f"unsupported pi_agent_runtime_input.schema_version: {self.schema_version}")
         self.piworker_call.validate()
-        self.runtime_contract.validate()
-        _validate_runtime_contract_for_call(self.runtime_contract, self.piworker_call)
+        self.call_spec.validate()
+        _validate_call_spec_for_call(self.call_spec, self.piworker_call)
         for field_name in (
             "input_ref",
             "output_ref",
@@ -194,9 +190,9 @@ class PiAgentRuntimeInput:
         self.validate()
         payload = {
             "schema_version": self.schema_version,
-            "work_unit_id": self.piworker_call.call_id,
+            "call_id": self.piworker_call.call_id,
             "mission_id": self.piworker_call.contract_id,
-            "iteration": self.runtime_contract.iteration,
+            "iteration": self.call_spec.iteration,
             "workspace_root": ".",
             "attempt_dir_ref": self.attempt_dir_ref,
             "input_ref": self.input_ref,
@@ -206,7 +202,7 @@ class PiAgentRuntimeInput:
             "metrics_ref": self.metrics_ref,
             "savepoints_ref": self.savepoints_ref,
             "piworker_call": self.piworker_call.to_dict(),
-            "contract": self.runtime_contract.to_dict(),
+            "call_spec": self.call_spec.to_dict(),
             "permission_manifest": ensure_json_value(
                 dict(self.permission_manifest),
                 "pi_agent_runtime_input.permission_manifest",
@@ -380,7 +376,7 @@ class SubprocessPiAgentCommandRunner:
 
 @dataclass(frozen=True)
 class PiAgentRunResult:
-    work_unit_id: str
+    call_id: str
     status: str
     produced_artifacts: list[str] = field(default_factory=list)
     changed_refs: list[str] = field(default_factory=list)
@@ -406,7 +402,7 @@ class PiAgentRunResult:
         cls,
         payload: Mapping[str, Any],
         *,
-        default_work_unit_id: str,
+        default_call_id: str,
         default_input_ref: str,
         default_duration_ms: int,
     ) -> "PiAgentRunResult":
@@ -414,9 +410,9 @@ class PiAgentRunResult:
         if data.get("schema_version") != PI_AGENT_OUTPUT_SCHEMA_VERSION:
             raise ContractValidationError("pi_agent_run_result.schema_version is unsupported")
         result = cls(
-            work_unit_id=require_non_empty_str(
-                data.get("work_unit_id") or default_work_unit_id,
-                "pi_agent_run_result.work_unit_id",
+            call_id=require_non_empty_str(
+                data.get("call_id") or default_call_id,
+                "pi_agent_run_result.call_id",
             ),
             status=require_non_empty_str(data.get("status", "failed"), "pi_agent_run_result.status"),
             produced_artifacts=require_str_list(data.get("produced_artifacts", []), "pi_agent_run_result.produced_artifacts"),
@@ -454,7 +450,7 @@ class PiAgentRunResult:
         return result
 
     def validate(self) -> None:
-        require_non_empty_str(self.work_unit_id, "pi_agent_run_result.work_unit_id")
+        require_non_empty_str(self.call_id, "pi_agent_run_result.call_id")
         if self.status not in PI_AGENT_STATUSES:
             raise ContractValidationError(f"pi_agent_run_result.status must be one of {sorted(PI_AGENT_STATUSES)}")
         if self.verification_status not in PI_AGENT_VERIFICATION_STATUSES:
@@ -688,26 +684,26 @@ class PiAgentRuntimeAdapter:
         *,
         workspace: str | Path = ".",
         evidence_store: EvidenceLedger | None = None,
-        runtime_contract: PiAgentRuntimeContract | None = None,
+        call_spec: PiAgentCallSpec | None = None,
         exit_criteria: list[str] | None = None,
         stop_conditions: list[str] | None = None,
     ) -> WorkerAdapterResult:
         call.validate()
-        contract = runtime_contract or PiAgentRuntimeContract.from_call(
+        spec = call_spec or PiAgentCallSpec.from_call(
             call,
             exit_criteria=exit_criteria,
             stop_conditions=stop_conditions,
         )
-        contract.validate()
-        _validate_runtime_contract_for_call(contract, call)
-        if not contract.expected_outputs:
+        spec.validate()
+        _validate_call_spec_for_call(spec, call)
+        if not spec.expected_outputs:
             raise ContractValidationError("PiAgentRuntimeAdapter requires at least one expected output")
-        _reject_outputs_outside_scope(contract)
+        _reject_outputs_outside_scope(spec)
 
         store = evidence_store or InMemoryEvidenceStore()
         root = Path(workspace).resolve()
         root.mkdir(parents=True, exist_ok=True)
-        refs = _pi_agent_refs(contract.work_unit_id)
+        refs = _pi_agent_refs(spec.call_id)
         _resolve_workspace_ref(root, refs["attempt_dir"]).mkdir(parents=True, exist_ok=True)
         provider_env = resolve_pi_agent_provider_environment(
             provider_mode=self.config.provider_mode,
@@ -718,14 +714,14 @@ class PiAgentRuntimeAdapter:
             codex_home=self.codex_home,
         )
 
-        input_payload = self._build_input_payload(call, contract, refs)
+        input_payload = self._build_input_payload(call, spec, refs)
         input_path = _resolve_workspace_ref(root, refs["input"])
         _write_json(input_path, input_payload)
         event_refs = [
             _record_adapter_event(
                 store,
                 event_type="invocation_started",
-                work_unit_id=contract.work_unit_id,
+                call_id=spec.call_id,
                 payload={
                     "input_ref": refs["input"],
                     "provider_mode": self.config.provider_mode,
@@ -749,19 +745,19 @@ class PiAgentRuntimeAdapter:
 
         run_result = self._load_or_failure_result(
             root=root,
-            contract=contract,
+            spec=spec,
             refs=refs,
             duration_ms=duration_ms,
             command_result=command_result,
             env=provider_env.env,
         )
-        run_result = self._enforce_output_contract(root=root, contract=contract, refs=refs, result=run_result)
+        run_result = self._enforce_output_contract(root=root, spec=spec, refs=refs, result=run_result)
 
         event_refs.append(
             _record_adapter_event(
                 store,
                 event_type="invocation_completed" if run_result.status == "completed" else "invocation_failed",
-                work_unit_id=contract.work_unit_id,
+                call_id=spec.call_id,
                 payload={
                     "status": run_result.status,
                     "returncode": command_result.returncode,
@@ -782,7 +778,7 @@ class PiAgentRuntimeAdapter:
             _record_adapter_event(
                 store,
                 event_type="metrics_recorded",
-                work_unit_id=contract.work_unit_id,
+                call_id=spec.call_id,
                 payload={
                     "metrics_ref": run_result.metrics_ref,
                     "savepoints_ref": run_result.savepoints_ref,
@@ -797,8 +793,8 @@ class PiAgentRuntimeAdapter:
         report_ref = refs["report"]
         report_status = "completed" if run_result.status == "completed" else "failed"
         report = ExecutionReport(
-            report_id=f"R-{contract.work_unit_id}",
-            work_unit_id=contract.work_unit_id,
+            report_id=f"R-{spec.call_id}",
+            call_id=spec.call_id,
             status=report_status,
             produced_artifacts=list(run_result.produced_artifacts),
             changed_refs=_dedupe_refs([
@@ -848,7 +844,7 @@ class PiAgentRuntimeAdapter:
         _write_json(_resolve_workspace_ref(root, report_ref), report.to_dict())
 
         adapter_result = AdapterResult(
-            invocation_id=f"invoke-{contract.work_unit_id}",
+            invocation_id=f"invoke-{spec.call_id}",
             adapter_id=self.adapter_id,
             status=report_status,
             output_refs=_dedupe_refs([report_ref, refs["input"], run_result.output_ref, run_result.savepoints_ref, *run_result.produced_artifacts]),
@@ -872,15 +868,15 @@ class PiAgentRuntimeAdapter:
     def _build_input_payload(
         self,
         call: PiWorkerCall,
-        runtime_contract: PiAgentRuntimeContract,
+        call_spec: PiAgentCallSpec,
         refs: Mapping[str, str],
     ) -> dict[str, Any]:
         runtime_input = PiAgentRuntimeInput.from_call(
             call,
             refs=refs,
-            permission_manifest=_permission_manifest_payload(runtime_contract),
+            permission_manifest=_permission_manifest_payload(call_spec),
             config=self.config,
-            runtime_contract=runtime_contract,
+            call_spec=call_spec,
         )
         return runtime_input.to_dict()
 
@@ -888,7 +884,7 @@ class PiAgentRuntimeAdapter:
         self,
         *,
         root: Path,
-        contract: PiAgentRuntimeContract,
+        spec: PiAgentCallSpec,
         refs: Mapping[str, str],
         duration_ms: int,
         command_result: PiAgentCommandResult,
@@ -897,45 +893,45 @@ class PiAgentRuntimeAdapter:
         failure = _command_failure(command_result, self.config.timeout_seconds)
         output_path = _resolve_workspace_ref(root, refs["output"])
         if failure is not None:
-            return _write_failure_result(output_path, contract=contract, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=failure)
+            return _write_failure_result(output_path, spec=spec, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=failure)
         if not output_path.is_file():
-            return _write_failure_result(output_path, contract=contract, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is missing: {refs['output']}")
+            return _write_failure_result(output_path, spec=spec, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is missing: {refs['output']}")
         try:
             payload = json.loads(output_path.read_text(encoding="utf-8"))
             if not isinstance(payload, Mapping):
                 raise ContractValidationError("pi-agent-runtime output artifact must be a JSON object")
             return PiAgentRunResult.from_dict(
                 payload,
-                default_work_unit_id=contract.work_unit_id,
+                default_call_id=spec.call_id,
                 default_input_ref=refs["input"],
                 default_duration_ms=duration_ms,
             )
         except Exception as exc:
-            return _write_failure_result(output_path, contract=contract, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is invalid: {exc}")
+            return _write_failure_result(output_path, spec=spec, refs=refs, duration_ms=duration_ms, command_result=command_result, env=env, failure=f"pi-agent-runtime output artifact is invalid: {exc}")
 
     def _enforce_output_contract(
         self,
         *,
         root: Path,
-        contract: PiAgentRuntimeContract,
+        spec: PiAgentCallSpec,
         refs: Mapping[str, str],
         result: PiAgentRunResult,
     ) -> PiAgentRunResult:
-        if result.work_unit_id != contract.work_unit_id:
-            return _rewrite_contract_failure(root, contract=contract, refs=refs, result=result, failure=f"pi-agent-runtime output work_unit_id mismatch: {result.work_unit_id}")
+        if result.call_id != spec.call_id:
+            return _rewrite_contract_failure(root, spec=spec, refs=refs, result=result, failure=f"pi-agent-runtime output call_id mismatch: {result.call_id}")
         for ref in result.produced_artifacts:
-            if not any(_is_within(ref, scope) for scope in contract.allowed_scope):
-                return _rewrite_contract_failure(root, contract=contract, refs=refs, result=result, failure=f"pi-agent-runtime produced artifact outside allowed scope: {ref}")
-        missing_outputs = [ref for ref in contract.expected_outputs if ref not in result.produced_artifacts]
+            if not any(_is_within(ref, scope) for scope in spec.allowed_scope):
+                return _rewrite_contract_failure(root, spec=spec, refs=refs, result=result, failure=f"pi-agent-runtime produced artifact outside allowed scope: {ref}")
+        missing_outputs = [ref for ref in spec.expected_outputs if ref not in result.produced_artifacts]
         missing_files = [ref for ref in result.produced_artifacts if not _resolve_workspace_ref(root, ref).is_file()]
         if result.status == "completed" and (missing_outputs or missing_files):
             failures = [f"expected output was not produced: {ref}" for ref in missing_outputs]
             failures.extend(f"produced artifact is missing on disk: {ref}" for ref in missing_files)
-            return _rewrite_contract_failure(root, contract=contract, refs=refs, result=result, failure="; ".join(failures))
+            return _rewrite_contract_failure(root, spec=spec, refs=refs, result=result, failure="; ".join(failures))
         if result.status in {"completed", "cancelled"} and not _resolve_workspace_ref(root, result.savepoints_ref).is_file():
             return _rewrite_contract_failure(
                 root,
-                contract=contract,
+                spec=spec,
                 refs=refs,
                 result=result,
                 failure=f"pi-agent-runtime savepoint artifact is missing: {result.savepoints_ref}",
@@ -1009,7 +1005,7 @@ def _run_setup_command(
 def _write_failure_result(
     output_path: Path,
     *,
-    contract: PiAgentRuntimeContract,
+    spec: PiAgentCallSpec,
     refs: Mapping[str, str],
     duration_ms: int,
     command_result: PiAgentCommandResult,
@@ -1017,7 +1013,7 @@ def _write_failure_result(
     failure: str,
 ) -> PiAgentRunResult:
     payload = _failure_payload(
-        contract=contract,
+        spec=spec,
         refs=refs,
         duration_ms=duration_ms,
         command_result=command_result,
@@ -1027,7 +1023,7 @@ def _write_failure_result(
     _write_json(output_path, payload)
     return PiAgentRunResult.from_dict(
         payload,
-        default_work_unit_id=contract.work_unit_id,
+        default_call_id=spec.call_id,
         default_input_ref=refs["input"],
         default_duration_ms=duration_ms,
     )
@@ -1036,14 +1032,14 @@ def _write_failure_result(
 def _rewrite_contract_failure(
     root: Path,
     *,
-    contract: PiAgentRuntimeContract,
+    spec: PiAgentCallSpec,
     refs: Mapping[str, str],
     result: PiAgentRunResult,
     failure: str,
 ) -> PiAgentRunResult:
     payload = {
         "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-        "work_unit_id": contract.work_unit_id,
+        "call_id": spec.call_id,
         "status": "failed",
         "produced_artifacts": list(result.produced_artifacts),
         "changed_refs": _dedupe_refs([*result.changed_refs, refs["output"], refs["savepoints"]]),
@@ -1052,8 +1048,8 @@ def _rewrite_contract_failure(
         "failures": _dedupe_refs([*result.failures, failure]),
         "worker_claims": list(result.worker_claims),
         "verifier_evidence": _dedupe_refs([*result.verifier_evidence, refs["output"], refs["savepoints"]]),
-        "new_unknowns": _dedupe_refs([*result.new_unknowns, *contract.expected_outputs]),
-        "recommended_next_steps": ["Inspect PI Agent runtime output contract failure before retrying."],
+        "new_unknowns": _dedupe_refs([*result.new_unknowns, *spec.expected_outputs]),
+        "recommended_next_steps": ["Inspect PI Agent runtime output spec failure before retrying."],
         "verification_status": "failed",
         "input_ref": refs["input"],
         "output_ref": refs["output"],
@@ -1068,7 +1064,7 @@ def _rewrite_contract_failure(
     _write_json(output_path, payload)
     return PiAgentRunResult.from_dict(
         payload,
-        default_work_unit_id=contract.work_unit_id,
+        default_call_id=spec.call_id,
         default_input_ref=refs["input"],
         default_duration_ms=result.duration_ms,
     )
@@ -1076,7 +1072,7 @@ def _rewrite_contract_failure(
 
 def _failure_payload(
     *,
-    contract: PiAgentRuntimeContract,
+    spec: PiAgentCallSpec,
     refs: Mapping[str, str],
     duration_ms: int,
     command_result: PiAgentCommandResult,
@@ -1089,7 +1085,7 @@ def _failure_payload(
     ]
     return {
         "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-        "work_unit_id": contract.work_unit_id,
+        "call_id": spec.call_id,
         "status": "failed",
         "produced_artifacts": [],
         "changed_refs": [refs["output"], refs["savepoints"]],
@@ -1098,7 +1094,7 @@ def _failure_payload(
         "failures": [*failures, *stream_failures],
         "worker_claims": [],
         "verifier_evidence": [refs["output"], refs["savepoints"]],
-        "new_unknowns": list(contract.expected_outputs),
+        "new_unknowns": list(spec.expected_outputs),
         "recommended_next_steps": ["Inspect PI Agent runtime failure before retrying."],
         "verification_status": "failed",
         "input_ref": refs["input"],
@@ -1120,13 +1116,13 @@ def _record_adapter_event(
     store: EvidenceLedger,
     *,
     event_type: str,
-    work_unit_id: str,
+    call_id: str,
     payload: Mapping[str, Any],
     source_refs: list[str] | None = None,
     trust_level: EvidenceTrustLevel = EvidenceTrustLevel.ARTIFACT_REF,
 ) -> str:
     event_payload = {
-        "work_unit_id": work_unit_id,
+        "call_id": call_id,
         "event_type": event_type,
         **ensure_json_value(require_mapping(payload, "pi_agent_adapter_event.payload"), "pi_agent_adapter_event.payload"),
     }
@@ -1311,9 +1307,9 @@ def _agent_node_workspace_root(workspace: object, *, fallback: str | Path) -> Pa
     return Path(fallback).resolve()
 
 
-def _pi_agent_refs(work_unit_id: str) -> dict[str, str]:
-    safe_work_unit_id = require_non_empty_str(work_unit_id, "work_unit_id")
-    attempt_dir = f"attempts/{safe_work_unit_id}"
+def _pi_agent_refs(call_id: str) -> dict[str, str]:
+    safe_call_id = require_non_empty_str(call_id, "call_id")
+    attempt_dir = f"attempts/{safe_call_id}"
     return {
         "attempt_dir": attempt_dir,
         "input": f"{attempt_dir}/pi_agent_input.json",
@@ -1326,24 +1322,24 @@ def _pi_agent_refs(work_unit_id: str) -> dict[str, str]:
     }
 
 
-def _reject_outputs_outside_scope(contract: PiAgentRuntimeContract) -> None:
-    for output_ref in contract.expected_outputs:
-        if not any(_is_within(output_ref, scope) for scope in contract.allowed_scope):
+def _reject_outputs_outside_scope(spec: PiAgentCallSpec) -> None:
+    for output_ref in spec.expected_outputs:
+        if not any(_is_within(output_ref, scope) for scope in spec.allowed_scope):
             raise ContractValidationError(f"PI Agent runtime output outside allowed scope: {output_ref}")
 
 
-def _permission_manifest_payload(contract: PiAgentRuntimeContract) -> dict[str, Any]:
+def _permission_manifest_payload(spec: PiAgentCallSpec) -> dict[str, Any]:
     readable_refs = _dedupe_refs([
-        *contract.visible_refs,
-        *contract.allowed_scope,
-        *[_parent_ref(ref) for ref in contract.expected_outputs],
+        *spec.visible_refs,
+        *spec.allowed_scope,
+        *[_parent_ref(ref) for ref in spec.expected_outputs],
     ])
     return {
-        "manifest_id": f"{contract.work_unit_id}-pi-runtime-permissions",
+        "manifest_id": f"{spec.call_id}-pi-runtime-permissions",
         "schema_version": "permission_manifest.v1",
         "workspace_policy_ref": None,
         "readable_refs": readable_refs,
-        "writable_refs": _dedupe_refs(list(contract.allowed_scope)),
+        "writable_refs": _dedupe_refs(list(spec.allowed_scope)),
         "denied_refs": [],
         "allowed_commands": [],
         "network_policy": "disabled",
@@ -1353,20 +1349,20 @@ def _permission_manifest_payload(contract: PiAgentRuntimeContract) -> dict[str, 
     }
 
 
-def _validate_runtime_contract_for_call(contract: PiAgentRuntimeContract, call: PiWorkerCall) -> None:
-    if contract.work_unit_id != call.call_id:
-        raise ContractValidationError("pi_agent_runtime_contract id must match PiWorkerCall call_id")
-    if contract.mission_id != call.contract_id:
-        raise ContractValidationError("pi_agent_runtime_contract mission must match PiWorkerCall contract_id")
+def _validate_call_spec_for_call(spec: PiAgentCallSpec, call: PiWorkerCall) -> None:
+    if spec.call_id != call.call_id:
+        raise ContractValidationError("pi_agent_call_spec id must match PiWorkerCall call_id")
+    if spec.mission_id != call.contract_id:
+        raise ContractValidationError("pi_agent_call_spec mission must match PiWorkerCall contract_id")
     expected_visible_refs = _dedupe_refs(
         [
             *call.visible_refs,
             *([call.permission_manifest_ref] if call.permission_manifest_ref else []),
         ]
     )
-    _require_same_refs(contract.visible_refs, expected_visible_refs, "pi_agent_runtime_contract.visible_refs")
-    _require_same_refs(contract.allowed_scope, call.writable_refs, "pi_agent_runtime_contract.allowed_scope")
-    _require_same_refs(contract.expected_outputs, call.expected_output_refs, "pi_agent_runtime_contract.expected_outputs")
+    _require_same_refs(spec.visible_refs, expected_visible_refs, "pi_agent_call_spec.visible_refs")
+    _require_same_refs(spec.allowed_scope, call.writable_refs, "pi_agent_call_spec.allowed_scope")
+    _require_same_refs(spec.expected_outputs, call.expected_output_refs, "pi_agent_call_spec.expected_outputs")
 
 
 def _require_same_refs(actual: list[str], expected: list[str], field_name: str) -> None:

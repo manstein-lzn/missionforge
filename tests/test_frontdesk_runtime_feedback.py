@@ -20,7 +20,6 @@ from missionforge.frontdesk.runtime_feedback import (
     recommend_from_verification_result,
     unsupported_validator_feedback,
 )
-from missionforge.revision import MissionRevisionRequest, MissionRevisionWorkflow
 from missionforge.runtime_results import MissionResult
 
 
@@ -82,16 +81,8 @@ class FrontDeskRuntimeFeedbackTests(unittest.TestCase):
         self.assertEqual(recommendation.authority_required, AuthorityRequirement.REVIEWER)
         self.assertFalse(recommendation.can_auto_approve_revision)
 
-        request = recommendation.draft_revision_request(
-            mission_run_id="run-sample",
-            base_contract_ref="mission/frozen_contract.json",
-            base_contract_hash="sha256:current",
-            request_ref="runs/run-sample/revisions/frontdesk-revision-000001/request.json",
-        )
-        self.assertIsInstance(request, MissionRevisionRequest)
-        self.assertEqual(request.authority_required, AuthorityRequirement.REVIEWER)
-        decision = MissionRevisionWorkflow().decide(request)
-        self.assertEqual(decision.decision, "needs_review")
+        self.assertIn("TaskContract revision controller", recommendation.next_steps[0])
+        self.assertIn("explicit revision approval", recommendation.next_steps[1])
 
     def test_unsupported_validator_routes_to_validator_extension(self) -> None:
         result = VerificationResult(

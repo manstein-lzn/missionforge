@@ -12,66 +12,9 @@ from .contracts import ContractValidationError, ensure_json_value, require_bool,
 
 
 MISSION_RUN_SCHEMA_VERSION = "missionforge.mission_run.v1"
-RUNTIME_ATTEMPT_SCHEMA_VERSION = "missionforge.runtime_attempt.v1"
+PIWORKER_ATTEMPT_SCHEMA_VERSION = "missionforge.piworker_attempt.v1"
 ARTIFACT_HYGIENE_SCHEMA_VERSION = "missionforge.artifact_hygiene.v1"
 SUPPORTED_RESUME_BOUNDARY = "after_completed_turn"
-
-
-@dataclass(frozen=True)
-class MissionRunState:
-    """Refs-only runtime state snapshot."""
-
-    mission_id: str
-    status: str
-    contract_hash: str
-    work_unit_refs: list[str] = field(default_factory=list)
-    evidence_refs: list[str] = field(default_factory=list)
-    artifact_refs: list[str] = field(default_factory=list)
-    failed_constraint_ids: list[str] = field(default_factory=list)
-    latest_decision: str = ""
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "MissionRunState":
-        data = require_mapping(payload, "mission_run_state")
-        state = cls(
-            mission_id=require_non_empty_str(data.get("mission_id"), "mission_run_state.mission_id"),
-            status=require_non_empty_str(data.get("status"), "mission_run_state.status"),
-            contract_hash=require_non_empty_str(data.get("contract_hash"), "mission_run_state.contract_hash"),
-            work_unit_refs=require_str_list(data.get("work_unit_refs", []), "mission_run_state.work_unit_refs"),
-            evidence_refs=require_str_list(data.get("evidence_refs", []), "mission_run_state.evidence_refs"),
-            artifact_refs=require_str_list(data.get("artifact_refs", []), "mission_run_state.artifact_refs"),
-            failed_constraint_ids=require_str_list(
-                data.get("failed_constraint_ids", []),
-                "mission_run_state.failed_constraint_ids",
-            ),
-            latest_decision=data.get("latest_decision", ""),
-        )
-        state.validate()
-        return state
-
-    def validate(self) -> None:
-        require_non_empty_str(self.mission_id, "mission_run_state.mission_id")
-        require_non_empty_str(self.status, "mission_run_state.status")
-        require_non_empty_str(self.contract_hash, "mission_run_state.contract_hash")
-        require_str_list(self.work_unit_refs, "mission_run_state.work_unit_refs")
-        require_str_list(self.evidence_refs, "mission_run_state.evidence_refs")
-        require_str_list(self.artifact_refs, "mission_run_state.artifact_refs")
-        require_str_list(self.failed_constraint_ids, "mission_run_state.failed_constraint_ids")
-        if self.latest_decision:
-            require_non_empty_str(self.latest_decision, "mission_run_state.latest_decision")
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return {
-            "mission_id": self.mission_id,
-            "status": self.status,
-            "contract_hash": self.contract_hash,
-            "work_unit_refs": list(self.work_unit_refs),
-            "evidence_refs": list(self.evidence_refs),
-            "artifact_refs": list(self.artifact_refs),
-            "failed_constraint_ids": list(self.failed_constraint_ids),
-            "latest_decision": self.latest_decision,
-        }
 
 
 @dataclass(frozen=True)
@@ -117,11 +60,11 @@ class RuntimeSafePoint:
 
 
 @dataclass(frozen=True)
-class RuntimeAttempt:
+class PiWorkerAttempt:
     """Refs-only record for one worker dispatch."""
 
     attempt_id: str
-    work_unit_id: str
+    call_id: str
     attempt_kind: str
     worker: str
     input_ref: str
@@ -136,62 +79,62 @@ class RuntimeAttempt:
     artifact_refs: list[str] = field(default_factory=list)
     failure_category: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
-    schema_version: str = RUNTIME_ATTEMPT_SCHEMA_VERSION
+    schema_version: str = PIWORKER_ATTEMPT_SCHEMA_VERSION
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "RuntimeAttempt":
-        data = require_mapping(payload, "runtime_attempt")
-        if data.get("schema_version") != RUNTIME_ATTEMPT_SCHEMA_VERSION:
-            raise ContractValidationError("runtime_attempt.schema_version is unsupported")
+    def from_dict(cls, payload: Mapping[str, Any]) -> "PiWorkerAttempt":
+        data = require_mapping(payload, "piworker_attempt")
+        if data.get("schema_version") != PIWORKER_ATTEMPT_SCHEMA_VERSION:
+            raise ContractValidationError("piworker_attempt.schema_version is unsupported")
         attempt = cls(
-            attempt_id=require_non_empty_str(data.get("attempt_id"), "runtime_attempt.attempt_id"),
-            work_unit_id=require_non_empty_str(data.get("work_unit_id"), "runtime_attempt.work_unit_id"),
-            attempt_kind=require_non_empty_str(data.get("attempt_kind"), "runtime_attempt.attempt_kind"),
-            worker=require_non_empty_str(data.get("worker"), "runtime_attempt.worker"),
-            input_ref=validate_ref(data.get("input_ref"), "runtime_attempt.input_ref"),
-            output_ref=validate_ref(data.get("output_ref"), "runtime_attempt.output_ref"),
-            report_ref=validate_ref(data.get("report_ref"), "runtime_attempt.report_ref"),
-            savepoints_ref=validate_ref(data.get("savepoints_ref"), "runtime_attempt.savepoints_ref"),
-            status=require_non_empty_str(data.get("status"), "runtime_attempt.status"),
+            attempt_id=require_non_empty_str(data.get("attempt_id"), "piworker_attempt.attempt_id"),
+            call_id=require_non_empty_str(data.get("call_id"), "piworker_attempt.call_id"),
+            attempt_kind=require_non_empty_str(data.get("attempt_kind"), "piworker_attempt.attempt_kind"),
+            worker=require_non_empty_str(data.get("worker"), "piworker_attempt.worker"),
+            input_ref=validate_ref(data.get("input_ref"), "piworker_attempt.input_ref"),
+            output_ref=validate_ref(data.get("output_ref"), "piworker_attempt.output_ref"),
+            report_ref=validate_ref(data.get("report_ref"), "piworker_attempt.report_ref"),
+            savepoints_ref=validate_ref(data.get("savepoints_ref"), "piworker_attempt.savepoints_ref"),
+            status=require_non_empty_str(data.get("status"), "piworker_attempt.status"),
             verification_status=require_non_empty_str(
                 data.get("verification_status"),
-                "runtime_attempt.verification_status",
+                "piworker_attempt.verification_status",
             ),
-            decision=require_non_empty_str(data.get("decision"), "runtime_attempt.decision"),
-            created_at=require_non_empty_str(data.get("created_at"), "runtime_attempt.created_at"),
-            evidence_refs=require_str_list(data.get("evidence_refs", []), "runtime_attempt.evidence_refs"),
-            artifact_refs=require_str_list(data.get("artifact_refs", []), "runtime_attempt.artifact_refs"),
+            decision=require_non_empty_str(data.get("decision"), "piworker_attempt.decision"),
+            created_at=require_non_empty_str(data.get("created_at"), "piworker_attempt.created_at"),
+            evidence_refs=require_str_list(data.get("evidence_refs", []), "piworker_attempt.evidence_refs"),
+            artifact_refs=require_str_list(data.get("artifact_refs", []), "piworker_attempt.artifact_refs"),
             failure_category=data.get("failure_category", ""),
-            metrics=require_mapping(data.get("metrics", {}), "runtime_attempt.metrics"),
+            metrics=require_mapping(data.get("metrics", {}), "piworker_attempt.metrics"),
         )
         attempt.validate()
         return attempt
 
     def validate(self) -> None:
-        require_non_empty_str(self.attempt_id, "runtime_attempt.attempt_id")
-        require_non_empty_str(self.work_unit_id, "runtime_attempt.work_unit_id")
-        require_non_empty_str(self.attempt_kind, "runtime_attempt.attempt_kind")
-        require_non_empty_str(self.worker, "runtime_attempt.worker")
-        validate_ref(self.input_ref, "runtime_attempt.input_ref")
-        validate_ref(self.output_ref, "runtime_attempt.output_ref")
-        validate_ref(self.report_ref, "runtime_attempt.report_ref")
-        validate_ref(self.savepoints_ref, "runtime_attempt.savepoints_ref")
-        require_non_empty_str(self.status, "runtime_attempt.status")
-        require_non_empty_str(self.verification_status, "runtime_attempt.verification_status")
-        require_non_empty_str(self.decision, "runtime_attempt.decision")
-        require_non_empty_str(self.created_at, "runtime_attempt.created_at")
-        require_str_list(self.evidence_refs, "runtime_attempt.evidence_refs")
-        require_str_list(self.artifact_refs, "runtime_attempt.artifact_refs")
+        require_non_empty_str(self.attempt_id, "piworker_attempt.attempt_id")
+        require_non_empty_str(self.call_id, "piworker_attempt.call_id")
+        require_non_empty_str(self.attempt_kind, "piworker_attempt.attempt_kind")
+        require_non_empty_str(self.worker, "piworker_attempt.worker")
+        validate_ref(self.input_ref, "piworker_attempt.input_ref")
+        validate_ref(self.output_ref, "piworker_attempt.output_ref")
+        validate_ref(self.report_ref, "piworker_attempt.report_ref")
+        validate_ref(self.savepoints_ref, "piworker_attempt.savepoints_ref")
+        require_non_empty_str(self.status, "piworker_attempt.status")
+        require_non_empty_str(self.verification_status, "piworker_attempt.verification_status")
+        require_non_empty_str(self.decision, "piworker_attempt.decision")
+        require_non_empty_str(self.created_at, "piworker_attempt.created_at")
+        require_str_list(self.evidence_refs, "piworker_attempt.evidence_refs")
+        require_str_list(self.artifact_refs, "piworker_attempt.artifact_refs")
         if self.failure_category:
-            require_non_empty_str(self.failure_category, "runtime_attempt.failure_category")
-        ensure_json_value(self.metrics, "runtime_attempt.metrics")
+            require_non_empty_str(self.failure_category, "piworker_attempt.failure_category")
+        ensure_json_value(self.metrics, "piworker_attempt.metrics")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
         return {
             "schema_version": self.schema_version,
             "attempt_id": self.attempt_id,
-            "work_unit_id": self.work_unit_id,
+            "call_id": self.call_id,
             "attempt_kind": self.attempt_kind,
             "worker": self.worker,
             "input_ref": self.input_ref,
@@ -205,7 +148,7 @@ class RuntimeAttempt:
             "evidence_refs": list(self.evidence_refs),
             "artifact_refs": list(self.artifact_refs),
             "failure_category": self.failure_category,
-            "metrics": ensure_json_value(self.metrics, "runtime_attempt.metrics"),
+            "metrics": ensure_json_value(self.metrics, "piworker_attempt.metrics"),
         }
 
 
@@ -217,7 +160,7 @@ class MissionRun:
     mission_id: str
     status: str
     current_attempt: str
-    latest_work_unit_id: str
+    latest_call_id: str
     latest_decision: str
     next_action: str
     updated_at: str
@@ -244,7 +187,7 @@ class MissionRun:
             mission_id=require_non_empty_str(data.get("mission_id"), "mission_run.mission_id"),
             status=require_non_empty_str(data.get("status"), "mission_run.status"),
             current_attempt=require_non_empty_str(data.get("current_attempt"), "mission_run.current_attempt"),
-            latest_work_unit_id=require_non_empty_str(data.get("latest_work_unit_id"), "mission_run.latest_work_unit_id"),
+            latest_call_id=require_non_empty_str(data.get("latest_call_id"), "mission_run.latest_call_id"),
             latest_decision=require_non_empty_str(data.get("latest_decision"), "mission_run.latest_decision"),
             next_action=require_non_empty_str(data.get("next_action"), "mission_run.next_action"),
             updated_at=require_non_empty_str(data.get("updated_at"), "mission_run.updated_at"),
@@ -267,7 +210,7 @@ class MissionRun:
         require_non_empty_str(self.mission_id, "mission_run.mission_id")
         require_non_empty_str(self.status, "mission_run.status")
         require_non_empty_str(self.current_attempt, "mission_run.current_attempt")
-        require_non_empty_str(self.latest_work_unit_id, "mission_run.latest_work_unit_id")
+        require_non_empty_str(self.latest_call_id, "mission_run.latest_call_id")
         require_non_empty_str(self.latest_decision, "mission_run.latest_decision")
         require_non_empty_str(self.next_action, "mission_run.next_action")
         require_non_empty_str(self.updated_at, "mission_run.updated_at")
@@ -294,7 +237,7 @@ class MissionRun:
             "mission_id": self.mission_id,
             "status": self.status,
             "current_attempt": self.current_attempt,
-            "latest_work_unit_id": self.latest_work_unit_id,
+            "latest_call_id": self.latest_call_id,
             "latest_safe_point": self.latest_safe_point.to_dict() if self.latest_safe_point else None,
             "current_contract_ref": self.current_contract_ref,
             "current_contract_hash": self.current_contract_hash,
@@ -378,20 +321,20 @@ def load_mission_run(workspace: str | Path, mission_run_id: str | None = None) -
     return MissionRun.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-def load_runtime_attempts(workspace: str | Path, mission_run_id: str) -> list[RuntimeAttempt]:
+def load_piworker_attempts(workspace: str | Path, mission_run_id: str) -> list[PiWorkerAttempt]:
     path = Path(workspace) / f"runs/{mission_run_id}/attempts.jsonl"
     if not path.is_file():
         return []
-    attempts: list[RuntimeAttempt] = []
+    attempts: list[PiWorkerAttempt] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            attempts.append(RuntimeAttempt.from_dict(json.loads(line)))
+            attempts.append(PiWorkerAttempt.from_dict(json.loads(line)))
     return attempts
 
 
 def inspect_runtime(workspace: str | Path, mission_run_id: str | None = None) -> dict[str, Any]:
     run = load_mission_run(workspace, mission_run_id)
-    attempts = load_runtime_attempts(workspace, run.mission_run_id)
+    attempts = load_piworker_attempts(workspace, run.mission_run_id)
     return {
         "schema_version": "missionforge.runtime_inspection.v1",
         "mission_run": run.to_dict(),

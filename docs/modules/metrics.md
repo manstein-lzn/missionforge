@@ -46,7 +46,6 @@ Reserved MissionForge namespaces include:
 - `missionforge.runtime`
 - `missionforge.verifier`
 - `missionforge.worker.pi_agent`
-- `missionforge.steering`
 - `missionforge.operator.cli`
 - `missionforge.operator.rpc`
 - `missionforge.store.json`

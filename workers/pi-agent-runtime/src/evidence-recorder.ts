@@ -76,7 +76,7 @@ export class EvidenceRecorder {
         schema_version: "missionforge.pi_agent_runtime_event.v1",
         event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
         created_at: new Date().toISOString(),
-        work_unit_id: this.input.work_unit_id,
+        call_id: this.input.call_id,
         event_type: event.type,
         payload: redactJson(summarizeEvent(event), this.env),
       },
@@ -108,7 +108,7 @@ export class EvidenceRecorder {
       resolveWorkspaceRef(this.workspaceRoot, this.input.metrics_ref),
       {
         schema_version: "missionforge.pi_agent_runtime_metrics.v1",
-        work_unit_id: this.input.work_unit_id,
+        call_id: this.input.call_id,
         duration_ms: durationMs,
         ...this.safeMetrics(),
       },
@@ -151,7 +151,7 @@ export class EvidenceRecorder {
         schema_version: "missionforge.pi_agent_runtime_event.v1",
         event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
         created_at: new Date().toISOString(),
-        work_unit_id: this.input.work_unit_id,
+        call_id: this.input.call_id,
         event_type: "compaction",
         payload: redactJson({
           reason,
@@ -166,7 +166,7 @@ export class EvidenceRecorder {
       resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref),
       redactJson({
         schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-        work_unit_id: this.input.work_unit_id,
+        call_id: this.input.call_id,
         turn_index: this.metrics.turn_count,
         created_at: new Date().toISOString(),
         message_ref: `${this.input.session_ref}#compact`,
@@ -249,7 +249,7 @@ export class EvidenceRecorder {
 
   private async recordFirstArtifactIfPresent(): Promise<void> {
     if (this.hasRecordedFirstArtifact) return;
-    for (const ref of this.input.contract.expected_outputs) {
+    for (const ref of this.input.call_spec.expected_outputs) {
       if (await fileExists(resolveWorkspaceRef(this.workspaceRoot, ref))) {
         this.hasRecordedFirstArtifact = true;
         this.metrics.time_to_first_artifact_ms = elapsedMs(this.startedAtMs);
@@ -263,7 +263,7 @@ export class EvidenceRecorder {
       resolveWorkspaceRef(this.workspaceRoot, this.input.savepoints_ref),
       redactJson({
         schema_version: "missionforge.pi_agent_runtime_savepoint.v1",
-        work_unit_id: this.input.work_unit_id,
+        call_id: this.input.call_id,
         turn_index: this.metrics.turn_count,
         created_at: new Date().toISOString(),
         message_ref: `${this.input.session_ref}#turn=${this.metrics.turn_count}`,

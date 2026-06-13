@@ -78,54 +78,13 @@ class AdaptiveDecision(StrEnum):
     FAIL = "fail"
 
 
-class ProposalValidationStatus(StrEnum):
-    """Result of proposal boundary validation."""
-
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
-
-
 class AuthorityRequirement(StrEnum):
-    """Authority required to accept a steering output."""
+    """Authority required for manual, review, or redesign decisions."""
 
     HARNESS = "harness"
     REVIEWER = "reviewer"
     HUMAN = "human"
     REDESIGN = "redesign"
-
-
-class SteeringProposalKind(StrEnum):
-    """Kinds of controlled steering proposal."""
-
-    NEXT_WORK_UNIT = "next_work_unit"
-    REPAIR = "repair"
-    REDESIGN = "redesign"
-    REVIEW = "review"
-    STOP = "stop"
-    ESCALATE = "escalate"
-
-
-class ObservationSignalType(StrEnum):
-    """Safe observation interpretation categories."""
-
-    ROOT_CAUSE_HYPOTHESIS = "root_cause_hypothesis"
-    RISK_HYPOTHESIS = "risk_hypothesis"
-    SCOPE_MISMATCH = "scope_mismatch"
-    MISSING_EVIDENCE = "missing_evidence"
-    REPAIR_HINT = "repair_hint"
-    REVIEW_HINT = "review_hint"
-
-
-class ContractAdjustmentChange(StrEnum):
-    """Allowed contract-adjustment request types."""
-
-    SHRINK = "shrink"
-    SPLIT = "split"
-    REORDER = "reorder"
-    PIVOT = "pivot"
-    EXPAND = "expand"
-    SPEC_REVISION = "spec_revision"
-    REVIEW_REQUIRED = "review_required"
 
 
 FORBIDDEN_RAW_FIELDS = {

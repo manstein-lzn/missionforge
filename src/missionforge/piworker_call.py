@@ -448,8 +448,8 @@ class PiWorkerCallResult:
         call.validate()
         worker_result.validate()
         report = worker_result.execution_report
-        if report.work_unit_id != call.call_id:
-            raise ContractValidationError("worker_result.execution_report.work_unit_id does not match PiWorkerCall")
+        if report.call_id != call.call_id:
+            raise ContractValidationError("worker_result.execution_report.call_id does not match PiWorkerCall")
         output_refs = list(report.produced_artifacts)
         output_ref_set = set(output_refs)
         metric_refs = _metric_refs_from_mapping(report.metrics)

@@ -7,7 +7,7 @@ import { sampleInput } from "./helpers.mjs";
 test("parseRuntimeInput accepts valid input", () => {
   const input = parseRuntimeInput(sampleInput());
   assert.equal(input.schema_version, "missionforge.pi_agent_runtime_input.v1");
-  assert.equal(input.work_unit_id, "WU-000001");
+  assert.equal(input.call_id, "WU-000001");
   assert.equal(input.piworker_call.call_id, "WU-000001");
   assert.deepEqual(input.piworker_call.expected_output_refs, ["attempts/WU-000001/artifact.txt"]);
   assert.equal(input.permission_manifest.schema_version, "permission_manifest.v1");

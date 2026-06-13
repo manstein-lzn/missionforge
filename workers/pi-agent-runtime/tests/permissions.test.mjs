@@ -241,7 +241,7 @@ test("unsupported hard policies fail before worker tools run and are reported in
     assert.equal(output.status, "failed");
     assert.equal(output.produced_artifacts.length, 0);
     assert.equal(output.failures.join("\n").includes("unsupported hard permission policies"), true);
-    await assert.rejects(() => access(join(root, input.contract.expected_outputs[0])));
+    await assert.rejects(() => access(join(root, input.call_spec.expected_outputs[0])));
   });
 });
 

@@ -113,7 +113,7 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             template_payload = json.loads(
                 (root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_TEMPLATE_REF).read_text(encoding="utf-8")
             )
-            contract_payload = json.loads(
+            call_spec_payload = json.loads(
                 (root / result.run_workspace_ref / SKILLFOUNDRY_MANIFEST_CONTRACT_REF).read_text(encoding="utf-8")
             )
 
@@ -121,9 +121,9 @@ class SkillFoundryTaskContractCompilerTests(unittest.TestCase):
             self.assertEqual(SkillBundleManifest.from_dict(manifest.to_dict()), manifest)
             self.assertEqual(manifest.bundle_id, "demo-skill")
             self.assertEqual(manifest.entrypoint, "SKILL.md")
-            self.assertEqual(contract_payload["field_contract"], template_payload)
-            self.assertTrue(contract_payload["forbidden_extra_keys"])
-            self.assertEqual(contract_payload["template_ref"], SKILLFOUNDRY_MANIFEST_TEMPLATE_REF)
+            self.assertEqual(call_spec_payload["field_contract"], template_payload)
+            self.assertTrue(call_spec_payload["forbidden_extra_keys"])
+            self.assertEqual(call_spec_payload["template_ref"], SKILLFOUNDRY_MANIFEST_TEMPLATE_REF)
             self.assertNotIn("name", template_payload)
             self.assertNotIn("description", template_payload)
 
@@ -284,8 +284,8 @@ class _SkillFoundryPiRuntimeRunner:
 
     def run(self, command, *, input_path: Path, cwd: Path, timeout_seconds: int, env) -> PiAgentCommandResult:
         self.captured_input = json.loads(input_path.read_text(encoding="utf-8"))
-        contract_payload = cast(dict[str, Any], self.captured_input["contract"])
-        expected_outputs = [str(ref) for ref in contract_payload["expected_outputs"]]
+        call_spec_payload = cast(dict[str, Any], self.captured_input["call_spec"])
+        expected_outputs = [str(ref) for ref in call_spec_payload["expected_outputs"]]
         for ref in expected_outputs:
             path = cwd / ref
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -329,7 +329,7 @@ class _SkillFoundryPiRuntimeRunner:
             json.dumps(
                 {
                     "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                    "work_unit_id": self.captured_input["work_unit_id"],
+                    "call_id": self.captured_input["call_id"],
                     "status": "completed",
                     "produced_artifacts": expected_outputs,
                     "changed_refs": [*expected_outputs, *self.extra_changed_refs],

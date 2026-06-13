@@ -5,7 +5,7 @@ from pathlib import Path
 
 from missionforge.freeze import freeze_mission
 from missionforge.ir import MissionIR
-from missionforge.state import ArtifactHygieneReport, MissionRun, RuntimeAttempt, RuntimeSafePoint
+from missionforge.state import ArtifactHygieneReport, MissionRun, PiWorkerAttempt, RuntimeSafePoint
 from tests.test_ir import sample_mission_payload
 
 
@@ -37,7 +37,7 @@ def seed_operator_run(
         root / "attempts/WU-000001/pi_agent_execution_report.json",
         {
             "report_id": "R-WU-000001",
-            "work_unit_id": "WU-000001",
+            "call_id": "WU-000001",
             "status": "completed",
             "produced_artifacts": ["package/SKILL.md"],
             "changed_refs": ["package/SKILL.md"],
@@ -46,9 +46,9 @@ def seed_operator_run(
             "metrics": {},
         },
     )
-    attempt = RuntimeAttempt(
+    attempt = PiWorkerAttempt(
         attempt_id="attempt-000001",
-        work_unit_id="WU-000001",
+        call_id="WU-000001",
         attempt_kind="initial",
         worker="pi_agent_runtime",
         input_ref="attempts/WU-000001/pi_agent_input.json",
@@ -94,7 +94,7 @@ def seed_operator_run(
         mission_id=MISSION_ID,
         status=status,
         current_attempt="attempt-000001",
-        latest_work_unit_id="WU-000001",
+        latest_call_id="WU-000001",
         latest_safe_point=RuntimeSafePoint.from_dict(safe_point) if safe_point else None,
         current_contract_ref=current_contract_ref,
         current_contract_hash=contract_hash,

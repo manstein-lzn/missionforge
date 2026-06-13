@@ -31,7 +31,7 @@ async function main(argv: string[]): Promise<number> {
         resolveWorkspaceRef(workspaceRoot, input.output_ref),
         {
           schema_version: "missionforge.pi_agent_runtime_output.v1",
-          work_unit_id: input.work_unit_id,
+          call_id: input.call_id,
           status: "failed",
           produced_artifacts: [],
           changed_refs: [input.output_ref, input.savepoints_ref],
@@ -40,7 +40,7 @@ async function main(argv: string[]): Promise<number> {
           failures: [message],
           worker_claims: [],
           verifier_evidence: [input.output_ref, input.savepoints_ref],
-          new_unknowns: input.contract.expected_outputs,
+          new_unknowns: input.call_spec.expected_outputs,
           recommended_next_steps: ["Inspect pi-agent-runtime startup failure."],
           verification_status: "failed",
           input_ref: input.input_ref,

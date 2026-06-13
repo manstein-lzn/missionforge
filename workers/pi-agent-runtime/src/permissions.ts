@@ -1,7 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import type { PermissionManifest, PiAgentRuntimeContract } from "./contract.js";
+import type { PermissionManifest, PiAgentCallSpec } from "./contract.js";
 import { PERMISSION_MANIFEST_SCHEMA_VERSION, requireRef } from "./contract.js";
 
 export const SUPPORTED_HARD_POLICIES = new Set([
@@ -69,17 +69,17 @@ export class ToolPermissionEnforcer {
   }
 }
 
-export function derivePermissionManifestFromContract(contract: PiAgentRuntimeContract): PermissionManifest {
+export function derivePermissionManifestFromCallSpec(call_spec: PiAgentCallSpec): PermissionManifest {
   const readableRefs = uniqueRefs([
-    ...contract.visible_refs,
-    ...contract.allowed_scope,
-    ...contract.expected_outputs.map(parentRef),
+    ...call_spec.visible_refs,
+    ...call_spec.allowed_scope,
+    ...call_spec.expected_outputs.map(parentRef),
   ]);
   return {
-    manifest_id: `${contract.work_unit_id}-pi-runtime-permissions`,
+    manifest_id: `${call_spec.call_id}-pi-runtime-permissions`,
     workspace_policy_ref: null,
     readable_refs: readableRefs,
-    writable_refs: uniqueRefs(contract.allowed_scope),
+    writable_refs: uniqueRefs(call_spec.allowed_scope),
     denied_refs: [],
     allowed_commands: [],
     network_policy: "disabled",

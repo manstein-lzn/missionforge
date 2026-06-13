@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractValidationError, ensure_json_value, require_mapping, validate_ref
-from .state import MissionRun, RuntimeAttempt, load_mission_run, load_runtime_attempts, mission_run_refs_for_run_id
+from .state import MissionRun, PiWorkerAttempt, load_mission_run, load_piworker_attempts, mission_run_refs_for_run_id
 
 
 class JsonWorkspaceStore:
@@ -24,12 +24,12 @@ class JsonWorkspaceStore:
     def load_mission_run(self, mission_run_id: str | None = None) -> MissionRun:
         return load_mission_run(self.workspace, mission_run_id)
 
-    def write_attempts(self, mission_run_id: str, attempts: list[RuntimeAttempt]) -> str:
+    def write_attempts(self, mission_run_id: str, attempts: list[PiWorkerAttempt]) -> str:
         ref = mission_run_refs_for_run_id(mission_run_id)["attempts"]
         return self.write_jsonl(ref, [attempt.to_dict() for attempt in attempts])
 
-    def load_attempts(self, mission_run_id: str) -> list[RuntimeAttempt]:
-        return load_runtime_attempts(self.workspace, mission_run_id)
+    def load_attempts(self, mission_run_id: str) -> list[PiWorkerAttempt]:
+        return load_piworker_attempts(self.workspace, mission_run_id)
 
     def write_json(self, ref: str, payload: dict[str, Any]) -> str:
         data = ensure_json_value(require_mapping(payload, ref), ref)

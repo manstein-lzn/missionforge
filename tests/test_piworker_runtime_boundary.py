@@ -184,7 +184,7 @@ class _RepairRuntimeRunner:
             json.dumps(
                 {
                     "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                    "work_unit_id": payload["work_unit_id"],
+                    "call_id": payload["call_id"],
                     "status": "completed",
                     "produced_artifacts": [artifact_ref],
                     "changed_refs": [artifact_ref],

@@ -14,7 +14,7 @@ from missionforge.adapters.pi_agent_runtime import (
     PiAgentExecutorNode,
     PiAgentJudgeNode,
     PiAgentRuntimeAdapter,
-    PiAgentRuntimeContract,
+    PiAgentCallSpec,
     PiAgentRuntimeConfig,
     SubprocessPiAgentCommandRunner,
 )
@@ -146,7 +146,7 @@ class RecordingRunner:
             }
             payload = self.output_payload or {
                 "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                "work_unit_id": "WU-000001",
+                "call_id": "WU-000001",
                 "status": "completed",
                 "produced_artifacts": [artifact_ref],
                 "changed_refs": [artifact_ref, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],
@@ -196,16 +196,16 @@ class JudgeRecordingRunner:
             events_ref = str(self.captured_input["events_ref"])
             metrics_ref = str(self.captured_input["metrics_ref"])
             savepoints_ref = str(self.captured_input["savepoints_ref"])
-            spec_ref = str(self.captured_input["contract"]["visible_refs"][0])
+            spec_ref = str(self.captured_input["call_spec"]["visible_refs"][0])
             spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
             report_ref = str(spec["report_ref"])
             packet_ref = str(spec["packet_ref"])
             packet_hash = str(spec["packet_hash"])
             contract_ref = str(spec["contract_ref"])
-            contract_payload = json.loads((cwd / contract_ref).read_text(encoding="utf-8"))
-            contract_hash = str(contract_payload["contract_hash"])
+            call_spec_payload = json.loads((cwd / contract_ref).read_text(encoding="utf-8"))
+            contract_hash = str(call_spec_payload["contract_hash"])
             contract_id = str(self.captured_input["mission_id"])
-            packet_id = str(self.captured_input["work_unit_id"])
+            packet_id = str(self.captured_input["call_id"])
             metrics = {
                 "tool_call_count": 1,
                 "total_tokens": 9,
@@ -245,7 +245,7 @@ class JudgeRecordingRunner:
             }
             output_payload = self.output_payload or {
                 "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                "work_unit_id": packet_id,
+                "call_id": packet_id,
                 "status": "completed",
                 "produced_artifacts": [report_ref],
                 "changed_refs": [report_ref, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],
@@ -503,7 +503,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         runner = RecordingRunner(
             output_payload={
                 "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                "work_unit_id": "WU-000001",
+                "call_id": "WU-000001",
                 "status": "completed",
                 "produced_artifacts": ["outside/SKILL.md"],
                 "changed_refs": ["outside/SKILL.md"],
@@ -621,10 +621,10 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(report.status, AgentExecutionStatus.COMPLETED)
         self.assertIsNotNone(runner.captured_input)
         self.assertNotIn("work_unit_contract", runner.captured_input)
-        self.assertEqual(runner.captured_input["contract"]["work_unit_id"], "WU-000001")  # type: ignore[index]
-        self.assertEqual(runner.captured_input["contract"]["allowed_scope"], ["package", "reports"])  # type: ignore[index]
+        self.assertEqual(runner.captured_input["call_spec"]["call_id"], "WU-000001")  # type: ignore[index]
+        self.assertEqual(runner.captured_input["call_spec"]["allowed_scope"], ["package", "reports"])  # type: ignore[index]
 
-    def test_run_call_rejects_runtime_contract_that_widens_piworker_scope(self) -> None:
+    def test_run_call_rejects_call_spec_that_widens_piworker_scope(self) -> None:
         packet = AgentExecutionPacket(
             packet_id="WU-000001",
             contract_id="contract-001",
@@ -639,7 +639,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             writable_refs=["package"],
         )
         call = PiWorkerCall.from_execution_packet(packet, packet_ref="packets/execution_packet.json")
-        widened_contract = replace(PiAgentRuntimeContract.from_call(call), allowed_scope=["package", "outside"])
+        widened_call_spec = replace(PiAgentCallSpec.from_call(call), allowed_scope=["package", "outside"])
 
         with tempfile.TemporaryDirectory() as tempdir:
             with self.assertRaisesRegex(ContractValidationError, "allowed_scope"):
@@ -647,7 +647,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     call,
                     workspace=tempdir,
                     evidence_store=InMemoryEvidenceStore(),
-                    runtime_contract=widened_contract,
+                    call_spec=widened_call_spec,
                 )
 
     def test_pi_agent_judge_node_preserves_packet_hash_and_report_ref(self) -> None:
@@ -703,7 +703,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     "revisions/request.json",
                 ],
             )
-            self.assertEqual(runner.captured_input["contract"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
+            self.assertEqual(runner.captured_input["call_spec"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
             call_result = PiWorkerCallResult.from_dict(call_result_payload)
             self.assertEqual(call_result.output_refs, ["reports/judge_report.json"])
 

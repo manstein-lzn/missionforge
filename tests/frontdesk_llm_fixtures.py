@@ -74,7 +74,7 @@ class ScriptedFrontDeskPiWorker:
                 produced_refs.append(ref)
         report = ExecutionReport(
             report_id=f"R-{call.call_id}",
-            work_unit_id=call.call_id,
+            call_id=call.call_id,
             status="completed",
             produced_artifacts=produced_refs,
             changed_refs=produced_refs,

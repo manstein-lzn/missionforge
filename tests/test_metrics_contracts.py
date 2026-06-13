@@ -59,10 +59,10 @@ class MetricContractTests(unittest.TestCase):
             MetricEvent(
                 metric_id="ME-000002",
                 mission_run_id="run-sample",
-                namespace="missionforge.steering",
+                namespace="missionforge.runtime",
                 run_ref="runs/run-sample/mission_run.json",
-                metric_kind="counter",
-                values={"unsafe_proposal_rejection_count": 1},
+                metric_kind="summary",
+                values={"redesign_required": True},
             ),
             MetricEvent(
                 metric_id="ME-000001",
@@ -82,7 +82,7 @@ class MetricContractTests(unittest.TestCase):
 
         self.assertEqual(MetricProjection.from_dict(projection.to_dict()), projection)
         self.assertEqual(projection.namespaces["missionforge.runtime"]["attempt_count"], 1)
-        self.assertIn("unsafe_steering_proposal_rejected", projection.diagnostic_flags)
+        self.assertIn("redesign_required", projection.diagnostic_flags)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ from typing import Any, Mapping
 
 from ..contracts import (
     AuthorityRequirement,
-    ContractAdjustmentChange,
     ContractValidationError,
     VerificationStatus,
     assert_refs_only_payload,
@@ -23,7 +22,6 @@ from ..contracts import (
     require_str_list,
     validate_ref,
 )
-from ..revision import MissionRevisionRequest
 from ..runtime_results import MissionResult
 from ..verification import VerificationResult
 
@@ -171,39 +169,6 @@ class RuntimeFeedbackRecommendation:
         self.validate()
         return self.to_dict_without_validation()
 
-    def draft_revision_request(
-        self,
-        *,
-        mission_run_id: str,
-        base_contract_ref: str,
-        base_contract_hash: str,
-        request_ref: str,
-        revision_id: str = "frontdesk-revision-000001",
-        requested_change: ContractAdjustmentChange = ContractAdjustmentChange.REVIEW_REQUIRED,
-    ) -> MissionRevisionRequest:
-        """Draft a revision request without deciding or applying it."""
-
-        self.validate()
-        if self.recommended_action != RuntimeFeedbackAction.MISSION_REVISION:
-            raise ContractValidationError("frontdesk feedback can draft revisions only for mission_revision guidance")
-        return MissionRevisionRequest(
-            revision_id=revision_id,
-            mission_run_id=require_non_empty_str(mission_run_id, "frontdesk_runtime_feedback.mission_run_id"),
-            base_contract_ref=validate_ref(base_contract_ref, "frontdesk_runtime_feedback.base_contract_ref"),
-            base_contract_hash=require_non_empty_str(
-                base_contract_hash,
-                "frontdesk_runtime_feedback.base_contract_hash",
-            ),
-            request_ref=validate_ref(request_ref, "frontdesk_runtime_feedback.request_ref"),
-            requested_change=requested_change,
-            authority_required=self.authority_required,
-            evidence_refs=list(self.evidence_refs or self.source_refs),
-            proposal_refs=list(self.proposal_refs),
-            reason=self.reason,
-            risk_if_rejected="Runtime feedback indicates the frozen mission contract may not match the observed run.",
-        )
-
-
 def recommend_from_mission_result(
     session_id: str,
     result: MissionResult,
@@ -349,8 +314,8 @@ def contract_mismatch_feedback(
         evidence_refs=list(evidence_refs or []),
         proposal_refs=list(proposal_refs or []),
         next_steps=[
-            "Draft a MissionRevisionRequest as a proposal artifact.",
-            "Submit the request to MissionRevisionWorkflow for authority decision.",
+            "Route the mismatch into the TaskContract revision controller.",
+            "Require explicit revision approval before continuing execution.",
         ],
     )
 

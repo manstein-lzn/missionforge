@@ -598,14 +598,10 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
     run = load_mission_run(root, mission_run_id)
     from ..metric_store import MetricStore
     from ..run_audit import build_run_audit
-    from ..state import load_runtime_attempts
-    from ..steering_store import SteeringArtifactStore
+    from ..state import load_piworker_attempts
 
-    attempts = load_runtime_attempts(root, run.mission_run_id)
-    steering_store = SteeringArtifactStore(root)
+    attempts = load_piworker_attempts(root, run.mission_run_id)
     metric_store = MetricStore(root)
-    steering_refs = steering_store.collect_refs(run.mission_run_id)
-    latest_steering_refs = steering_store.latest_refs(run.mission_run_id)
     artifact_hygiene = None
     hygiene_path = _resolve_workspace_ref(root, run.artifact_hygiene_ref)
     if hygiene_path.is_file():
@@ -626,7 +622,7 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
         "mission_id": run.mission_id,
         "status": run.status,
         "current_attempt": run.current_attempt,
-        "latest_work_unit_id": run.latest_work_unit_id,
+        "latest_call_id": run.latest_call_id,
         "current_contract_ref": run.current_contract_ref,
         "current_contract_hash": run.current_contract_hash,
         "revision_refs": list(run.revision_refs),
@@ -646,8 +642,6 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
         "metric_projection_ref": metric_projection_ref,
         "metric_projection": metric_projection,
         "run_audit": run_audit,
-        "steering_refs": list(steering_refs),
-        "latest_steering_ref_map": dict(latest_steering_refs),
         "metrics": ensure_json_value(run.metrics, "mission_run.metrics"),
     }
     refs = _dedupe_refs([
@@ -659,7 +653,6 @@ def _inspect_run_data(workspace: str | Path, mission_run_id: str) -> tuple[dict[
         metric_projection_ref,
         *run.artifact_refs,
         *run.evidence_refs,
-        *steering_refs,
     ])
     return data, refs
 
@@ -682,12 +675,6 @@ def _diagnose_run(inspect_data: Mapping[str, Any]) -> dict[str, str]:
         return _diagnosis("redesign_required", "revise_contract_or_profile", f"runtime status is {status}")
 
     diagnostic_flags = _metric_projection_flags(inspect_data)
-    if "steering_provider_failure" in diagnostic_flags:
-        return _diagnosis("steering_provider_failure", "inspect_steering_refs", "steering provider failed")
-    if "steering_proposal_rejected" in diagnostic_flags:
-        return _diagnosis("steering_proposal_rejected", "inspect_steering_refs", "latest steering proposal was rejected")
-    if "unsafe_steering_proposal_rejected" in diagnostic_flags:
-        return _diagnosis("unsafe_steering_proposal_rejected", "inspect_steering_refs", "unsafe steering proposal was rejected")
     if "redesign_required" in diagnostic_flags:
         return _diagnosis("redesign_required", "revise_contract_or_profile", "runtime marked redesign_required")
 

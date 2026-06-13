@@ -487,7 +487,7 @@ class MinimalPiRuntimeRunner:
         _write_file(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
 
         if role == "judge_piworker":
-            spec_ref = str(runtime_input["contract"]["visible_refs"][0])
+            spec_ref = str(runtime_input["call_spec"]["visible_refs"][0])
             spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
             report_ref = str(spec["report_ref"])
             _write_file(
@@ -496,7 +496,7 @@ class MinimalPiRuntimeRunner:
                     {
                         "schema_version": "judge_report.v1",
                         "report_id": "judge-report-001",
-                        "packet_id": runtime_input["work_unit_id"],
+                        "packet_id": runtime_input["call_id"],
                         "packet_ref": spec["packet_ref"],
                         "packet_hash": spec["packet_hash"],
                         "contract_id": runtime_input["mission_id"],
@@ -529,7 +529,7 @@ class MinimalPiRuntimeRunner:
             json.dumps(
                 {
                     "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                    "work_unit_id": runtime_input["work_unit_id"],
+                    "call_id": runtime_input["call_id"],
                     "status": "completed",
                     "produced_artifacts": produced_artifacts,
                     "changed_refs": changed_refs,

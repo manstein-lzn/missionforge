@@ -42,19 +42,19 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       });
       unregisterFaux = faux.unregister;
       provider.model = faux.getModel();
-      const outputs = input.contract.expected_outputs;
+      const outputs = input.call_spec.expected_outputs;
       if (outputs.length === 0) throw new Error("PiWorker call requires at least one expected output");
       faux.setResponses([
         fauxAssistantMessage(
           outputs.map((outputRef, index) =>
             fauxToolCall("write", {
               path: outputRef,
-              content: `pi-agent-runtime faux artifact for ${input.work_unit_id} output ${index + 1}\n`,
+              content: `pi-agent-runtime faux artifact for ${input.call_id} output ${index + 1}\n`,
             }),
           ),
           { stopReason: "toolUse" },
         ),
-        fauxAssistantMessage(`Completed ${input.work_unit_id}.`),
+        fauxAssistantMessage(`Completed ${input.call_id}.`),
       ]);
     }
 
@@ -155,14 +155,14 @@ function buildSystemPrompt(input: RuntimeInput): string {
     "Do not call a tool that is not available in this runtime. If shell access is not provided, use read/write/edit only.",
     "Write only the declared expected or optional artifact refs. Do not create extra files.",
     "When a visible node spec describes exact JSON schemas, write those exact schema_version values, enum values, and required fields.",
-    `Call id: ${input.work_unit_id}`,
+    `Call id: ${input.call_id}`,
     `Mission: ${input.mission_id}`,
-    `Objective: ${input.contract.next_objective}`,
-    `Expected outputs: ${input.contract.expected_outputs.join(", ")}`,
+    `Objective: ${input.call_spec.next_objective}`,
+    `Expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
     `Writable refs: ${input.permission_manifest.writable_refs.join(", ")}`,
-    `Visible refs: ${input.contract.visible_refs.join(", ")}`,
-    `Exit criteria: ${input.contract.exit_criteria.join("; ")}`,
-    `Stop conditions: ${input.contract.stop_conditions.join("; ")}`,
+    `Visible refs: ${input.call_spec.visible_refs.join(", ")}`,
+    `Exit criteria: ${input.call_spec.exit_criteria.join("; ")}`,
+    `Stop conditions: ${input.call_spec.stop_conditions.join("; ")}`,
   ];
   if (input.repair.mode === "follow_up") {
     lines.push("This is a verifier-driven repair follow-up.");
@@ -182,31 +182,31 @@ function buildSystemPrompt(input: RuntimeInput): string {
 function buildUserPrompt(input: RuntimeInput): string {
   if (input.resume.mode === "follow_up") {
     return [
-      "Resume this MissionForge work unit from the completed-turn safe point below.",
+      "Resume this MissionForge PiWorker call from the completed-turn safe point below.",
       input.resume.resume_prompt ?? "Resume from the latest completed turn.",
       `Savepoint ref: ${input.resume.savepoint_ref}`,
       `Session ref: ${input.resume.session_ref}`,
       `Events ref: ${input.resume.events_ref}`,
-      `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
+      `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
       "Do not claim completion as acceptance; MissionForge will verify after this attempt.",
       "Use only permitted tools and refs, then stop.",
     ].join("\n");
   }
   if (input.repair.mode === "follow_up") {
     return [
-      "Repair this MissionForge work unit using the verifier feedback below.",
+      "Repair this MissionForge PiWorker call using the verifier feedback below.",
       input.repair.repair_prompt ?? "Repair the expected outputs.",
       `Verifier failures: ${input.repair.verifier_failures.join("; ") || "<none>"}`,
       `Failed constraints: ${input.repair.failed_constraints.join(", ") || "<none>"}`,
       `Previous output ref: ${input.repair.previous_output_ref}`,
-      `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
+      `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
       "Use only permitted tools and refs, then stop.",
     ].join("\n");
   }
   return [
-    "Complete this MissionForge work unit.",
-    `First read the visible refs: ${input.contract.visible_refs.join(", ") || "<none>"}`,
-    `Write or update the expected outputs: ${input.contract.expected_outputs.join(", ")}`,
+    "Complete this MissionForge PiWorker call.",
+    `First read the visible refs: ${input.call_spec.visible_refs.join(", ") || "<none>"}`,
+    `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
     "If the visible refs include a node spec, follow its schema_hints exactly before writing artifacts.",
     "Use permitted tools to inspect, edit, and write as needed. Do not use bash unless a bash tool is present and the exact command is allowed.",
   ].join("\n");
@@ -246,8 +246,8 @@ export async function promptForMissingExpectedOutputs(
 export function buildCompletionRetryPrompt(input: RuntimeInput, missingOutputs: string[], retryCount: number): string {
   const lines = [
     `MissionForge verification pass ${retryCount} found missing expected output refs: ${missingOutputs.join(", ")}`,
-    "Continue the same work unit. Do not change the contract, packets, hard checks, evidence refs, or permission manifest.",
-    `Visible refs to inspect: ${input.contract.visible_refs.join(", ") || "<none>"}`,
+    "Continue the same PiWorker call. Do not change the call_spec, packets, hard checks, evidence refs, or permission manifest.",
+    `Visible refs to inspect: ${input.call_spec.visible_refs.join(", ") || "<none>"}`,
     `Writable refs: ${input.permission_manifest.writable_refs.join(", ")}`,
     `Write only these missing expected outputs: ${missingOutputs.join(", ")}`,
     "Do not answer in text instead of writing artifacts. Use the available file tools to create or update the missing refs.",
@@ -262,7 +262,7 @@ export function buildCompletionRetryPrompt(input: RuntimeInput, missingOutputs: 
 
 export async function missingExpectedOutputRefs(input: RuntimeInput, workspaceRoot: string): Promise<string[]> {
   const missing: string[] = [];
-  for (const ref of input.contract.expected_outputs) {
+  for (const ref of input.call_spec.expected_outputs) {
     try {
       await access(resolveWorkspaceRef(workspaceRoot, ref));
     } catch {
@@ -287,13 +287,13 @@ function extractFinalText(messages: readonly unknown[]): string | undefined {
 }
 
 async function fallbackFauxArtifact(input: RuntimeInput, workspaceRoot: string, failures: string[]): Promise<void> {
-  const firstOutput = input.contract.expected_outputs[0];
+  const firstOutput = input.call_spec.expected_outputs[0];
   if (!firstOutput) return;
   try {
     await writeExpectedArtifact(
       workspaceRoot,
       firstOutput,
-      `pi-agent-runtime fallback faux artifact for ${input.work_unit_id}\n`,
+      `pi-agent-runtime fallback faux artifact for ${input.call_id}\n`,
       input.permission_manifest,
     );
   } catch (error) {

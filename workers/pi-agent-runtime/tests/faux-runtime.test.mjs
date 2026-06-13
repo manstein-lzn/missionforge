@@ -15,8 +15,8 @@ import { readJson, sampleInput, withWorkspace, writeInput } from "./helpers.mjs"
 test("faux runtime writes expected artifact and output artifacts", async () => {
   await withWorkspace(async (root) => {
     const input = sampleInput({
-      contract: {
-        ...sampleInput().contract,
+      call_spec: {
+        ...sampleInput().call_spec,
         expected_outputs: ["attempts/WU-000001/artifact.txt", "attempts/WU-000001/second.txt"],
       },
     });
@@ -26,9 +26,9 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
 
     const output = await readJson(join(root, input.output_ref));
     assert.equal(output.status, "completed");
-    assert.deepEqual(output.produced_artifacts, input.contract.expected_outputs);
-    await access(join(root, input.contract.expected_outputs[0]));
-    await access(join(root, input.contract.expected_outputs[1]));
+    assert.deepEqual(output.produced_artifacts, input.call_spec.expected_outputs);
+    await access(join(root, input.call_spec.expected_outputs[0]));
+    await access(join(root, input.call_spec.expected_outputs[1]));
     await access(join(root, input.events_ref));
     await access(join(root, input.session_ref));
     await access(join(root, input.metrics_ref));
@@ -145,14 +145,14 @@ test("missing expected output retry prompts once and stops after the artifact ex
       currentTurnCount: () => prompts.length,
       prompt: async (prompt) => {
         prompts.push(prompt);
-        await mkdir(dirname(join(root, input.contract.expected_outputs[0])), { recursive: true });
-        await writeFile(join(root, input.contract.expected_outputs[0]), "created by retry\n", "utf-8");
+        await mkdir(dirname(join(root, input.call_spec.expected_outputs[0])), { recursive: true });
+        await writeFile(join(root, input.call_spec.expected_outputs[0]), "created by retry\n", "utf-8");
       },
     });
 
     assert.equal(result.retryCount, 1);
     assert.deepEqual(result.missingOutputs, []);
-    assert.equal(prompts[0].includes(input.contract.expected_outputs[0]), true);
+    assert.equal(prompts[0].includes(input.call_spec.expected_outputs[0]), true);
     assert.equal(prompts[0].includes("Do not answer in text instead of writing artifacts."), true);
   });
 });
@@ -174,7 +174,7 @@ test("missing expected output retry respects exhausted turn budget", async () =>
     });
 
     assert.equal(result.retryCount, 0);
-    assert.deepEqual(result.missingOutputs, input.contract.expected_outputs);
+    assert.deepEqual(result.missingOutputs, input.call_spec.expected_outputs);
     assert.deepEqual(prompts, []);
   });
 });
@@ -189,8 +189,8 @@ test("judge retry prompt names JudgeReport without embedding artifact bodies", (
         writable_refs: ["reports/judge_report.json"],
         expected_output_refs: ["reports/judge_report.json"],
       },
-      contract: {
-        ...base.contract,
+      call_spec: {
+        ...base.call_spec,
         visible_refs: ["attempts/WU-000001/judge_node_spec.json", "packets/judge_packet.json"],
         allowed_scope: ["reports/judge_report.json"],
         expected_outputs: ["reports/judge_report.json"],

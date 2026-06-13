@@ -145,13 +145,6 @@ FrontDesk's current generic mapping path. They are not exported from the
   - `missionforge.freeze.ContractManifest`
   - `missionforge.freeze.expand_mission`
   - `missionforge.freeze.freeze_mission`
-- Older revision contracts:
-  - `missionforge.revision.MissionRevision`
-  - `missionforge.revision.MissionRevisionRequest`
-  - `missionforge.revision.MissionRevisionDecision`
-  - `missionforge.revision.MissionRevisionWorkflow`
-  - `missionforge.revision_store.MissionRevisionStore`
-  - `missionforge.revision_store.apply_mission_revision`
 - Controlled steering and metric-dict surfaces.
 
 Retired runtime/work-unit modules are not importable: `missionforge.runner`,
@@ -227,9 +220,8 @@ from the package root.
 These are implementation details and should not be re-exported from the package
 root:
 
-- `ActiveMissionContract`
-- `RuntimeContractView`
 - `PiAgentRuntimeAdapter`
+- adapter-private contract projection classes
 - product integration compilers such as SkillFoundry
 - adapter-private runtime modules
 - product-specific package names or branch selectors

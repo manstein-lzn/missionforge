@@ -25,7 +25,7 @@ class OperatorCLIInspectTests(unittest.TestCase):
             self.assertEqual(result.data["mission_id"], "sample-mission")
             self.assertEqual(result.data["status"], "completed_verified")
             self.assertEqual(result.data["current_attempt"], "attempt-000001")
-            self.assertEqual(result.data["latest_work_unit_id"], "WU-000001")
+            self.assertEqual(result.data["latest_call_id"], "WU-000001")
             self.assertEqual(result.data["attempt_count"], 1)
             self.assertIn("latest_safe_point", result.data)
             self.assertEqual(result.data["latest_attempt"]["attempt_kind"], "initial")

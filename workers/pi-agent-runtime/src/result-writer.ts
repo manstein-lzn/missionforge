@@ -23,7 +23,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
   const producedArtifacts: string[] = [];
   const missingOutputs: string[] = [];
   const produced = new Set<string>();
-  for (const ref of options.input.contract.expected_outputs) {
+  for (const ref of options.input.call_spec.expected_outputs) {
     if (await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref))) {
       producedArtifacts.push(ref);
       produced.add(ref);
@@ -33,7 +33,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
   }
   for (const ref of options.changedRefs) {
     if (produced.has(ref)) continue;
-    if (!options.input.contract.allowed_scope.includes(ref)) continue;
+    if (!options.input.call_spec.allowed_scope.includes(ref)) continue;
     if (!(await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref)))) continue;
     producedArtifacts.push(ref);
     produced.add(ref);
@@ -46,7 +46,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
   const status: RuntimeOutput["status"] = options.statusOverride ?? (failures.length === 0 ? "completed" : "failed");
   const output: RuntimeOutput = {
     schema_version: OUTPUT_SCHEMA_VERSION,
-    work_unit_id: options.input.work_unit_id,
+    call_id: options.input.call_id,
     status,
     produced_artifacts: producedArtifacts,
     changed_refs: dedupe([

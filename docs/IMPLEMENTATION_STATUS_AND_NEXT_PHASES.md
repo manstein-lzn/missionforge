@@ -68,7 +68,6 @@ or support FrontDesk/operator state:
 
 - `missionforge.ir`;
 - `missionforge.freeze`;
-- `missionforge.revision`;
 - `missionforge.state`;
 - `missionforge.run_audit`;
 - metrics and stores;

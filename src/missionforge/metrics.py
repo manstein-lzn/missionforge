@@ -38,7 +38,6 @@ ALLOWED_MISSIONFORGE_METRIC_NAMESPACES = {
     "missionforge.runtime",
     "missionforge.verifier",
     "missionforge.worker.pi_agent",
-    "missionforge.steering",
     "missionforge.operator.cli",
     "missionforge.operator.rpc",
     "missionforge.store.json",
@@ -265,14 +264,7 @@ def _validate_metric_values(values: Mapping[str, Any], field_name: str) -> None:
 
 def _diagnostic_flags(namespaces: Mapping[str, Mapping[str, Any]]) -> list[str]:
     flags: list[str] = []
-    steering = namespaces.get("missionforge.steering", {})
     runtime = namespaces.get("missionforge.runtime", {})
-    if steering.get("provider_failure_count"):
-        flags.append("steering_provider_failure")
-    if steering.get("rejected_proposal_count"):
-        flags.append("steering_proposal_rejected")
-    if steering.get("unsafe_proposal_rejection_count"):
-        flags.append("unsafe_steering_proposal_rejected")
     if runtime.get("redesign_required"):
         flags.append("redesign_required")
     if runtime.get("repair_exhausted"):

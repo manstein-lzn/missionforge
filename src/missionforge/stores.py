@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from .state import MissionRun, RuntimeAttempt
+from .state import MissionRun, PiWorkerAttempt
 
 
 @runtime_checkable
@@ -17,10 +17,10 @@ class RunStore(Protocol):
     def load_mission_run(self, mission_run_id: str | None = None) -> MissionRun:
         ...
 
-    def write_attempts(self, mission_run_id: str, attempts: list[RuntimeAttempt]) -> str:
+    def write_attempts(self, mission_run_id: str, attempts: list[PiWorkerAttempt]) -> str:
         ...
 
-    def load_attempts(self, mission_run_id: str) -> list[RuntimeAttempt]:
+    def load_attempts(self, mission_run_id: str) -> list[PiWorkerAttempt]:
         ...
 
 

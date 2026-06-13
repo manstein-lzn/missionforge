@@ -75,7 +75,6 @@ runtime branches.
 - `markdown_output_contract`
 - `generic_local_verification`
 - `manual_review_gate`
-- `controlled_steering_proposal_policy`
 
 ## Invariants
 

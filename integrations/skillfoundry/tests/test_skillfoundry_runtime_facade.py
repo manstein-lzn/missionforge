@@ -174,10 +174,10 @@ class _TaskContractPiRuntimeRunner:
         return PiAgentCommandResult(returncode=0)
 
     def _write_executor_outputs(self, cwd: Path, captured_input: dict[str, object]) -> None:
-        contract_payload = captured_input["contract"]
-        if not isinstance(contract_payload, dict):
-            raise AssertionError("contract payload must be an object")
-        expected_outputs = [str(ref) for ref in contract_payload["expected_outputs"]]
+        call_spec_payload = captured_input["call_spec"]
+        if not isinstance(call_spec_payload, dict):
+            raise AssertionError("call spec payload must be an object")
+        expected_outputs = [str(ref) for ref in call_spec_payload["expected_outputs"]]
         for ref in expected_outputs:
             if ref == "package/skillfoundry.bundle.json":
                 _write_text(cwd / ref, json.dumps(SkillBundleManifest.prompt_only("demo-skill").to_dict(), sort_keys=True))
@@ -188,10 +188,10 @@ class _TaskContractPiRuntimeRunner:
         self._write_pi_agent_output(cwd, captured_input, produced_refs=expected_outputs)
 
     def _write_judge_outputs(self, cwd: Path, captured_input: dict[str, object]) -> None:
-        contract_payload = captured_input["contract"]
-        if not isinstance(contract_payload, dict):
-            raise AssertionError("contract payload must be an object")
-        spec_ref = str(contract_payload["visible_refs"][0])
+        call_spec_payload = captured_input["call_spec"]
+        if not isinstance(call_spec_payload, dict):
+            raise AssertionError("call spec payload must be an object")
+        spec_ref = str(call_spec_payload["visible_refs"][0])
         spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
         report_ref = str(spec["report_ref"])
         packet_ref = str(spec["packet_ref"])
@@ -201,7 +201,7 @@ class _TaskContractPiRuntimeRunner:
         report_payload = {
             "schema_version": "judge_report.v1",
             "report_id": "skillfoundry-facade-piworker-judge-report",
-            "packet_id": str(captured_input["work_unit_id"]),
+            "packet_id": str(captured_input["call_id"]),
             "packet_ref": packet_ref,
             "packet_hash": packet_hash,
             "contract_id": str(captured_input["mission_id"]),
@@ -238,7 +238,7 @@ class _TaskContractPiRuntimeRunner:
             json.dumps(
                 {
                     "schema_version": PI_AGENT_OUTPUT_SCHEMA_VERSION,
-                    "work_unit_id": str(captured_input["work_unit_id"]),
+                    "call_id": str(captured_input["call_id"]),
                     "status": "completed",
                     "produced_artifacts": list(produced_refs),
                     "changed_refs": [*produced_refs, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],

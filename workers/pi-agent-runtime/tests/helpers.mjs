@@ -12,11 +12,11 @@ export async function withWorkspace(fn) {
 }
 
 export function sampleInput(overrides = {}) {
-  const workUnitId = "WU-000001";
-  const attempt = `attempts/${workUnitId}`;
+  const callId = "WU-000001";
+  const attempt = `attempts/${callId}`;
   return {
     schema_version: "missionforge.pi_agent_runtime_input.v1",
-    work_unit_id: workUnitId,
+    call_id: callId,
     mission_id: "mission-001",
     iteration: 1,
     workspace_root: ".",
@@ -29,7 +29,7 @@ export function sampleInput(overrides = {}) {
     savepoints_ref: `${attempt}/pi_agent_savepoints.jsonl`,
     piworker_call: {
       schema_version: "piworker_call.v1",
-      call_id: workUnitId,
+      call_id: callId,
       role: "executor_piworker",
       contract_id: "mission-001",
       contract_hash: `sha256:${"a".repeat(64)}`,
@@ -47,8 +47,8 @@ export function sampleInput(overrides = {}) {
       runtime_budget: {},
       metadata: {},
     },
-    contract: {
-      work_unit_id: workUnitId,
+    call_spec: {
+      call_id: callId,
       mission_id: "mission-001",
       iteration: 1,
       next_objective: "Produce a deterministic artifact.",
@@ -59,7 +59,7 @@ export function sampleInput(overrides = {}) {
       stop_conditions: ["Timeout."],
     },
     permission_manifest: {
-      manifest_id: `${workUnitId}-pi-runtime-permissions`,
+      manifest_id: `${callId}-pi-runtime-permissions`,
       schema_version: "permission_manifest.v1",
       workspace_policy_ref: null,
       readable_refs: [`${attempt}`],

@@ -14,11 +14,10 @@ from .contracts import (
     require_str_list,
     validate_ref,
 )
+from .freeze import FrozenMissionContract
 from .json_store import JsonWorkspaceStore
 from .metric_store import MetricStore
-from .runtime_contract import load_active_contract
 from .state import MissionRun, mission_run_refs_for_run_id
-from .steering_store import SteeringArtifactStore
 
 
 RUN_AUDIT_SCHEMA_VERSION = "missionforge.run_audit.v1"
@@ -38,7 +37,6 @@ class MissionRunAudit:
     revision_refs: list[str] = field(default_factory=list)
     metric_events_ref: str = ""
     metric_projection_ref: str = ""
-    steering_refs: list[str] = field(default_factory=list)
     safe_point_refs: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     evidence_refs: list[str] = field(default_factory=list)
@@ -64,7 +62,6 @@ class MissionRunAudit:
             revision_refs=require_str_list(data.get("revision_refs", []), "mission_run_audit.revision_refs"),
             metric_events_ref=data.get("metric_events_ref", ""),
             metric_projection_ref=data.get("metric_projection_ref", ""),
-            steering_refs=require_str_list(data.get("steering_refs", []), "mission_run_audit.steering_refs"),
             safe_point_refs=require_str_list(data.get("safe_point_refs", []), "mission_run_audit.safe_point_refs"),
             artifact_refs=require_str_list(data.get("artifact_refs", []), "mission_run_audit.artifact_refs"),
             evidence_refs=require_str_list(data.get("evidence_refs", []), "mission_run_audit.evidence_refs"),
@@ -97,8 +94,6 @@ class MissionRunAudit:
             validate_ref(self.metric_events_ref, "mission_run_audit.metric_events_ref")
         if self.metric_projection_ref:
             validate_ref(self.metric_projection_ref, "mission_run_audit.metric_projection_ref")
-        for ref in self.steering_refs:
-            validate_ref(ref, "mission_run_audit.steering_refs[]")
         for ref in self.safe_point_refs:
             validate_ref(ref, "mission_run_audit.safe_point_refs[]")
         for ref in self.artifact_refs:
@@ -131,7 +126,6 @@ class MissionRunAudit:
             "revision_refs": list(self.revision_refs),
             "metric_events_ref": self.metric_events_ref,
             "metric_projection_ref": self.metric_projection_ref,
-            "steering_refs": list(self.steering_refs),
             "safe_point_refs": list(self.safe_point_refs),
             "artifact_refs": list(self.artifact_refs),
             "evidence_refs": list(self.evidence_refs),
@@ -150,7 +144,6 @@ def build_run_audit(workspace: str | Path = ".", mission_run_id: str | None = No
     run = store.load_mission_run(mission_run_id)
     refs = mission_run_refs_for_run_id(run.mission_run_id)
     metric_store = MetricStore(root)
-    steering_refs = SteeringArtifactStore(root).collect_refs(run.mission_run_id)
     ref_checks: list[dict[str, str]] = []
     missing_refs: list[str] = []
     stale_refs: list[str] = []
@@ -194,12 +187,9 @@ def build_run_audit(workspace: str | Path = ".", mission_run_id: str | None = No
         check_ref("safe_point", ref)
     for ref in run.artifact_refs:
         check_ref("artifact", ref)
-    for ref in steering_refs:
-        check_ref("steering", ref)
-
     if run.current_contract_ref:
         try:
-            load_active_contract(workspace=root, run=run)
+            _validate_current_contract(store=store, run=run)
         except ContractValidationError as exc:
             stale_refs.append(run.current_contract_ref)
             diagnostics.append(f"active_contract_invalid: {_compact_error(exc)}")
@@ -222,7 +212,6 @@ def build_run_audit(workspace: str | Path = ".", mission_run_id: str | None = No
         revision_refs=list(run.revision_refs),
         metric_events_ref=metric_events_ref,
         metric_projection_ref=metric_projection_ref,
-        steering_refs=list(steering_refs),
         safe_point_refs=safe_point_refs,
         artifact_refs=list(run.artifact_refs),
         evidence_refs=list(run.evidence_refs),
@@ -265,6 +254,17 @@ def _safe_point_refs(run: MissionRun) -> list[str]:
         run.latest_safe_point.events_ref,
     ]
     return _dedupe_refs([ref for ref in refs if ref])
+
+
+def _validate_current_contract(*, store: JsonWorkspaceStore, run: MissionRun) -> None:
+    contract_ref = validate_ref(run.current_contract_ref, "run_audit.current_contract_ref")
+    if not store.exists(contract_ref):
+        raise ContractValidationError(f"active contract ref is missing: {contract_ref}")
+    frozen = FrozenMissionContract.from_dict(store.read_json(contract_ref))
+    if frozen.mission_id != run.mission_id:
+        raise ContractValidationError("active contract mission_id does not match MissionRun")
+    if run.current_contract_hash and frozen.contract_hash != run.current_contract_hash:
+        raise ContractValidationError("active contract hash does not match MissionRun.current_contract_hash")
 
 
 def _storage_ref(ref: str) -> str:

@@ -6,8 +6,8 @@ export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 
 export type JsonObject = Record<string, unknown>;
 
-export interface PiAgentRuntimeContract {
-  work_unit_id: string;
+export interface PiAgentCallSpec {
+  call_id: string;
   mission_id: string;
   iteration: number;
   next_objective: string;
@@ -20,7 +20,7 @@ export interface PiAgentRuntimeContract {
 
 export interface RuntimeInput {
   schema_version: typeof INPUT_SCHEMA_VERSION;
-  work_unit_id: string;
+  call_id: string;
   mission_id: string;
   iteration: number;
   workspace_root: string;
@@ -32,7 +32,7 @@ export interface RuntimeInput {
   metrics_ref: string;
   savepoints_ref: string;
   piworker_call: PiWorkerCall;
-  contract: PiAgentRuntimeContract;
+  call_spec: PiAgentCallSpec;
   permission_manifest: PermissionManifest;
   runtime: {
     runtime_name: string;
@@ -98,7 +98,7 @@ export interface ResumeInput {
 
 export interface RuntimeOutput {
   schema_version: typeof OUTPUT_SCHEMA_VERSION;
-  work_unit_id: string;
+  call_id: string;
   status: "completed" | "failed" | "blocked" | "cancelled";
   produced_artifacts: string[];
   changed_refs: string[];
@@ -127,10 +127,10 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     throw new Error(`Unsupported schema_version: ${schemaVersion}`);
   }
 
-  const contract = parsePiAgentRuntimeContract(data.contract);
+  const callSpec = parsePiAgentCallSpec(data.call_spec);
   const result: RuntimeInput = {
     schema_version: INPUT_SCHEMA_VERSION,
-    work_unit_id: requireString(data.work_unit_id, "work_unit_id"),
+    call_id: requireString(data.call_id, "call_id"),
     mission_id: requireString(data.mission_id, "mission_id"),
     iteration: requirePositiveInteger(data.iteration, "iteration"),
     workspace_root: requireString(data.workspace_root, "workspace_root"),
@@ -142,28 +142,28 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     metrics_ref: requireRef(data.metrics_ref, "metrics_ref"),
     savepoints_ref: requireRef(data.savepoints_ref, "savepoints_ref"),
     piworker_call: parsePiWorkerCall(data.piworker_call),
-    contract,
+    call_spec: callSpec,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
     runtime: parseRuntime(data.runtime),
     repair: parseRepair(data.repair),
     resume: parseResume(data.resume),
   };
 
-  if (result.work_unit_id !== contract.work_unit_id) {
-    throw new Error("input.work_unit_id must match contract.work_unit_id");
+  if (result.call_id !== callSpec.call_id) {
+    throw new Error("input.call_id must match call_spec.call_id");
   }
-  if (result.mission_id !== contract.mission_id) {
-    throw new Error("input.mission_id must match contract.mission_id");
+  if (result.mission_id !== callSpec.mission_id) {
+    throw new Error("input.mission_id must match call_spec.mission_id");
   }
-  if (result.piworker_call.call_id !== result.work_unit_id) {
-    throw new Error("input.piworker_call.call_id must match work_unit_id");
+  if (result.piworker_call.call_id !== result.call_id) {
+    throw new Error("input.piworker_call.call_id must match call_id");
   }
   if (result.piworker_call.contract_id !== result.mission_id) {
     throw new Error("input.piworker_call.contract_id must match mission_id");
   }
   for (const ref of result.piworker_call.expected_output_refs) {
-    if (!contract.expected_outputs.includes(ref)) {
-      throw new Error("input.piworker_call expected output must be present in contract.expected_outputs");
+    if (!callSpec.expected_outputs.includes(ref)) {
+      throw new Error("input.piworker_call expected output must be present in call_spec.expected_outputs");
     }
   }
   return result;
@@ -273,7 +273,7 @@ export function validateOutput(output: RuntimeOutput): RuntimeOutput {
   if (output.schema_version !== OUTPUT_SCHEMA_VERSION) {
     throw new Error("Unsupported output schema_version");
   }
-  requireString(output.work_unit_id, "output.work_unit_id");
+  requireString(output.call_id, "output.call_id");
   if (!["completed", "failed", "blocked", "cancelled"].includes(output.status)) {
     throw new Error("output.status is invalid");
   }
@@ -303,18 +303,18 @@ export function requireRef(value: unknown, field: string): string {
   return ref;
 }
 
-function parsePiAgentRuntimeContract(value: unknown): PiAgentRuntimeContract {
-  const data = requireObject(value, "contract");
+function parsePiAgentCallSpec(value: unknown): PiAgentCallSpec {
+  const data = requireObject(value, "call_spec");
   return {
-    work_unit_id: requireString(data.work_unit_id, "contract.work_unit_id"),
-    mission_id: requireString(data.mission_id, "contract.mission_id"),
-    iteration: requirePositiveInteger(data.iteration, "contract.iteration"),
-    next_objective: requireString(data.next_objective, "contract.next_objective"),
-    allowed_scope: requireRefList(data.allowed_scope, "contract.allowed_scope"),
-    visible_refs: requireRefList(data.visible_refs, "contract.visible_refs"),
-    expected_outputs: requireRefList(data.expected_outputs, "contract.expected_outputs"),
-    exit_criteria: requireStringList(data.exit_criteria, "contract.exit_criteria"),
-    stop_conditions: requireStringList(data.stop_conditions, "contract.stop_conditions"),
+    call_id: requireString(data.call_id, "call_spec.call_id"),
+    mission_id: requireString(data.mission_id, "call_spec.mission_id"),
+    iteration: requirePositiveInteger(data.iteration, "call_spec.iteration"),
+    next_objective: requireString(data.next_objective, "call_spec.next_objective"),
+    allowed_scope: requireRefList(data.allowed_scope, "call_spec.allowed_scope"),
+    visible_refs: requireRefList(data.visible_refs, "call_spec.visible_refs"),
+    expected_outputs: requireRefList(data.expected_outputs, "call_spec.expected_outputs"),
+    exit_criteria: requireStringList(data.exit_criteria, "call_spec.exit_criteria"),
+    stop_conditions: requireStringList(data.stop_conditions, "call_spec.stop_conditions"),
   };
 }
 

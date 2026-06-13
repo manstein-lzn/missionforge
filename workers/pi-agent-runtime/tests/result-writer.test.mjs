@@ -12,8 +12,8 @@ test("runtime output includes changed exact allowed optional artifacts", async (
     const baseInput = sampleInput();
     const input = parseRuntimeInput(
       sampleInput({
-        contract: {
-          ...baseInput.contract,
+        call_spec: {
+          ...baseInput.call_spec,
           allowed_scope: [
             "frontdesk/decision_tree.json",
             "frontdesk/need_grilling_report.json",

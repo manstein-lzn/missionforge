@@ -35,7 +35,7 @@ class PiWorkerCallAdapter(Protocol):
         *,
         workspace: str | Path = ".",
         evidence_store: EvidenceLedger | None = None,
-        runtime_contract: Any | None = None,
+        call_spec: Any | None = None,
         exit_criteria: list[str] | None = None,
         stop_conditions: list[str] | None = None,
     ) -> WorkerAdapterResult:

@@ -98,7 +98,7 @@ The sidecar input wraps that call with runtime refs and permission data:
 ```json
 {
   "schema_version": "missionforge.pi_agent_runtime_input.v1",
-  "work_unit_id": "WU-000001",
+  "call_id": "WU-000001",
   "mission_id": "contract-001",
   "input_ref": "attempts/WU-000001/pi_agent_input.json",
   "output_ref": "attempts/WU-000001/pi_agent_output.json",
@@ -107,7 +107,7 @@ The sidecar input wraps that call with runtime refs and permission data:
     "call_id": "WU-000001"
   },
   "contract": {
-    "work_unit_id": "WU-000001",
+    "call_id": "WU-000001",
     "mission_id": "contract-001",
     "allowed_scope": ["artifacts", "reports"],
     "visible_refs": [

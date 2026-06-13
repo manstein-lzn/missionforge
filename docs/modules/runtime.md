@@ -25,7 +25,7 @@ Use these documents for current runtime behavior:
 - `docs/modules/agentic_flow.md`
 - `docs/modules/piworker.md`
 
-`MissionRun`, `RuntimeAttempt`, `MetricStore`, and `MissionRunAudit` remain as
+`MissionRun`, `PiWorkerAttempt`, `MetricStore`, and `MissionRunAudit` remain as
 refs-only operator/state contracts where they are still used by inspection and
 diagnosis surfaces. They are not a semantic runtime fallback and do not execute
 missions.
