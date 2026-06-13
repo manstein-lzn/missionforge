@@ -9,7 +9,7 @@ import unittest
 from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
 from missionforge.adapters.pi_agent_provider_config import load_codex_current_provider
 from missionforge.evidence_store import InMemoryEvidenceStore
-from missionforge.work_unit import WorkUnitContract
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole
 
 
 class PiAgentRuntimeLiveSmokeTests(unittest.TestCase):
@@ -24,25 +24,25 @@ class PiAgentRuntimeLiveSmokeTests(unittest.TestCase):
             provider_config_source="codex_current",
             metadata={"phase": "phase6_live_smoke"},
         )
-        work_unit = WorkUnitContract(
-            work_unit_id="WU-LIVE-000001",
-            mission_id="mission-live-smoke",
-            iteration=1,
-            next_objective=(
+        call = PiWorkerCall(
+            call_id="WU-LIVE-000001",
+            role=PiWorkerCallRole.EXECUTOR,
+            contract_id="mission-live-smoke",
+            contract_hash="sha256:" + "a" * 64,
+            contract_ref="contract/live_smoke.json",
+            objective=(
                 "Create exactly one small live smoke artifact at attempts/WU-LIVE-000001/live_smoke.txt "
                 "containing the line MissionForge live provider smoke passed."
             ),
-            allowed_scope=["attempts/WU-LIVE-000001"],
             visible_refs=[],
-            expected_outputs=["attempts/WU-LIVE-000001/live_smoke.txt"],
-            exit_criteria=["Expected artifact exists."],
-            stop_conditions=["Stop after writing the expected artifact."],
+            writable_refs=["attempts/WU-LIVE-000001"],
+            expected_output_refs=["attempts/WU-LIVE-000001/live_smoke.txt"],
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
             provider = load_codex_current_provider()
-            result = PiAgentRuntimeAdapter(config).run(
-                work_unit,
+            result = PiAgentRuntimeAdapter(config).run_call(
+                call,
                 workspace=tempdir,
                 evidence_store=InMemoryEvidenceStore(),
             )

@@ -39,10 +39,10 @@ This branch is centered on the TaskContract-native PiWorker runtime:
 - SkillFoundry is the active external product integration.
 - The old active value-benchmark lane has been removed from the product path.
 
-MissionIR and older deterministic runtime modules now exist only as explicit
-legacy submodule surfaces for migration. They are not exported from the
-`missionforge` package root. New product work should use the TaskContract-native
-PiWorker path.
+`MissionIR` remains importable from `missionforge.ir` only as a high-detail
+compatibility data shape. The old deterministic runtime, harness, work-unit, and
+fake-worker modules have been removed. New product work should use the
+TaskContract-native PiWorker path.
 
 ## Runtime Shape
 
@@ -137,8 +137,11 @@ integrations/skillfoundry/
   TaskContract-shaped MissionForge inputs.
 
 docs/
-  PI_BASED_MINIMAL_KERNEL_DEVELOPMENT_PLAN.md
-  TASKCONTRACT_NATIVE_CUTOVER_PLAN.md
+  GETTING_STARTED.md
+  USER_MANUAL.md
+  PRIMITIVE_REFERENCE.md
+  COOKBOOK.md
+  API_BOUNDARY.md
   modules/
 ```
 
@@ -368,8 +371,8 @@ missionforge -> does not import missionforge_skillfoundry
 ```
 
 Its default compile path emits `TaskContract`, `WorkspacePolicy`, and
-`PermissionManifest` refs under `runs/{bundle_id}/`. MissionIR APIs remain only
-in legacy submodules for migration compatibility.
+`PermissionManifest` refs under `runs/{bundle_id}/`. SkillFoundry execution does
+not go through a MissionForge runtime or work-unit compatibility facade.
 
 Run SkillFoundry tests from the repository root:
 
@@ -381,24 +384,23 @@ PYTHONPATH=src:integrations/skillfoundry/src \
 See [SkillFoundry README](integrations/skillfoundry/README.md) for the product
 shell details.
 
-## Compatibility Operator CLI
+## Operator CLI
 
-The optional CLI adapter is still available for compatibility and operator
-experiments around the older mission runtime:
+The optional CLI adapter is an operator shell for inspecting refs-only run state,
+recording explicit control intent, recording independent review decisions, and
+validating the repository:
 
 ```bash
-python -m missionforge.adapters.cli run --workspace . --mission-ref missions/input.mission.json
 python -m missionforge.adapters.cli inspect --workspace . --run run-sample-mission
 python -m missionforge.adapters.cli diagnose --workspace . --run run-sample-mission
-python -m missionforge.adapters.cli resume --workspace . --run run-sample-mission --mission-ref missions/input.mission.json
 python -m missionforge.adapters.cli control halt --workspace . --run run-sample-mission --reason "Pause before the next attempt."
 python -m missionforge.adapters.cli review record --workspace . --run run-sample-mission --decision approved --review-ref reviews/reviewer-decision.json
 python -m missionforge.adapters.cli validate
 ```
 
-Operator output is observation and control. It does not grant semantic
-acceptance by itself. New integrations should use the TaskContract-native
-PiWorker lane instead of treating this CLI as the conceptual runtime API.
+There is no top-level `run` or `resume` command. Operator output is observation
+and control. It does not grant semantic acceptance by itself. Product execution
+belongs in the TaskContract-native PiWorker lane.
 
 ## Public API Guidance
 
@@ -424,11 +426,11 @@ Adapter internals such as `PiAgentRuntimeAdapter` are intentionally not
 exported from the package root. Import them directly only when building or
 testing adapter-specific behavior.
 
-Legacy symbols such as `MissionIR`, `MissionRuntime`, `RuntimeEngine`, and
-`WorkUnitContract` are also intentionally not exported from the package root.
-If old tests or migration tools still need them, import the explicit submodule
-surface, for example `missionforge.ir`, `missionforge.runner`,
-`missionforge.runtime`, or `missionforge.work_unit`.
+Retired runtime and work-unit symbols such as `MissionRuntime`, `RuntimeEngine`,
+and `WorkUnitContract` have been removed. `MissionIR` remains available from
+`missionforge.ir` as a high-detail compatibility data shape, but new product
+integrations should compile into `TaskContract` and run through the
+TaskContract/PiWorker lane.
 
 ## Design Documents
 

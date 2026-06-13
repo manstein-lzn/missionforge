@@ -23,7 +23,7 @@ from ..contracts import (
 )
 from ..evidence_store import EvidenceLedger
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
-from ..workers import WorkerAdapterResult
+from ..runtime_results import WorkerAdapterResult
 from .workspace import FrontDeskWorkspace
 
 

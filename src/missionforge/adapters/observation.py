@@ -18,7 +18,7 @@ from ..contracts import (
 )
 from ..control import ControlRequest
 from ..evidence_store import EvidenceSnapshot
-from ..runner import MissionResult
+from ..runtime_results import MissionResult
 
 
 @dataclass(frozen=True)

@@ -107,16 +107,6 @@ def run_frontdesk_command(args: Namespace) -> tuple[dict[str, Any], list[str]]:
             result.frozen_contract_ref,
             result.freeze_manifest_ref,
         ]
-    if action == "run":
-        mission_result = frontdesk.run(args.session)
-        session = frontdesk.load_session(args.session)
-        return {
-            "session": session.to_dict(),
-            "mission_status": mission_result.status,
-            "mission_id": mission_result.mission_id,
-            "evidence_refs": list(mission_result.evidence_refs),
-            "artifact_refs": list(mission_result.artifact_refs),
-        }, [session.session_ref, *mission_result.evidence_refs, *mission_result.artifact_refs]
     raise ContractValidationError(f"unsupported frontdesk command: {action}")
 
 

@@ -7,7 +7,7 @@ import unittest
 
 from missionforge.adapters.cli import MissionCLI
 from missionforge.review import ReviewerDecision
-from tests.test_operator_cli_run import write_mission
+from tests.operator_state_fixtures import seed_operator_run
 
 
 def write_review_decision(
@@ -40,8 +40,7 @@ class OperatorCLIReviewTests(unittest.TestCase):
     def test_review_record_validates_and_records_refs_only_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             run_path = root / "runs/run-sample-mission/mission_run.json"
             run = json.loads(run_path.read_text(encoding="utf-8"))
             before = run_path.read_text(encoding="utf-8")
@@ -76,8 +75,7 @@ class OperatorCLIReviewTests(unittest.TestCase):
     def test_review_record_rejects_stale_or_worker_authored_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             stale_ref = write_review_decision(root, contract_hash="sha256:stale", ref="reviews/stale.json")
 
             result = MissionCLI().run_command(
@@ -124,8 +122,7 @@ class OperatorCLIReviewTests(unittest.TestCase):
     def test_review_approval_does_not_override_failed_verifier_state(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             run_path = root / "runs/run-sample-mission/mission_run.json"
             run = json.loads(run_path.read_text(encoding="utf-8"))
             run["status"] = "failed"

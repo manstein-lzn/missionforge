@@ -129,11 +129,11 @@ Stable root categories include:
 FrontDesk output is not operational task truth by itself. The frozen
 `TaskContract`, or an explicit revision of it, remains task authority.
 
-## Legacy Submodule Surface
+## Compatibility Data Surface
 
-These symbols remain in legacy submodules for older code and migration paths,
-but they are not exported from the `missionforge` package root and are not the
-recommended conceptual API for new product work:
+These symbols remain available for older MissionIR data, migration tools, and
+FrontDesk's current generic mapping path. They are not exported from the
+`missionforge` package root and are not the runtime API for new product work:
 
 - MissionIR and freeze path:
   - `missionforge.ir.MissionIR`
@@ -145,10 +145,6 @@ recommended conceptual API for new product work:
   - `missionforge.freeze.ContractManifest`
   - `missionforge.freeze.expand_mission`
   - `missionforge.freeze.freeze_mission`
-- Older runtime facade:
-  - `missionforge.runner.MissionRuntime`
-  - `missionforge.runner.MissionResult`
-  - `missionforge.runtime.RuntimeEngine`
 - Older revision contracts:
   - `missionforge.revision.MissionRevision`
   - `missionforge.revision.MissionRevisionRequest`
@@ -156,19 +152,13 @@ recommended conceptual API for new product work:
   - `missionforge.revision.MissionRevisionWorkflow`
   - `missionforge.revision_store.MissionRevisionStore`
   - `missionforge.revision_store.apply_mission_revision`
-- Work-unit and harness compatibility:
-  - `missionforge.work_unit.WorkUnitContract`
-  - `missionforge.harness.WorkUnitCompiler`
-  - `missionforge.harness.WorkUnitHarness`
-  - `missionforge.work_unit.WorkerInvocation`
-  - `missionforge.work_unit.WorkerResult`
-  - `missionforge.work_unit.AttemptInputManifest`
 - Controlled steering and metric-dict surfaces.
 
-Compatibility APIs may stay importable through their explicit submodules, but
-new features should not be added to them unless the change intentionally
-preserves migration behavior. New code should not import these symbols from the
-package root.
+Retired runtime/work-unit modules are not importable: `missionforge.runner`,
+`missionforge.runtime`, `missionforge.work_unit`, `missionforge.harness`,
+`missionforge.workers`, `missionforge.fake_worker`, and
+`missionforge.adapters.piworker`. New code must use `TaskContract`,
+`AgenticFlowRunner`, and `PiWorkerCall`.
 
 ## Evidence, Store, And Verifier Surface
 
@@ -223,11 +213,9 @@ Allowed:
 - Pi Agent / PiWorker construction boundaries
 - external integration code under `integrations/*`
 
-Legacy adapters may still accept explicit `WorkUnitContract` values for
-migration behavior. New PiWorker adapter paths should expose the
-`PiWorkerCallAdapter.run_call(...)` boundary and project `PiWorkerCall` into a
-minimal runtime input/sidecar contract instead of constructing
-`WorkUnitContract`.
+PiWorker adapter paths expose the `PiWorkerCallAdapter.run_call(...)` boundary
+and project `PiWorkerCall` into a minimal runtime input/sidecar contract. There
+is no WorkUnitContract compatibility adapter in the active codebase.
 
 Adapter-specific classes such as `PiAgentRuntimeConfig`,
 `PiAgentExecutorNode`, and `PiAgentJudgeNode` live under
@@ -242,7 +230,6 @@ root:
 - `ActiveMissionContract`
 - `RuntimeContractView`
 - `PiAgentRuntimeAdapter`
-- `FauxPiWorkerAdapter`
 - product integration compilers such as SkillFoundry
 - adapter-private runtime modules
 - product-specific package names or branch selectors

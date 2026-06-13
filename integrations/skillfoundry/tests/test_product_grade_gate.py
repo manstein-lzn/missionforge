@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge.runner import MissionResult
+from missionforge.runtime_results import MissionResult
 from missionforge_skillfoundry import RegistryStatus, evaluate_product_grade, validate_skill_bundle
 
 from test_product_contract import code_runtime_request, sample_request

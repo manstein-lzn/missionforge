@@ -36,7 +36,7 @@ from .product_contract import (
 from .product_grade_gate import ProductGradeFinding, ProductGradeReport, ProductRepairPacket, evaluate_product_grade
 from .registry import RegistryEntry, SkillFoundryRegistry, register_skill_bundle
 from .reports import SkillFoundryProductReport
-from .runtime import run_skillfoundry_bundle_build, run_skillfoundry_task_contract_bundle_build
+from .runtime import run_skillfoundry_task_contract_bundle_build
 from .task_contract_compiler import (
     SkillFoundryTaskContractCompileResult,
     compile_skillfoundry_task_contract,
@@ -89,7 +89,6 @@ __all__ = [
     "manifest_for_profile",
     "register_skill_bundle",
     "run_skillfoundry_live_dogfood",
-    "run_skillfoundry_bundle_build",
     "run_skillfoundry_task_contract_bundle_build",
     "target_package_refs_for_profile",
     "load_skillfoundry_task_contract",

@@ -41,10 +41,19 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         self.assertEqual(adapter.config.command, ("pi-agent-runtime",))
         self.assertIsInstance(create_default_piworker_adapter(config), PiAgentRuntimeAdapter)
 
-    def test_runner_does_not_import_pi_agent_adapter_directly(self) -> None:
-        tree = ast.parse(Path("src/missionforge/runner.py").read_text(encoding="utf-8"))
+    def test_retired_runtime_modules_are_removed_and_factory_keeps_adapter_import_local(self) -> None:
+        retired_paths = [
+            Path("src/missionforge/runner.py"),
+            Path("src/missionforge/runtime.py"),
+            Path("src/missionforge/work_unit.py"),
+            Path("src/missionforge/harness.py"),
+            Path("src/missionforge/fake_worker.py"),
+        ]
+        self.assertFalse(any(path.exists() for path in retired_paths))
+
+        tree = ast.parse(Path("src/missionforge/piworker_runtime.py").read_text(encoding="utf-8"))
         violations: list[str] = []
-        for node in ast.walk(tree):
+        for node in tree.body:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.startswith("missionforge.adapters.pi_agent_runtime"):

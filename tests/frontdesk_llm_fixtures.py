@@ -29,8 +29,8 @@ from missionforge.frontdesk.state import (
 )
 from missionforge.frontdesk.schema import MissionPlan
 from missionforge.piworker_call import PiWorkerCall
-from missionforge.work_unit import ExecutionReport, WorkerResult
-from missionforge.workers import WorkerAdapterResult
+from missionforge.runtime_results import ExecutionReport, WorkerResult
+from missionforge.runtime_results import WorkerAdapterResult
 
 
 class ScriptedFrontDeskPiWorker:
@@ -133,7 +133,7 @@ def seed_llm_authored_frontdesk_artifacts(
         session_id=session.session_id,
         core_pain="The user needs an LLM-interpreted requirement converted into a bounded deliverable.",
         target_users=users,
-        usage_moment="Before MissionRuntime starts.",
+        usage_moment="Before TaskContract handoff starts.",
         deliverable_type=deliverable_type,
         desired_outcome=outcome,
         success_signals=signals,

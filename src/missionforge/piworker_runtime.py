@@ -21,7 +21,7 @@ from .agentic_ledger import (
 from .contracts import ContractValidationError, stable_json_hash, validate_ref
 from .piworker_call import PiWorkerCall, PiWorkerCallResult
 from .evidence_store import EvidenceLedger
-from .workers import WorkerAdapterResult
+from .runtime_results import WorkerAdapterResult
 
 
 class PiWorkerCallAdapter(Protocol):

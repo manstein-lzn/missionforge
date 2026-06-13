@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import unittest
-from tempfile import TemporaryDirectory
 
 from missionforge import Ref
 from missionforge.ir import MissionIR, MissionValidationError
-from missionforge.runner import MissionResult, MissionRuntime
+from missionforge.runtime_results import MissionResult
 
 
 def sample_mission_payload() -> dict:
@@ -64,14 +63,6 @@ class MissionIRTests(unittest.TestCase):
 
         with self.assertRaises(MissionValidationError):
             MissionIR.from_dict(payload)
-
-    def test_runtime_accepts_valid_mission(self) -> None:
-        mission = MissionIR.from_dict(sample_mission_payload())
-        with TemporaryDirectory() as tmpdir:
-            result = MissionRuntime(workspace=tmpdir).run(mission)
-
-        self.assertEqual(result.status, "completed_verified")
-        self.assertEqual(result.metrics["verification_status"], "completed_verified")
 
     def test_mission_result_round_trip_and_ref_export(self) -> None:
         result = MissionResult(

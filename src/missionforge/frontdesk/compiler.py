@@ -36,7 +36,7 @@ class FrontDeskCompileResult:
     freeze_manifest_ref: str
     profile_ids: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    next_action: str = "run"
+    next_action: str = "handoff_task_contract"
 
     def validate(self) -> None:
         require_non_empty_str(self.session_id, "frontdesk_compile_result.session_id")

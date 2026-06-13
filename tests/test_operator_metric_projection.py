@@ -6,15 +6,14 @@ import tempfile
 import unittest
 
 from missionforge.adapters.cli import MissionCLI
-from tests.test_operator_cli_run import write_mission
+from tests.operator_state_fixtures import seed_operator_run
 
 
 class OperatorMetricProjectionTests(unittest.TestCase):
     def test_inspect_surfaces_metric_projection_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
 
             result = MissionCLI().run_command(["inspect", "--workspace", str(root), "--run", "run-sample-mission"])
 
@@ -27,8 +26,7 @@ class OperatorMetricProjectionTests(unittest.TestCase):
     def test_diagnose_reads_projection_flags_not_runtime_metric_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             run_path = root / "runs/run-sample-mission/mission_run.json"
             run = json.loads(run_path.read_text(encoding="utf-8"))
             run["status"] = "failed"

@@ -8,7 +8,7 @@ import unittest
 from missionforge.adapters.observation import ControlRequestWriter, MissionRunView, read_control_request
 from missionforge.contracts import EvidenceTrustLevel
 from missionforge.evidence_store import InMemoryEvidenceStore
-from missionforge.runner import MissionResult
+from missionforge.runtime_results import MissionResult
 
 
 def sample_result() -> MissionResult:

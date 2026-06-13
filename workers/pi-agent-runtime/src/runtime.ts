@@ -43,7 +43,7 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       unregisterFaux = faux.unregister;
       provider.model = faux.getModel();
       const outputs = input.contract.expected_outputs;
-      if (outputs.length === 0) throw new Error("Work unit requires at least one expected output");
+      if (outputs.length === 0) throw new Error("PiWorker call requires at least one expected output");
       faux.setResponses([
         fauxAssistantMessage(
           outputs.map((outputRef, index) =>
@@ -155,7 +155,7 @@ function buildSystemPrompt(input: RuntimeInput): string {
     "Do not call a tool that is not available in this runtime. If shell access is not provided, use read/write/edit only.",
     "Write only the declared expected or optional artifact refs. Do not create extra files.",
     "When a visible node spec describes exact JSON schemas, write those exact schema_version values, enum values, and required fields.",
-    `Work unit: ${input.work_unit_id}`,
+    `Call id: ${input.work_unit_id}`,
     `Mission: ${input.mission_id}`,
     `Objective: ${input.contract.next_objective}`,
     `Expected outputs: ${input.contract.expected_outputs.join(", ")}`,

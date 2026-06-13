@@ -89,7 +89,7 @@ boundary without adding product branches to core.
 
 The TaskContract-native product facade is
 `run_skillfoundry_task_contract_bundle_build(...)`. The older
-`run_skillfoundry_bundle_build(...)` remains a MissionIR compatibility path.
+`run_skillfoundry_bundle_build(...)` facade has been removed.
 
 ## When To Use Live Pi
 

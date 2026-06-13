@@ -26,7 +26,7 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
-from .workers import WorkerAdapterResult
+from .runtime_results import WorkerAdapterResult
 
 
 PIWORKER_CALL_SCHEMA_VERSION = "piworker_call.v1"

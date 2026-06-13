@@ -6,23 +6,14 @@ import tempfile
 import unittest
 
 from missionforge.adapters.cli import MissionCLI
-from tests.test_operator_cli_run import write_mission
-
-
-def workspace_snapshot(root: Path) -> dict[str, str]:
-    snapshot: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            snapshot[str(path.relative_to(root))] = path.read_text(encoding="utf-8", errors="replace")
-    return snapshot
+from tests.operator_state_fixtures import seed_operator_run, workspace_snapshot
 
 
 class OperatorCLIInspectTests(unittest.TestCase):
     def test_inspect_command_returns_read_only_runtime_view(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             before = workspace_snapshot(root)
 
             result = MissionCLI().run_command(["inspect", "--workspace", str(root), "--run", "run-sample-mission"])
@@ -52,8 +43,7 @@ class OperatorCLIInspectTests(unittest.TestCase):
     def test_inspect_output_rejects_hygiene_body_if_it_appears(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             hygiene_path = root / "runs/run-sample-mission/artifact_hygiene.json"
             hygiene = json.loads(hygiene_path.read_text(encoding="utf-8"))
             hygiene["checks"] = [{"raw_payload": "not allowed"}]

@@ -1,222 +1,131 @@
 # MissionForge Architecture
 
-MissionForge is a generic mission execution substrate. It accepts a structured
-Mission IR, expands it through reusable capability and verification profiles,
-freezes a verified mission contract, and drives a fixed adaptive loop until the
-mission reaches verified closure, review, redesign, stop, escalation, or
-failure.
+MissionForge is a minimal delegation kernel around PiWorker.
 
-The architecture is informed by SkillFoundry's adaptive steering lessons and
-MetaLoop's lightweight control protocol. MissionForge should absorb their
-stable control primitives without becoming a SkillFoundry rewrite or a
-MetaLoop runtime clone.
+PiWorker owns semantic work. MissionForge owns durable task authority, workspace
+boundaries, permission checks, refs-first evidence, role separation, independent
+judgment, repair, revision, and replay.
+
+The architecture is:
+
+```text
+FrontDesk
+  -> FrontDeskIntentBundle
+  -> ProductIntegration
+  -> TaskContract
+  -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
+  -> PiWorkerCall(role=executor_piworker)
+  -> artifact refs + execution report
+  -> PiWorkerCall(role=judge_piworker)
+  -> accepted | repair | revision_required | rejected
+  -> DecisionLedger + FinalPackage
+```
 
 ## Product Boundary
 
-MissionForge is not:
+MissionForge core is product-neutral. It must not contain SkillFoundry,
+Codexarium, benchmark, finance, customer, or task-family branches.
 
-- a skill generator
-- a LangGraph framework
-- a prompt template collection
-- a benchmark-specific harness
-- a direct port of SkillFoundry internals
+Product-specific meaning belongs in external product integrations:
 
-MissionForge is:
+- inquiry profiles;
+- task compilers;
+- task contracts;
+- judge rubrics;
+- hard checks;
+- product gates;
+- package builders;
+- tests and fixtures.
 
-- a Mission IR runtime
-- an evidence-first worker harness
-- an adaptive verifier/repair loop
-- a contract-freezing and verification substrate
-- a reusable node that other orchestrators may call
+Core code treats product ids and check ids as data. It does not branch on them.
 
-## Authoring Surface
+## Durable Truth
 
-FrontDesk is the formal requirements-discovery and intent-authoring surface. It
-sits before the runtime contract and helps users turn natural language,
-governed source refs, and optional product-scoped inquiry metadata into a
-reviewable `FrontDeskIntentBundle`.
+Raw chat is not operational task truth. A frozen `TaskContract`, or an explicit
+revision of that contract, is the durable task authority.
 
-FrontDesk is not a runtime shortcut. LLM-backed FrontDesk nodes may draft,
-clarify, fill product inquiry slots, recommend profiles, and audit authoring
-shape, but deterministic code owns source admission, schema validation, profile
-validation, approval gates, product compiler readiness, freeze, and runtime
-handoff.
+`MissionIR` remains only as a high-detail compatibility data shape for older
+mapping paths. It is not the first-class runtime contract for new work.
 
-```text
-FrontDesk + optional ProductInquiryProfile
-  -> FrontDeskIntentBundle
-  -> ProductIntegration or GenericProductIntegration
-  -> MissionIR
-  -> ExpandedMission
-  -> FrozenMissionContract
-  -> MissionRun
-```
+## Role Separation
 
-The existing direct FrontDesk-to-MissionIR path is a generic fallback compiler,
-not the permanent boundary for product domains. Product-specific MissionIR
-content belongs in external product integrations that consume the intent bundle
-and compile product contracts.
+MissionForge keeps four roles separate:
 
-## Planes
+- FrontDesk discovers and structures requirements.
+- ProductIntegration compiles product meaning into MissionForge primitives.
+- Executor PiWorker produces artifacts inside the frozen boundary.
+- Judge PiWorker evaluates artifacts against the frozen contract and rubric.
 
-MissionForge has six planes.
+The executor may not accept its own work. Code may reject invalid, unsafe,
+unauthorized, malformed, stale, or unreferenced outputs, but code does not
+pretend to perform product-level semantic judgment.
 
-### 1. Mission Plane
+## Runtime Boundary
 
-The Mission IR is the canonical task truth at authoring time. It contains
-objective, environment, contract, capabilities, evidence, verification rules,
-adaptation policy, budget, and observability requirements.
+The only first-class intelligent invocation boundary is `PiWorkerCall`.
 
-Chat history is not task truth. FrontDesk may compile user dialogue and
-governed source refs into a sanitized intent bundle. A generic compiler or
-external product integration may then compile that bundle into Mission IR. The
-runtime consumes the IR and its frozen contract, not raw conversation.
+`PiWorkerCall` is an unreliable intelligent RPC wrapped in deterministic
+constraints:
 
-Mission Plane objects are layered:
+- contract id and contract hash;
+- role;
+- visible refs;
+- writable refs;
+- expected output refs;
+- permission manifest ref;
+- evidence refs;
+- exit criteria and stop conditions.
 
-```text
-MissionIR -> ExpandedMission -> FrozenMissionContract -> MissionRun
-```
+The PI Agent runtime sidecar executes the bounded call. MissionForge validates
+the returned `PiWorkerCallResult`, records refs-only evidence, and feeds those
+refs into the next deterministic boundary.
 
-Profiles expand domain, capability, and verification-language concepts into
-mission primitives before freeze. Runtime decisions use expanded constraints,
-validators, evidence requirements, and authority rules, not task names or
-profile-name branches.
+## Evidence Plane
 
-### 2. Context Plane
+Durable state should cite refs instead of embedding raw prompts, transcripts,
+provider payloads, stdout/stderr bodies, artifact bodies, or secrets.
 
-The context plane carries the ContextForge lessons:
+Artifacts remain filesystem refs for now. MissionForge does not build an
+in-memory dataflow system until the workspace and permission model is stable.
 
-- frozen mission contract
-- evidence refs
-- source provenance
-- raw input exclusion boundaries
-- contract manifest
-- verification gate
-- ledger and checkpoint refs
+## Repair And Revision
 
-The context plane must be durable and inspectable.
+Repair preserves the same frozen contract. A repair path may produce new
+artifacts, but it does not weaken acceptance and does not change task truth.
 
-### 3. Harness Plane
-
-The harness plane carries the ForgeUnit lessons:
-
-- attempt input manifest
-- work-unit contract
-- worker invocation record
-- execution report
-- command/tool boundary
-- metrics and timing
-- output artifact refs
-
-The harness plane does not understand product-specific mission semantics.
-
-### 4. Controlled Steering Plane
-
-The controlled steering plane carries the SkillFoundry controlled LLM steering
-direction and the MetaLoop control-point discipline:
+Revision changes task truth only through explicit records:
 
 ```text
-LLM proposes.
-Harness validates boundaries.
-Runtime commits state.
-Verifier proves facts.
-Reviewer arbitrates quality and authority.
+JudgeReport(decision=revision_required)
+  -> TaskRevisionRequest
+  -> RevisionPendingRecord
+  -> revised TaskContract draft
+  -> TaskRevisionDecision
+  -> RevisionAppliedRecord
 ```
 
-This plane owns proposal and control vocabulary:
+Only the revision-applied event is allowed to move execution onto a new contract
+hash.
 
-- steering proposals
-- observation signals
-- contract adjustment requests
-- state corrections
-- decision ledger entries
-- reviewer decisions
-- explicit control requests
-- safe-point checks
+## Operator Surface
 
-LLM-backed components may propose, interpret, or review. They may not mutate a
-frozen contract, commit runtime state, expand authority, verify truth, or close
-a mission. Default runtime behavior must remain deterministic/offline until the
-proposal protocol is testable without live model calls.
+The CLI/RPC adapters are operator surfaces for refs-only inspection, diagnosis,
+explicit control intent, review records, validation, and FrontDesk authoring.
+They are not a product execution facade.
 
-### 5. Worker Plane
+There is no top-level `run` or `resume` command. Product execution should compile
+to `TaskContract`, `WorkspacePolicy`, and `PermissionManifest`, then use the
+TaskContract/PiWorker flow.
 
-MissionForge is PiWorker-first and PiWorker-only for the first formal design
-cycle. This is a deliberate constraint, not an accident.
+## Invariants
 
-The worker plane is inspired by the PI GitHub project runtime model and by the
-PiWorker integration lessons from SkillFoundry. PI is MIT-licensed; MissionForge
-must preserve attribution if PI code is copied or adapted in the future.
-
-Other worker abstractions can be discussed after the PiWorker contract is
-stable. Until then, "worker adapter" means PiWorker adapter.
-
-PiWorker consumes a bounded work-unit contract derived from Mission IR and
-returns refs-only execution evidence.
-
-### 6. Adaptive Plane
-
-The adaptive loop is fixed:
-
-```text
-validate mission
-resolve profiles
-expand mission
-freeze contract
-estimate state
-propose or select work unit
-validate proposal and authority
-commit work unit
-execute worker
-collect observation
-verify evidence
-record state correction
-route: complete | continue | repair | redesign | review | stop | escalate | fail
-emit result
-```
-
-Routing is based on structured verification and failed constraint IDs, not
-string matching over logs. LLM interpretation can become an observation signal,
-but it is never accepted as fact without evidence and verifier support.
-
-The Phase 5 vertical slice implements the first deterministic version of this
-loop with a frozen contract ref, deterministic proposal, validated work unit,
-fake worker artifact, evidence ledger, and verifier-routed `MissionResult`.
-The fake worker records artifacts and execution reports only; completion still
-comes from `VerificationResult.status`.
-
-## Optional Hosts
-
-LangGraph, CLIs, services, notebooks, or another agent framework may call
-MissionForge. The core runtime must remain host-independent.
-
-The intended host adapter shape is:
-
-```text
-host state -> MissionIR -> MissionRuntime -> MissionResult -> host state
-```
-
-## Core Rule
-
-MissionForge core code must not special-case named missions. Domain complexity
-belongs in product inquiry profiles, external product integrations, Mission IR,
-capability profile data, verification profile data, validator data, evidence
-data, product gate criteria, and generated artifacts.
-
-Worker self-report is never acceptance. Completion must come from a locked
-FrozenMissionContract, EvidenceLedger records, and VerificationResult.
-
-LLM self-report is also never acceptance. LLM output is proposal, hypothesis, or
-review evidence according to its recorded trust level and authority boundary.
-
-## Documentation Rule
-
-MissionForge follows a docs-first, docs-last discipline:
-
-- every module starts with a module document under `docs/modules/`
-- implementation should cite the module document it is satisfying
-- after behavior changes, the module document must be updated before the work is
-  considered complete
-- module documents track goal, scope, current status, open questions, invariants,
-  and verification evidence
+- Product semantics do not enter `src/missionforge`.
+- Frozen contract authority is explicit.
+- Executor output is evidence, not acceptance.
+- Judge acceptance is independent from execution.
+- Repair does not weaken the frozen contract.
+- Revision is explicit and ledgered.
+- Runtime/operator state is refs-first.
+- Metrics are diagnostics and cost evidence, not semantic route or acceptance
+  authority.
+- Permission and workspace checks are enforced by code, not prompt wording.

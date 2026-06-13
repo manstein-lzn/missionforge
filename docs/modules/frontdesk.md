@@ -14,12 +14,12 @@ runtime contracts while preventing MissionForge core from learning
 product-specific backend rules.
 
 FrontDesk authoring intelligence is mandatory. The service layer may collect
-conversation turns, inspect refs, and scout workspace/profile metadata without
-a live authoring worker. It must fail closed before need grilling, solution
-architecture, MissionIR mapping, or intent bundle authoring when no LLM/PiWorker
-node has produced the required FrontDesk artifacts. Programmatic callers can opt
-in with `FrontDesk.with_default_piworker(...)`; CLI callers can opt in per
-command with `--use-default-piworker`, which constructs the default
+conversation turns, inspect refs, and scout workspace/profile metadata without a
+live authoring worker. It must fail closed before need grilling, solution
+architecture, compatibility MissionIR mapping, or intent bundle authoring when no
+LLM/PiWorker node has produced the required FrontDesk artifacts. Programmatic
+callers can opt in with `FrontDesk.with_default_piworker(...)`; CLI callers can
+opt in per command with `--use-default-piworker`, which constructs the default
 `PiAgentRuntimeAdapter`. Without that explicit opt-in, deterministic code may
 preserve evidence and validate schemas but must not pretend to understand user
 needs.
@@ -27,12 +27,9 @@ needs.
 FrontDesk is a product-grade authoring surface, not a runtime shortcut and not
 an MVP shell.
 
-The active requirements-discovery behavior is specified in
-`docs/FRONTDESK_SPEC_GRILL_DESIGN.md`. The refined product-context boundary is
-specified in `docs/FRONTDESK_PRODUCT_CONTEXT_AND_INTENT_BUNDLE.md`, with the
-development plan in `docs/PHASE22_FRONTDESK_PRODUCT_CONTEXT_PLAN.md`. The
-implemented FrontDesk PiWorker authoring boundary is specified in
-`docs/PHASE23_FRONTDESK_PIWORKER_AI_EXECUTION_PLAN.md`.
+This module document is the active FrontDesk reference. Broader product
+architecture is described in `docs/ARCHITECTURE.md` and
+`docs/PRODUCT_INTEGRATION_BOUNDARY.md`.
 
 ```text
 user intent + source refs
@@ -45,13 +42,12 @@ user intent + source refs
   -> AgenticFlow / PiWorker runtime
 ```
 
-Compatibility-only generic fallback:
+Generic compatibility data shape:
 
 ```text
 FrontDeskIntentBundle
   -> GenericProductIntegration
-  -> MissionIR
-  -> MissionRuntime
+  -> MissionIR or TaskContract handoff refs
 ```
 
 ## Scope
@@ -71,7 +67,7 @@ FrontDesk owns the pre-runtime authoring workflow:
 - intent and mapping audit before product TaskContract compile or generic freeze;
 - user or policy approval records;
 - freeze manifest and handoff refs;
-- optional operator commands for authoring, inspection, freezing, and running.
+- optional operator commands for authoring, inspection, and freezing.
 
 `start`, `answer`, `inspect`, and metadata `scout` are not intelligence nodes
 and can run offline. `grill`, `draft`, `plan`, `map`, and intent bundle
@@ -90,7 +86,7 @@ FrontDesk or runtime branches.
 
 ## Non-Goals
 
-- no replacement for MissionRuntime;
+- no embedded execution runtime;
 - no PiWorker inner-loop control;
 - no worker-owned acceptance;
 - no product-specific SkillFoundry, Codexarium, benchmark, or customer branches
@@ -363,7 +359,7 @@ missionforge frontdesk draft --session frontdesk/session.json
 missionforge frontdesk audit --session frontdesk/session.json
 missionforge frontdesk approve --session frontdesk/session.json
 missionforge frontdesk freeze --session frontdesk/session.json
-missionforge frontdesk run --session frontdesk/session.json
+# then hand the frozen refs to a product integration / TaskContract flow
 ```
 
 Candidate Python surface:
@@ -377,7 +373,7 @@ intent = session.build_intent_bundle()
 draft = session.draft_mission()
 audit = session.audit()
 frozen = session.approve().freeze()
-result = frozen.run()
+handoff_refs = frozen.to_dict()
 ```
 
 The API should expose refs and structured state, not raw provider payloads.
@@ -497,8 +493,8 @@ FrontDesk implementation should include tests for:
   MissionIR;
 - approval is required before freeze;
 - frozen contract hash is stable;
-- legacy frozen MissionIR can still run through the legacy `MissionRuntime`
-  submodule while that compatibility path exists;
+- frozen output can be handed to product integrations or TaskContract runtime
+  flows without FrontDesk owning execution;
 - external ProfilePack composition works without core runtime branches;
 - SkillFoundry uses FrontDesk output as an integration, not as core runtime
   behavior.

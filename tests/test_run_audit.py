@@ -6,20 +6,15 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from missionforge import build_run_audit
-from missionforge.ir import MissionIR
-from missionforge.runner import MissionRuntime
 from missionforge.adapters.cli import MissionCLI
-from tests.test_ir import sample_mission_payload
-from tests.test_operator_cli_run import write_mission
+from tests.operator_state_fixtures import seed_operator_run
 
 
 class RunAuditTests(unittest.TestCase):
     def test_run_audit_reports_refs_only_success_summary(self) -> None:
-        mission = MissionIR.from_dict(sample_mission_payload())
-
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            MissionRuntime(workspace=root).run(mission)
+            seed_operator_run(root)
 
             audit = build_run_audit(root, "run-sample-mission")
 
@@ -32,11 +27,9 @@ class RunAuditTests(unittest.TestCase):
             self.assertEqual(audit, audit.from_dict(audit.to_dict()))
 
     def test_run_audit_flags_missing_current_contract_ref(self) -> None:
-        mission = MissionIR.from_dict(sample_mission_payload())
-
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            MissionRuntime(workspace=root).run(mission)
+            seed_operator_run(root)
             contract_ref = "runs/run-sample-mission/contracts/base/frozen_contract.json"
             (root / contract_ref).unlink()
 
@@ -48,11 +41,9 @@ class RunAuditTests(unittest.TestCase):
             self.assertIn("missing_refs_detected", audit.diagnostics)
 
     def test_run_audit_does_not_embed_artifact_bodies(self) -> None:
-        mission = MissionIR.from_dict(sample_mission_payload())
-
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            MissionRuntime(workspace=root).run(mission)
+            seed_operator_run(root)
             audit = build_run_audit(root, "run-sample-mission")
             audit_json = json.dumps(audit.to_dict(), sort_keys=True)
 
@@ -64,8 +55,7 @@ class RunAuditTests(unittest.TestCase):
     def test_operator_diagnose_fails_closed_on_stale_refs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             (root / "runs/run-sample-mission/contracts/base/frozen_contract.json").unlink()
 
             result = MissionCLI().run_command(["diagnose", "--workspace", str(root), "--run", "run-sample-mission"])

@@ -4,13 +4,10 @@ import unittest
 
 from missionforge.adapters.cli import (
     COMMAND_EXIT_CODE_BY_REASON,
-    MissionCLIResult,
     MissionCommandError,
     MissionCommandResult,
     assert_refs_only_command_payload,
     command_exit_code,
-    command_exit_code_for_mission_status,
-    command_exit_reason_for_mission_status,
     command_status_for_exit_code,
     command_status_for_exit_reason,
 )
@@ -70,11 +67,6 @@ class OperatorCLIContractTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.assertEqual(command_exit_code(reason), exit_code)
                 self.assertEqual(command_status_for_exit_code(exit_code), command_status_for_exit_reason(reason))
-
-        self.assertEqual(command_exit_reason_for_mission_status("completed_verified"), "success")
-        self.assertEqual(command_exit_code_for_mission_status("completed_verified"), 0)
-        self.assertEqual(command_exit_reason_for_mission_status("failed"), "verification_failed")
-        self.assertEqual(command_exit_code_for_mission_status("review_required"), 7)
 
     def test_nonzero_exit_requires_matching_error(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "command must be one of"):
@@ -177,47 +169,6 @@ class OperatorCLIContractTests(unittest.TestCase):
 
         with self.assertRaises(ContractValidationError):
             assert_refs_only_command_payload({"evidence_refs": ["evidence/E-000001.json", "../secret.json"]})
-
-    def test_cli_result_can_be_wrapped_without_changing_existing_contract(self) -> None:
-        cli_result = MissionCLIResult(
-            mission_id="sample-mission",
-            status="completed_verified",
-            mission_result_ref="host_results/sample-mission.mission_result.json",
-            evidence_refs=["evidence/E-000001.json"],
-            artifact_refs=["package/SKILL.md"],
-            metrics={"verification_status": "completed_verified"},
-        )
-
-        wrapped = MissionCommandResult.from_cli_result("run", cli_result)
-
-        self.assertEqual(wrapped.exit_code, 0)
-        self.assertEqual(wrapped.status, "completed")
-        self.assertEqual(wrapped.data, cli_result.to_dict())
-        self.assertEqual(
-            wrapped.refs,
-            [
-                "host_results/sample-mission.mission_result.json",
-                "evidence/E-000001.json",
-                "package/SKILL.md",
-            ],
-        )
-        self.assertEqual(MissionCommandResult.from_dict(wrapped.to_dict()), wrapped)
-
-    def test_failed_cli_result_wrapper_reports_verifier_failure(self) -> None:
-        cli_result = MissionCLIResult(
-            mission_id="sample-mission",
-            status="failed",
-            mission_result_ref="host_results/sample-mission.mission_result.json",
-            failed_constraint_ids=["C-001"],
-        )
-
-        wrapped = MissionCommandResult.from_cli_result("run", cli_result)
-
-        self.assertEqual(wrapped.exit_code, 6)
-        self.assertEqual(wrapped.status, "failed")
-        self.assertIsNotNone(wrapped.error)
-        self.assertEqual(wrapped.error.code if wrapped.error else "", "verification_failed")
-
 
 if __name__ == "__main__":
     unittest.main()

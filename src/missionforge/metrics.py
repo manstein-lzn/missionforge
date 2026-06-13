@@ -37,7 +37,6 @@ METRIC_KINDS = {"counter", "gauge", "status", "duration", "summary"}
 ALLOWED_MISSIONFORGE_METRIC_NAMESPACES = {
     "missionforge.runtime",
     "missionforge.verifier",
-    "missionforge.harness",
     "missionforge.worker.pi_agent",
     "missionforge.steering",
     "missionforge.operator.cli",

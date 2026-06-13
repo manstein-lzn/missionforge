@@ -16,7 +16,6 @@ HOST_SYMBOLS = {
     "ControlRequestWriter",
     "ControlRequestWriteResult",
     "MissionCLI",
-    "MissionCLIResult",
     "MissionJSONLRPC",
     "MissionRunView",
     "read_control_request",

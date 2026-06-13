@@ -6,7 +6,7 @@ export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 
 export type JsonObject = Record<string, unknown>;
 
-export interface WorkUnitContract {
+export interface PiAgentRuntimeContract {
   work_unit_id: string;
   mission_id: string;
   iteration: number;
@@ -31,8 +31,8 @@ export interface RuntimeInput {
   events_ref: string;
   metrics_ref: string;
   savepoints_ref: string;
-  piworker_call: PiWorkerCall | null;
-  contract: WorkUnitContract;
+  piworker_call: PiWorkerCall;
+  contract: PiAgentRuntimeContract;
   permission_manifest: PermissionManifest;
   runtime: {
     runtime_name: string;
@@ -127,7 +127,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     throw new Error(`Unsupported schema_version: ${schemaVersion}`);
   }
 
-  const contract = parseWorkUnitContract(data.contract);
+  const contract = parsePiAgentRuntimeContract(data.contract);
   const result: RuntimeInput = {
     schema_version: INPUT_SCHEMA_VERSION,
     work_unit_id: requireString(data.work_unit_id, "work_unit_id"),
@@ -141,7 +141,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
     events_ref: requireRef(data.events_ref, "events_ref"),
     metrics_ref: requireRef(data.metrics_ref, "metrics_ref"),
     savepoints_ref: requireRef(data.savepoints_ref, "savepoints_ref"),
-    piworker_call: data.piworker_call === undefined || data.piworker_call === null ? null : parsePiWorkerCall(data.piworker_call),
+    piworker_call: parsePiWorkerCall(data.piworker_call),
     contract,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
     runtime: parseRuntime(data.runtime),
@@ -155,17 +155,15 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   if (result.mission_id !== contract.mission_id) {
     throw new Error("input.mission_id must match contract.mission_id");
   }
-  if (result.piworker_call !== null) {
-    if (result.piworker_call.call_id !== result.work_unit_id) {
-      throw new Error("input.piworker_call.call_id must match work_unit_id");
-    }
-    if (result.piworker_call.contract_id !== result.mission_id) {
-      throw new Error("input.piworker_call.contract_id must match mission_id");
-    }
-    for (const ref of result.piworker_call.expected_output_refs) {
-      if (!contract.expected_outputs.includes(ref)) {
-        throw new Error("input.piworker_call expected output must be present in contract.expected_outputs");
-      }
+  if (result.piworker_call.call_id !== result.work_unit_id) {
+    throw new Error("input.piworker_call.call_id must match work_unit_id");
+  }
+  if (result.piworker_call.contract_id !== result.mission_id) {
+    throw new Error("input.piworker_call.contract_id must match mission_id");
+  }
+  for (const ref of result.piworker_call.expected_output_refs) {
+    if (!contract.expected_outputs.includes(ref)) {
+      throw new Error("input.piworker_call expected output must be present in contract.expected_outputs");
     }
   }
   return result;
@@ -305,7 +303,7 @@ export function requireRef(value: unknown, field: string): string {
   return ref;
 }
 
-function parseWorkUnitContract(value: unknown): WorkUnitContract {
+function parsePiAgentRuntimeContract(value: unknown): PiAgentRuntimeContract {
   const data = requireObject(value, "contract");
   return {
     work_unit_id: requireString(data.work_unit_id, "contract.work_unit_id"),

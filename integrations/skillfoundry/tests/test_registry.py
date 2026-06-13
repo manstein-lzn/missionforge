@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge.runner import MissionResult
+from missionforge.runtime_results import MissionResult
 from missionforge_skillfoundry import (
     RegistryStatus,
     SkillFoundryRegistry,

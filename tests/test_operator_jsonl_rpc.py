@@ -6,26 +6,20 @@ import tempfile
 import unittest
 
 from missionforge.adapters.rpc import MissionJSONLRPC
-from tests.test_operator_cli_run import write_mission
+from tests.operator_state_fixtures import seed_operator_run
 
 
 class OperatorJSONLRPCTests(unittest.TestCase):
-    def test_jsonl_rpc_run_and_inspect_reuse_cli_command_semantics(self) -> None:
+    def test_jsonl_rpc_inspect_reuses_cli_command_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
+            seed_operator_run(root)
             rpc = MissionJSONLRPC(workspace=root)
 
-            run_response = rpc.handle_line(
-                json.dumps({"id": "1", "type": "run", "mission_ref": mission_ref}, sort_keys=True)
-            )
             inspect_response = rpc.handle_line(
                 json.dumps({"id": "2", "type": "inspect", "run": "run-sample-mission"}, sort_keys=True)
             )
 
-            self.assertEqual(run_response["id"], "1")
-            self.assertTrue(run_response["success"])
-            self.assertEqual(run_response["result"]["command"], "run")
             self.assertEqual(inspect_response["id"], "2")
             self.assertTrue(inspect_response["success"])
             self.assertEqual(inspect_response["result"]["data"]["mission_run_id"], "run-sample-mission")
@@ -33,9 +27,8 @@ class OperatorJSONLRPCTests(unittest.TestCase):
     def test_jsonl_rpc_write_control_maps_to_control_halt(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
+            seed_operator_run(root)
             rpc = MissionJSONLRPC(workspace=root)
-            rpc.handle_line(json.dumps({"id": "1", "type": "run", "mission_ref": mission_ref}, sort_keys=True))
 
             response = rpc.handle_line(
                 json.dumps(

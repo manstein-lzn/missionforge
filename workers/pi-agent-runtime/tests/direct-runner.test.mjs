@@ -8,7 +8,7 @@ import { parseDirectRuntimeInput } from "../dist/direct-contract.js";
 import { buildDirectSystemPrompt, buildDirectUserPrompt, runDirectPiWorkerBenchmark } from "../dist/direct-runner.js";
 import { readJson, withWorkspace } from "./helpers.mjs";
 
-test("direct faux runner writes comparable safe artifacts without WorkUnit prompt semantics", async () => {
+test("direct faux runner writes comparable safe artifacts without runtime-contract prompt semantics", async () => {
   await withWorkspace(async (root) => {
     const input = sampleDirectInput();
     await mkdir(join(root, "benchmarks/tasks/task-001"), { recursive: true });
@@ -27,7 +27,7 @@ test("direct faux runner writes comparable safe artifacts without WorkUnit promp
     try {
       const parsed = parseDirectRuntimeInput(input);
       const systemPrompt = buildDirectSystemPrompt(parsed);
-      for (const forbidden of ["Work unit", "WorkUnitContract", "MissionIR", "FrontDesk", "ProductGate", "verifier"]) {
+      for (const forbidden of ["Work unit", "PiAgentRuntimeContract", "MissionIR", "FrontDesk", "ProductGate", "verifier"]) {
         assert.equal(systemPrompt.includes(forbidden), false);
       }
       await runDirectPiWorkerBenchmark(parsed, root);
@@ -81,7 +81,7 @@ test("direct prompt exposes public allowed source refs without MissionForge inte
   assert.equal(userPrompt.includes("Public source refs to inspect before writing"), true);
   assert.equal(userPrompt.includes("benchmarks/tasks/task-001/public_contract.md"), true);
   assert.equal(userPrompt.includes("skillfoundry.bundle.v1"), true);
-  assert.equal(userPrompt.includes("WorkUnitContract"), false);
+  assert.equal(userPrompt.includes("PiAgentRuntimeContract"), false);
   assert.equal(userPrompt.includes("MissionIR"), false);
   assert.equal(userPrompt.includes("FrontDesk"), false);
 });

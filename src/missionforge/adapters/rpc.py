@@ -53,26 +53,10 @@ def _argv_for_request(request: Mapping[str, Any], *, default_workspace: str) -> 
     request_type = require_non_empty_str(request.get("type"), "mission_jsonl_rpc.request.type")
     workspace = require_non_empty_str(request.get("workspace", default_workspace), "mission_jsonl_rpc.request.workspace")
 
-    if request_type == "run":
-        return ["run", "--workspace", workspace, "--mission-ref", _required(request, "mission_ref")]
     if request_type == "inspect":
         return ["inspect", "--workspace", workspace, "--run", _required(request, "run")]
     if request_type == "diagnose":
         return ["diagnose", "--workspace", workspace, "--run", _required(request, "run")]
-    if request_type == "resume":
-        argv = [
-            "resume",
-            "--workspace",
-            workspace,
-            "--run",
-            _required(request, "run"),
-            "--mission-ref",
-            _required(request, "mission_ref"),
-        ]
-        prompt = request.get("prompt")
-        if isinstance(prompt, str) and prompt.strip():
-            argv.extend(["--prompt", prompt.strip()])
-        return argv
     if request_type in {"write_control", "control_halt"}:
         control_type = require_non_empty_str(request.get("control_type", "halt"), "mission_jsonl_rpc.request.control_type")
         if control_type != "halt":

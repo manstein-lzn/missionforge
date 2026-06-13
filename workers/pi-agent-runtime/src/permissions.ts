@@ -1,7 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
-import type { PermissionManifest, WorkUnitContract } from "./contract.js";
+import type { PermissionManifest, PiAgentRuntimeContract } from "./contract.js";
 import { PERMISSION_MANIFEST_SCHEMA_VERSION, requireRef } from "./contract.js";
 
 export const SUPPORTED_HARD_POLICIES = new Set([
@@ -69,7 +69,7 @@ export class ToolPermissionEnforcer {
   }
 }
 
-export function derivePermissionManifestFromContract(contract: WorkUnitContract): PermissionManifest {
+export function derivePermissionManifestFromContract(contract: PiAgentRuntimeContract): PermissionManifest {
   const readableRefs = uniqueRefs([
     ...contract.visible_refs,
     ...contract.allowed_scope,

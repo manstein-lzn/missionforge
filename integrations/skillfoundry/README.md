@@ -2,10 +2,8 @@
 
 This integration is intentionally outside the `missionforge` Python package.
 
-It now defaults to the TaskContract-centered MissionForge runtime path while
-preserving the older SkillFoundry/FrontDesk-to-`MissionIR` bridge as an explicit
-compatibility surface. MissionForge core adapters remain generic and
-product-neutral.
+It uses the TaskContract-centered MissionForge path. MissionForge core adapters
+remain generic and product-neutral.
 
 Dependency direction:
 
@@ -21,8 +19,7 @@ PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s int
 ```
 
 The default SkillFoundry compile path emits TaskContract, WorkspacePolicy, and
-PermissionManifest refs under `runs/{bundle_id}/`; MissionIR APIs are retained
-for migration compatibility only.
+PermissionManifest refs under `runs/{bundle_id}/`.
 
 For TaskContract-native product execution, use:
 
@@ -34,13 +31,9 @@ report = run_skillfoundry_task_contract_bundle_build(request, workspace=".")
 
 This path compiles SkillFoundry into `TaskContract`, runs the MissionForge
 executor/judge boundary, validates the generated package, evaluates the
-product-grade gate, and writes refs-only product reports. The older
-`run_skillfoundry_bundle_build(...)` function remains as the MissionIR
-compatibility facade.
+product-grade gate, and writes refs-only product reports.
 
 Planning:
 
 - [SkillFoundry TaskContract path](docs/task_contract_path.md)
 - [SkillFoundry integration contract](docs/skillfoundry_integration.md)
-- [SkillFoundry on MissionForge plan](docs/skillfoundry_on_missionforge_plan.md)
-- [SkillFoundry product shell validation plan](docs/skillfoundry_product_shell_validation_plan.md)

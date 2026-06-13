@@ -41,7 +41,7 @@ class FrontDeskStateTests(unittest.TestCase):
         )
 
         self.assertEqual(session.status, FrontDeskStatus.FROZEN)
-        self.assertEqual(session.next_action, "run")
+        self.assertEqual(session.next_action, "handoff_task_contract")
 
         with self.assertRaisesRegex(ContractValidationError, "contract_hash"):
             FrontDeskAuthoringSession(

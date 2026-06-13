@@ -69,11 +69,11 @@ not contaminated by FrontDesk or product-specific behavior.
 
 - No live PiWorker invocation.
 - No provider registry.
-- No product-specific fake worker behavior.
+- No product-specific faux-provider behavior.
 - No Python semantic judge.
 - No code-based user-need inference.
 - No contract weakening or automatic revision approval.
-- No replacement of the legacy runtime in this phase.
+- No compatibility fallback to the retired legacy runtime.
 
 ## Main Types
 

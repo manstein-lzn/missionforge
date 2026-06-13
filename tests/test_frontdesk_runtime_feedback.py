@@ -21,7 +21,7 @@ from missionforge.frontdesk.runtime_feedback import (
     unsupported_validator_feedback,
 )
 from missionforge.revision import MissionRevisionRequest, MissionRevisionWorkflow
-from missionforge.runner import MissionResult
+from missionforge.runtime_results import MissionResult
 
 
 class FrontDeskRuntimeFeedbackTests(unittest.TestCase):

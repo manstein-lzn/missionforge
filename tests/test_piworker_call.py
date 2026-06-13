@@ -15,8 +15,8 @@ from missionforge.piworker_call import (
     PiWorkerCallResultStatus,
     PiWorkerCallRole,
 )
-from missionforge.work_unit import ExecutionReport, WorkerResult
-from missionforge.workers import WorkerAdapterResult
+from missionforge.runtime_results import ExecutionReport, WorkerResult
+from missionforge.runtime_results import WorkerAdapterResult
 
 
 HASH_A = "sha256:" + "a" * 64

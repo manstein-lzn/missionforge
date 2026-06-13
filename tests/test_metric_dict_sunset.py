@@ -6,15 +6,14 @@ import tempfile
 import unittest
 
 from missionforge.adapters.cli import MissionCLI
-from tests.test_operator_cli_run import write_mission
+from tests.operator_state_fixtures import seed_operator_run
 
 
 class MetricDictSunsetTests(unittest.TestCase):
     def test_operator_diagnose_ignores_loose_runtime_metric_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             run_path = root / "runs/run-sample-mission/mission_run.json"
             run = json.loads(run_path.read_text(encoding="utf-8"))
             run["status"] = "failed"
@@ -32,8 +31,7 @@ class MetricDictSunsetTests(unittest.TestCase):
     def test_operator_diagnose_uses_metric_projection_for_diagnostic_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            mission_ref = write_mission(root)
-            MissionCLI().run_command(["run", "--workspace", str(root), "--mission-ref", mission_ref])
+            seed_operator_run(root)
             run_path = root / "runs/run-sample-mission/mission_run.json"
             run = json.loads(run_path.read_text(encoding="utf-8"))
             run["status"] = "failed"

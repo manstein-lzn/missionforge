@@ -20,8 +20,7 @@ PiWorker-centered execution path.
 
 - no PiWorker process invocation;
 - no semantic judging in code;
-- no product-specific behavior;
-- no replacement for the legacy `WorkUnitContract` path yet.
+- no product-specific behavior.
 
 ## Invariants
 
@@ -44,6 +43,7 @@ PiWorker-centered execution path.
 
 ## Current Status
 
-S3 adds `src/missionforge/agent_packets.py` and focused tests. It is a contract
-layer only. Runtime invocation, PiWorker process integration, and tool-layer
-enforcement remain later phases.
+`src/missionforge/agent_packets.py` is the role-separated packet layer for the
+current TaskContract/PiWorker flow. PiWorker invocation is handled through
+`PiWorkerCall` and `missionforge.adapters.pi_agent_runtime`; permission and
+workspace enforcement stay in the runtime/tool boundary.

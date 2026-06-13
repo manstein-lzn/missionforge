@@ -1,53 +1,47 @@
 # Product Integration Boundary
 
-MissionForge core adapters are protocol boundaries. They translate external
-processes, providers, hosts, or command protocols into MissionForge contracts.
-They must not carry product-specific task semantics.
+MissionForge core is product-neutral. Product-specific meaning belongs outside
+`src/missionforge`.
 
 ## Rule
 
 ```text
-Task instance facts -> MissionIR
-Reusable task features -> profiles
-Executable checks -> validators
-Facts and artifacts -> evidence refs
-External protocol conversion -> adapters
-Product workflows -> external integrations
+Product facts -> ProductIntegration
+ProductIntegration -> TaskContract + WorkspacePolicy + PermissionManifest
+Product checks -> JudgeRubric + hard-check refs + ProductGate
+Product artifacts -> refs
+MissionForge core -> schema, permission, evidence, role, ledger, repair, revision
 ```
 
-After the FrontDesk product-context boundary, product workflows also own the
-translation from FrontDesk intent bundles to product-domain MissionIR:
+MissionForge provides primitives. It does not prescribe how a programmer must
+assemble a product shell, and it does not carry product methodology in core code.
 
-```text
-FrontDeskIntentBundle
-  -> ProductIntegration
-  -> ProductRequest
-  -> ProductContract
-  -> MissionIR
-  -> ProductGateSpec
-```
+## Allowed In Core
 
-FrontDesk core may execute product inquiry metadata, but it must not contain
-product branches. Product identity enters FrontDesk through
-`ProductInquiryProfile` data supplied by an integration.
+`src/missionforge` may define product-neutral contracts and runtime boundaries:
 
-## Allowed In `src/missionforge/adapters`
+- `FrontDeskIntentBundle`;
+- `ProductIntegration` and compile-result protocols;
+- `TaskContract`;
+- `WorkspacePolicy`;
+- `PermissionManifest`;
+- `WorkerBrief`;
+- `JudgeRubric`;
+- `PiWorkerCall`;
+- refs-only evidence, ledgers, repair, revision, and replay primitives;
+- generic operator adapters.
 
-- CLI/RPC host shells
-- read-only observation surfaces
-- explicit control request writers
-- worker/process adapters that consume committed `WorkUnitContract` objects
-- provider adapters that emit core proposal/review contracts
-- shared refs-only adapter contracts
+## Not Allowed In Core
 
-## Not Allowed In `src/missionforge/adapters`
+`src/missionforge` must not contain:
 
-- product-specific source compilers
-- task-specific workflow branches
-- benchmark-specific adapters
-- registry or package publishing flows
-- product profile policy
-- product names as runtime behavior switches
+- SkillFoundry, Codexarium, benchmark, finance, customer, or other product
+  branches;
+- deterministic if/else logic that infers product intent;
+- product-specific acceptance semantics;
+- product-specific package publishing flows;
+- product-specific worker prompts or judge rubrics;
+- product ids used as runtime behavior switches.
 
 ## Integration Shape
 
@@ -58,49 +52,34 @@ missionforge_<product> -> missionforge
 missionforge -> does not import missionforge_<product>
 ```
 
-The SkillFoundry migration bridge now follows this rule under
-`integrations/skillfoundry/`.
-
-Recommended product integration shape:
+A product integration may contain whatever application structure its programmer
+needs. A common shape is:
 
 ```text
 missionforge_<product>/
-  frontdesk_context.py     # ProductInquiryProfile
-  frontdesk_bridge.py      # FrontDeskIntentBundle -> ProductRequest
-  product_contract.py      # ProductContract and acceptance matrix
-  compiler.py              # ProductContract -> MissionIR
-  validators.py            # product validator helpers
-  product_gate.py          # product-specific gate criteria
+  inquiry_profile.py       # optional FrontDesk product questions
+  compiler.py              # product request -> TaskContract primitives
+  rubrics.py               # product-owned semantic acceptance criteria
+  hard_checks.py           # executable product checks
+  product_gate.py          # product package acceptance
+  facade.py                # product-friendly API
 ```
 
-MissionForge core may define common protocol/result schemas:
-
-```text
-ProductInquiryProfile
-FrontDeskIntentBundle
-ProductIntegration
-ProductCompileResult
-ProductGateResult
-```
-
-Core must treat product ids, product check ids, and product slot ids as data.
-It must not interpret those ids as runtime behavior switches.
+This is a convenience shape, not a required framework.
 
 ## Verification
 
-Core validation checks that product-specific adapter modules such as
-`skillfoundry.py`, `frontdesk.py`, and `codexarium.py` do not exist under
-`src/missionforge/adapters/`.
-
-Product integration tests are explicit:
-
-```bash
-./scripts/validate_integrations.sh skillfoundry
-```
-
-Boundary tests should also assert:
+Boundary tests should assert:
 
 - `src/missionforge` does not import `missionforge_<product>`;
 - `src/missionforge/frontdesk` has no product-name branches;
 - `src/missionforge/adapters` contains no product-specific adapter modules;
-- ProductGate criteria remain product-owned.
+- ProductGate criteria remain product-owned;
+- product execution enters core through `TaskContract`/`PiWorkerCall`, not a
+  product-specific runtime branch.
+
+Run the SkillFoundry integration checks with:
+
+```bash
+./scripts/validate_integrations.sh skillfoundry
+```

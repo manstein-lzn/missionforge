@@ -1,6 +1,6 @@
 # Module: Metrics
 
-Status: implemented in Phase 12, tightened in Phase 19.
+Status: active diagnostic surface.
 
 MissionForge metrics are diagnostic events. They are not evidence, verifier
 inputs, authority grants, or runtime routing truth.
@@ -13,10 +13,10 @@ Metrics exist to make modules independently inspectable:
 module diagnostic values -> MetricEvent JSONL -> MetricProjection -> operator view
 ```
 
-Runtime completion still comes from:
+Semantic completion still comes from:
 
 ```text
-FrozenMissionContract -> EvidenceLedger -> Verifier -> VerificationResult
+TaskContract -> artifact refs + hard checks + independent JudgeReport
 ```
 
 ## Contracts
@@ -45,7 +45,6 @@ Reserved MissionForge namespaces include:
 
 - `missionforge.runtime`
 - `missionforge.verifier`
-- `missionforge.harness`
 - `missionforge.worker.pi_agent`
 - `missionforge.steering`
 - `missionforge.operator.cli`
@@ -55,10 +54,12 @@ Reserved MissionForge namespaces include:
 External products use `integration.<product>`.
 
 Product names must not appear under `missionforge.*`.
+`missionforge.runtime` is a diagnostic namespace label, not the retired
+`missionforge.runtime` module.
 
 ## Runtime Rules
 
-- Runtime writes metric event refs and projection refs.
+- Runtime and operator helpers write metric event refs and projection refs.
 - `MissionResult.metrics` remains a compatibility summary and cites
   `metric_events_ref` and `metric_projection_ref`.
 - Operator inspect surfaces metric refs and the projection.

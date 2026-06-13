@@ -5,13 +5,21 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge import FrontDesk
+from missionforge import (
+    AgentExecutionPacket,
+    AgentExecutionReport,
+    AgentExecutionStatus,
+    AgentWorkspace,
+    FrontDesk,
+    JudgePacket,
+    JudgeReport,
+    JudgeReportDecision,
+)
 from missionforge.frontdesk.mission_mapper import MissionIRMapper
 from missionforge.frontdesk.schema import ApprovalAuthority
 from missionforge.ir import MissionIR
-from missionforge.runner import MissionResult, MissionRuntime
-from missionforge_skillfoundry import BundleProfile, SkillFoundryMissionCompiler, SkillFoundryRequest
-from missionforge_skillfoundry.runtime import run_skillfoundry_bundle_build
+from missionforge_skillfoundry import BundleProfile, SkillBundleManifest, SkillFoundryMissionCompiler, SkillFoundryRequest
+from missionforge_skillfoundry.runtime import run_skillfoundry_task_contract_bundle_build
 from missionforge_skillfoundry.workspace import read_json_ref
 from tests.frontdesk_llm_fixtures import seed_llm_authored_frontdesk_artifacts
 
@@ -61,7 +69,7 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
             self.assertTrue((root / result.frozen_contract_ref).exists())
             self.assertIn(freeze_result.mission_ir_ref, request.source_refs)
 
-    def test_frontdesk_authored_skillfoundry_request_uses_normal_runtime_facade(self) -> None:
+    def test_frontdesk_authored_skillfoundry_request_uses_task_contract_runtime_facade(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             frontdesk = FrontDesk(workspace=root)
@@ -76,14 +84,15 @@ class SkillFoundryFrontDeskFlowTests(unittest.TestCase):
             )
             request = _request_from_frontdesk(root, freeze_result.mission_ir_ref, bundle_id="sf-runtime-skill")
 
-            report = run_skillfoundry_bundle_build(
+            report = run_skillfoundry_task_contract_bundle_build(
                 request,
                 workspace=root,
-                runtime=_PackageFixtureRuntime(root),
+                executor=_PackageFixtureExecutor(),
+                judge=_AcceptingJudge(),
             )
 
             self.assertEqual(report.final_status, "product_grade_registered")
-            self.assertTrue((root / "package/SKILL.md").exists())
+            self.assertTrue((root / "runs/sf-runtime-skill/package/SKILL.md").exists())
             self.assertTrue((root / "reports/skillfoundry_product_report.json").exists())
 
     def test_frontdesk_mapping_selects_code_runtime_when_runtime_assets_are_required(self) -> None:
@@ -196,37 +205,60 @@ def _request_from_frontdesk(
     )
 
 
-class _PackageFixtureRuntime(MissionRuntime):
-    def __init__(self, root: Path) -> None:
-        self.root = root
+class _PackageFixtureExecutor:
+    def execute(
+        self,
+        packet: AgentExecutionPacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> AgentExecutionReport:
+        bundle_id = packet.contract_id.removeprefix("skillfoundry-").removesuffix("-task-contract")
+        workspace.write_text("package/SKILL.md", "# Release Notes Review\n\nUse sanitized release-note refs only.\n")
+        workspace.write_json("package/skillfoundry.bundle.json", SkillBundleManifest.prompt_only(bundle_id).to_dict())
+        workspace.write_text("package/README.md", "# Release Notes Review Skill\n\nLocal prompt-only package.\n")
+        workspace.write_text("reports/executor_evidence.md", "package written\n")
+        return AgentExecutionReport(
+            report_id="skillfoundry-frontdesk-execution-report",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            status=AgentExecutionStatus.COMPLETED,
+            produced_artifact_refs=[
+                "package/SKILL.md",
+                "package/skillfoundry.bundle.json",
+                "package/README.md",
+            ],
+            changed_refs=[
+                "package/SKILL.md",
+                "package/skillfoundry.bundle.json",
+                "package/README.md",
+            ],
+            evidence_refs=["reports/executor_evidence.md"],
+        )
 
-    def run(self, mission: MissionIR) -> MissionResult:
-        (self.root / "package").mkdir(parents=True, exist_ok=True)
-        (self.root / "package/SKILL.md").write_text(
-            "# Release Notes Review\n\nUse sanitized release-note refs only.\n",
-            encoding="utf-8",
-        )
-        (self.root / "package/skillfoundry.bundle.json").write_text(
-            (
-                '{"schema_version":"skillfoundry.bundle.v1","bundle_id":"'
-                + mission.mission_id.removeprefix("skillfoundry-")
-                + '","bundle_profile":"prompt_only","entrypoint":"SKILL.md",'
-                '"capability_surface":{"codex_skill":{"entry_ref":"package/SKILL.md"}},'
-                '"runtime_assets":[],"data_assets":[],"references":[],"environment":{},'
-                '"permissions":{},"verification":{"matrix_ref":"product_contract/product_acceptance_matrix.json",'
-                '"product_grade_ref":"qa/product_grade_report.json"},"distribution":{"status":"local"}}'
-            ),
-            encoding="utf-8",
-        )
-        (self.root / "package/README.md").write_text(
-            "# Release Notes Review Skill\n\nLocal prompt-only package.\n",
-            encoding="utf-8",
-        )
-        return MissionResult(
-            mission_id=mission.mission_id,
-            status="completed_verified",
-            evidence_refs=["evidence/verifier.json"],
-            artifact_refs=["package/SKILL.md", "package/skillfoundry.bundle.json", "package/README.md"],
+
+class _AcceptingJudge:
+    def judge(
+        self,
+        packet: JudgePacket,
+        *,
+        packet_ref: str,
+        workspace: AgentWorkspace,
+    ) -> JudgeReport:
+        return JudgeReport(
+            report_id="skillfoundry-frontdesk-judge-report",
+            packet_id=packet.packet_id,
+            packet_ref=packet_ref,
+            contract_id=packet.contract_id,
+            contract_hash=packet.contract_hash,
+            contract_ref=packet.contract_ref,
+            decision=JudgeReportDecision.ACCEPTED,
+            hard_check_status=packet.hard_check_status,
+            evidence_refs=list(packet.evidence_refs),
+            accepted_artifact_refs=list(packet.artifact_refs),
         )
 
 

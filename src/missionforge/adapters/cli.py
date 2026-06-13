@@ -21,21 +21,18 @@ from ..contracts import (
     require_str_list,
     validate_ref,
 )
-from ..ir import MissionIR
 from ..json_store import JsonWorkspaceStore
 from ..review import ReviewerDecision
-from ..runner import MissionResult, MissionRuntime
 from ..state import (
     ARTIFACT_HYGIENE_SCHEMA_VERSION,
-    SUPPORTED_RESUME_BOUNDARY,
     ArtifactHygieneReport,
+    SUPPORTED_RESUME_BOUNDARY,
     load_mission_run,
-    mission_run_id_for,
 )
 
 
 COMMAND_RESULT_SCHEMA_VERSION = "missionforge.command_result.v1"
-COMMAND_NAMES = {"run", "inspect", "diagnose", "resume", "control halt", "review record", "validate", "frontdesk"}
+COMMAND_NAMES = {"inspect", "diagnose", "control halt", "review record", "validate", "frontdesk"}
 COMMAND_RESULT_STATUSES = {"completed", "failed", "blocked", "unsupported"}
 COMMAND_EXIT_CODE_BY_REASON = {
     "success": 0,
@@ -56,16 +53,6 @@ COMMAND_STATUS_BY_EXIT_REASON = {
     "verification_failed": "failed",
     "authority_pending": "blocked",
     "validation_failed": "failed",
-}
-MISSION_STATUS_EXIT_REASON = {
-    "completed_verified": "success",
-    "failed": "verification_failed",
-    "review_required": "authority_pending",
-    "human_acceptance_required": "authority_pending",
-    "unsupported_verification_spec": "unsupported_operation",
-    "missing_verification_plan": "invalid_input",
-    "execution_incomplete": "runtime_failure",
-    "invalid_contract": "invalid_input",
 }
 COMMAND_FORBIDDEN_RAW_FIELDS = {
     "access_token",
@@ -188,31 +175,6 @@ class MissionCommandResult:
         result.validate()
         return result
 
-    @classmethod
-    def from_cli_result(cls, command: str, result: "MissionCLIResult") -> "MissionCommandResult":
-        """Wrap the existing CLI result without changing CLI execution behavior."""
-
-        result.validate()
-        reason = command_exit_reason_for_mission_status(result.status)
-        exit_code = command_exit_code(reason)
-        error = None
-        if exit_code != 0:
-            error = MissionCommandError(
-                code=reason,
-                message=f"Mission status is {result.status}.",
-                refs=[result.mission_result_ref],
-            )
-        command_result = cls(
-            command=command,
-            status=command_status_for_exit_reason(reason),
-            exit_code=exit_code,
-            data=result.to_dict(),
-            refs=_dedupe_refs([result.mission_result_ref, *result.evidence_refs, *result.artifact_refs]),
-            error=error,
-        )
-        command_result.validate()
-        return command_result
-
     def validate(self) -> None:
         command = require_non_empty_str(self.command, "mission_command_result.command")
         if command not in COMMAND_NAMES:
@@ -261,65 +223,8 @@ class MissionCommandResult:
         }
 
 
-@dataclass(frozen=True)
-class MissionCLIResult:
-    """Refs-only host-shell result summary."""
-
-    mission_id: str
-    status: str
-    mission_result_ref: str
-    evidence_refs: list[str] = field(default_factory=list)
-    artifact_refs: list[str] = field(default_factory=list)
-    failed_constraint_ids: list[str] = field(default_factory=list)
-    metrics: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "MissionCLIResult":
-        data = require_mapping(payload, "mission_cli_result")
-        result = cls(
-            mission_id=require_non_empty_str(data.get("mission_id"), "mission_cli_result.mission_id"),
-            status=require_non_empty_str(data.get("status"), "mission_cli_result.status"),
-            mission_result_ref=validate_ref(data.get("mission_result_ref"), "mission_cli_result.mission_result_ref"),
-            evidence_refs=require_str_list(data.get("evidence_refs", []), "mission_cli_result.evidence_refs"),
-            artifact_refs=require_str_list(data.get("artifact_refs", []), "mission_cli_result.artifact_refs"),
-            failed_constraint_ids=require_str_list(
-                data.get("failed_constraint_ids", []),
-                "mission_cli_result.failed_constraint_ids",
-            ),
-            metrics=ensure_json_value(
-                require_mapping(data.get("metrics", {}), "mission_cli_result.metrics"),
-                "mission_cli_result.metrics",
-            ),
-        )
-        result.validate()
-        return result
-
-    def validate(self) -> None:
-        require_non_empty_str(self.mission_id, "mission_cli_result.mission_id")
-        require_non_empty_str(self.status, "mission_cli_result.status")
-        validate_ref(self.mission_result_ref, "mission_cli_result.mission_result_ref")
-        for ref in self.evidence_refs:
-            validate_ref(ref, "mission_cli_result.evidence_refs[]")
-        for ref in self.artifact_refs:
-            validate_ref(ref, "mission_cli_result.artifact_refs[]")
-        require_str_list(self.failed_constraint_ids, "mission_cli_result.failed_constraint_ids")
-        ensure_json_value(require_mapping(self.metrics, "mission_cli_result.metrics"), "mission_cli_result.metrics")
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return {
-            "mission_id": self.mission_id,
-            "status": self.status,
-            "mission_result_ref": self.mission_result_ref,
-            "evidence_refs": list(self.evidence_refs),
-            "artifact_refs": list(self.artifact_refs),
-            "failed_constraint_ids": list(self.failed_constraint_ids),
-            "metrics": ensure_json_value(self.metrics, "mission_cli_result.metrics"),
-        }
-
-
 class MissionCLI:
-    """Small host shell around the primary Python MissionRuntime API."""
+    """Small host shell for operator commands and FrontDesk."""
 
     adapter_id = "missionforge_cli_shell"
 
@@ -330,54 +235,14 @@ class MissionCLI:
     ) -> None:
         self._validate_runner = validate_runner
 
-    def run_mission_ref(
-        self,
-        mission_ref: str,
-        *,
-        workspace: str | Path = ".",
-        result_ref: str | None = None,
-        max_attempts: int = 1,
-    ) -> MissionCLIResult:
-        root = Path(workspace).resolve()
-        mission = MissionIR.from_dict(JsonWorkspaceStore(root).read_json(mission_ref))
-        mission_result = MissionRuntime(workspace=root, max_attempts=max_attempts).run(mission)
-        mission_result.validate()
-
-        output_ref = result_ref or f"host_results/{mission_result.mission_id}.mission_result.json"
-        _write_json_ref(root, output_ref, mission_result.to_dict())
-        cli_result = MissionCLIResult(
-            mission_id=mission_result.mission_id,
-            status=mission_result.status,
-            mission_result_ref=output_ref,
-            evidence_refs=list(mission_result.evidence_refs),
-            artifact_refs=list(mission_result.artifact_refs),
-            failed_constraint_ids=list(mission_result.failed_constraint_ids),
-            metrics=dict(mission_result.metrics),
-        )
-        adapter_result = AdapterResult(
-            invocation_id=f"cli-run-{mission_result.mission_id}",
-            adapter_id=self.adapter_id,
-            status="completed",
-            output_refs=[output_ref],
-            evidence_refs=list(mission_result.evidence_refs),
-            metrics={"artifact_count": len(mission_result.artifact_refs)},
-        )
-        adapter_result.validate()
-        cli_result.validate()
-        return cli_result
-
     def run_command(self, argv: Sequence[str]) -> MissionCommandResult:
         parser = _command_parser()
         args = parser.parse_args(list(argv))
         command = args.command
-        if command == "run":
-            return self._command_run(args)
         if command == "inspect":
             return self._command_inspect(args)
         if command == "diagnose":
             return self._command_diagnose(args)
-        if command == "resume":
-            return self._command_resume(args)
         if command == "control" and args.control_command == "halt":
             return self._command_control_halt(args)
         if command == "review" and args.review_command == "record":
@@ -387,30 +252,6 @@ class MissionCLI:
         if command == "frontdesk":
             return self._command_frontdesk(args)
         return _error_result("inspect", "unsupported_operation", f"unsupported command: {command}")
-
-    def run(self, argv: Sequence[str]) -> MissionCLIResult:
-        parser = _parser()
-        args = parser.parse_args(list(argv))
-        return self.run_mission_ref(
-            args.mission_ref,
-            workspace=args.workspace,
-            result_ref=args.result_ref,
-            max_attempts=args.max_attempts,
-        )
-
-    def _command_run(self, args: argparse.Namespace) -> MissionCommandResult:
-        try:
-            result = self.run_mission_ref(
-                args.mission_ref,
-                workspace=args.workspace,
-                result_ref=args.result_ref,
-                max_attempts=args.max_attempts,
-            )
-            return MissionCommandResult.from_cli_result("run", result)
-        except FileNotFoundError as exc:
-            return _error_result("run", "missing_state", str(exc))
-        except (json.JSONDecodeError, OSError, ContractValidationError) as exc:
-            return _error_result("run", "invalid_input", str(exc))
 
     def _command_inspect(self, args: argparse.Namespace) -> MissionCommandResult:
         try:
@@ -443,51 +284,6 @@ class MissionCLI:
         except ContractValidationError as exc:
             reason = "missing_state" if "missing" in str(exc).lower() else "invalid_input"
             return _error_result("diagnose", reason, str(exc), data={"diagnosis": reason})
-
-    def _command_resume(self, args: argparse.Namespace) -> MissionCommandResult:
-        root = Path(args.workspace).resolve()
-        try:
-            mission = _load_mission_ref(root, args.mission_ref)
-            run = load_mission_run(root, args.run)
-            expected_run_id = mission_run_id_for(mission.mission_id)
-            if run.mission_run_id != expected_run_id:
-                raise ContractValidationError("mission ref does not match requested run")
-            if run.latest_safe_point is None:
-                return _error_result(
-                    "resume",
-                    "unsupported_operation",
-                    "runtime resume requires a latest safe point",
-                    refs=[run.attempts_ref, run.artifact_hygiene_ref],
-                )
-            if run.latest_safe_point.kind != SUPPORTED_RESUME_BOUNDARY:
-                return _error_result(
-                    "resume",
-                    "unsupported_operation",
-                    f"unsupported resume boundary: {run.latest_safe_point.kind}",
-                    refs=[run.latest_safe_point.savepoint_ref],
-                )
-            mission_result = MissionRuntime(workspace=root, max_attempts=args.max_attempts).resume(
-                mission,
-                follow_up_prompt=args.prompt,
-            )
-            output_ref = args.result_ref or f"host_results/{mission_result.mission_id}.resume_result.json"
-            _write_json_ref(root, output_ref, mission_result.to_dict())
-            cli_result = MissionCLIResult(
-                mission_id=mission_result.mission_id,
-                status=mission_result.status,
-                mission_result_ref=output_ref,
-                evidence_refs=list(mission_result.evidence_refs),
-                artifact_refs=list(mission_result.artifact_refs),
-                failed_constraint_ids=list(mission_result.failed_constraint_ids),
-                metrics=dict(mission_result.metrics),
-            )
-            return MissionCommandResult.from_cli_result("resume", cli_result)
-        except FileNotFoundError as exc:
-            return _error_result("resume", "missing_state", str(exc))
-        except (json.JSONDecodeError, OSError, ContractValidationError) as exc:
-            message = str(exc)
-            reason = "unsupported_operation" if "resume" in message.lower() or "boundary" in message.lower() else "invalid_input"
-            return _error_result("resume", reason, message)
 
     def _command_control_halt(self, args: argparse.Namespace) -> MissionCommandResult:
         from ..adapters.observation import ControlRequestWriter
@@ -612,33 +408,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = list(sys.argv[1:] if argv is None else argv)
     cli = MissionCLI()
-    if args and args[0].startswith("--") and args[0] not in {"-h", "--help"}:
-        result = MissionCommandResult.from_cli_result("run", cli.run(args))
-    else:
-        result = cli.run_command(args)
+    result = cli.run_command(args)
     print(json.dumps(result.to_dict(), sort_keys=True))
     return result.exit_code
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a MissionForge MissionIR ref through the optional CLI shell.")
-    parser.add_argument("--workspace", default=".", help="Workspace root.")
-    parser.add_argument("--mission-ref", required=True, help="Workspace-relative MissionIR JSON ref.")
-    parser.add_argument("--result-ref", default=None, help="Workspace-relative MissionResult output ref.")
-    parser.add_argument("--max-attempts", type=int, default=1, help="Runtime max attempts.")
-    return parser
 
 
 def _command_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MissionForge operator commands.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    run = subparsers.add_parser("run", help="Run a MissionIR ref.")
-    run.add_argument("--workspace", default=".", help="Workspace root.")
-    run.add_argument("--mission-ref", required=True, help="Workspace-relative MissionIR JSON ref.")
-    run.add_argument("--result-ref", default=None, help="Workspace-relative MissionResult output ref.")
-    run.add_argument("--max-attempts", type=int, default=1, help="Runtime max attempts.")
-    run.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
     inspect = subparsers.add_parser("inspect", help="Inspect a MissionRun.")
     inspect.add_argument("--workspace", default=".", help="Workspace root.")
@@ -649,15 +426,6 @@ def _command_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--workspace", default=".", help="Workspace root.")
     diagnose.add_argument("--run", required=True, help="MissionRun id.")
     diagnose.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
-
-    resume = subparsers.add_parser("resume", help="Resume a MissionRun from the latest safe point.")
-    resume.add_argument("--workspace", default=".", help="Workspace root.")
-    resume.add_argument("--run", required=True, help="MissionRun id.")
-    resume.add_argument("--mission-ref", required=True, help="Workspace-relative MissionIR JSON ref.")
-    resume.add_argument("--prompt", default="Resume from the latest completed turn.", help="Follow-up prompt.")
-    resume.add_argument("--result-ref", default=None, help="Workspace-relative MissionResult output ref.")
-    resume.add_argument("--max-attempts", type=int, default=1, help="Runtime max attempts.")
-    resume.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
     control = subparsers.add_parser("control", help="Write explicit control intent.")
     control_subparsers = control.add_subparsers(dest="control_command", required=True)
@@ -710,7 +478,7 @@ def _command_parser() -> argparse.ArgumentParser:
             help="Timeout for each FrontDesk PiWorker node.",
         )
 
-    frontdesk = subparsers.add_parser("frontdesk", help="Author MissionIR with FrontDesk.")
+    frontdesk = subparsers.add_parser("frontdesk", help="Author FrontDesk intent and contract refs.")
     frontdesk_subparsers = frontdesk.add_subparsers(dest="frontdesk_command", required=True)
     fd_start = frontdesk_subparsers.add_parser("start", help="Start a FrontDesk session.")
     fd_start.add_argument("--workspace", default=".", help="Workspace root.")
@@ -724,7 +492,7 @@ def _command_parser() -> argparse.ArgumentParser:
     fd_answer.add_argument("--text", required=True, help="User answer text.")
     fd_answer.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
     add_frontdesk_piworker_flags(fd_answer)
-    for name in ("inspect", "scout", "grill", "cover-semantics", "plan", "map", "draft", "intent", "audit", "freeze", "run"):
+    for name in ("inspect", "scout", "grill", "cover-semantics", "plan", "map", "draft", "intent", "audit", "freeze"):
         fd_command = frontdesk_subparsers.add_parser(name, help=f"FrontDesk {name}.")
         fd_command.add_argument("--workspace", default=".", help="Workspace root.")
         fd_command.add_argument("--session", required=True, help="FrontDesk session ref.")
@@ -790,10 +558,6 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     if root not in path.parents and path != root:
         raise ContractValidationError("MissionCLI ref escapes workspace")
     return path
-
-
-def _load_mission_ref(root: Path, mission_ref: str) -> MissionIR:
-    return MissionIR.from_dict(JsonWorkspaceStore(root).read_json(mission_ref))
 
 
 def _success_result(command: str, *, data: Mapping[str, Any], refs: list[str] | None = None) -> MissionCommandResult:
@@ -992,21 +756,6 @@ def command_status_for_exit_code(exit_code: int) -> str:
 
     reason = _exit_reason_for_code(exit_code)
     return command_status_for_exit_reason(reason)
-
-
-def command_exit_reason_for_mission_status(mission_status: str) -> str:
-    """Map a MissionResult status to the operator exit reason taxonomy."""
-
-    status = require_non_empty_str(mission_status, "mission_status")
-    if status not in MISSION_STATUS_EXIT_REASON:
-        raise ContractValidationError(f"mission_status has no command exit mapping: {status}")
-    return MISSION_STATUS_EXIT_REASON[status]
-
-
-def command_exit_code_for_mission_status(mission_status: str) -> int:
-    """Map a MissionResult status to the deterministic operator exit code."""
-
-    return command_exit_code(command_exit_reason_for_mission_status(mission_status))
 
 
 def assert_refs_only_command_payload(value: Any, field_name: str = "command_payload") -> Any:

@@ -24,7 +24,7 @@ from ..contracts import (
     validate_ref,
 )
 from ..revision import MissionRevisionRequest
-from ..runner import MissionResult
+from ..runtime_results import MissionResult
 from ..verification import VerificationResult
 
 
@@ -210,7 +210,7 @@ def recommend_from_mission_result(
     *,
     source_ref: str = "",
 ) -> RuntimeFeedbackRecommendation:
-    """Interpret a MissionRuntime result into FrontDesk guidance."""
+    """Interpret an execution result envelope into FrontDesk guidance."""
 
     result.validate()
     source_refs = [source_ref] if source_ref else []

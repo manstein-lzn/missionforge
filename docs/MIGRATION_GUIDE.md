@@ -1,12 +1,14 @@
 # Migration Guide
 
 This guide helps move older MissionIR / legacy-runtime code to the
-TaskContract-native PiWorker path.
+TaskContract-native PiWorker path. The old runtime/work-unit modules have been
+removed; migration should target the new path rather than wrapping the retired
+API.
 
 ## Old Shape
 
 ```text
-MissionIR -> MissionRuntime -> MissionResult
+MissionIR -> retired MissionRuntime/work-unit runtime
 ```
 
 ## New Default Shape
@@ -25,7 +27,7 @@ TaskContract -> WorkspacePolicy -> PermissionManifest
 2. Compile that meaning into `TaskContract`, `WorkspacePolicy`, and
    `PermissionManifest`.
 3. Use `create_default_task_contract_flow(...)` for the normal execution path.
-4. Keep MissionIR only where compatibility still matters.
+4. Keep MissionIR only where compatibility data still matters.
 5. Move acceptance decisions to the judge path.
 
 ## What Not To Do
@@ -40,4 +42,3 @@ TaskContract -> WorkspacePolicy -> PermissionManifest
 SkillFoundry is the external product integration example. It compiles a
 product request into TaskContract-native artifacts before running the default
 PiWorker lane.
-

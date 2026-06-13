@@ -10,7 +10,6 @@ from ..contracts import ContractValidationError, require_mapping, require_non_em
 from ..ir import MissionIR
 from ..product_integration import ProductCompileResult, ProductCompileStatus, ProductIntegration, ProductTaskContractCompileResult, TaskContractProductIntegration
 from ..profiles import ProfileRegistry
-from ..runner import MissionRuntime
 from .compiler import FrontDeskCompileResult, approved_hash_for
 from .freeze_gate import FrontDeskFreezeGate
 from .inquiry_profile import ProductInquiryProfile, SlotRequirement, SlotValueType
@@ -429,16 +428,6 @@ class FrontDesk:
             reason="All spec-grill freeze checks passed.",
         )
         self.workspace.write_json(FREEZE_GATE_RESULT_REF, gate_result.to_dict())
-        return result
-
-    def run(self, session_ref: str, *, runtime: MissionRuntime | None = None) -> Any:
-        session = self.load_session(session_ref)
-        mission_ref = validate_ref(session.mission_ir_ref, "frontdesk.run.mission_ir_ref")
-        mission = MissionIR.from_dict(self.workspace.read_json(mission_ref))
-        active_runtime = runtime or MissionRuntime(workspace=self.workspace.workspace)
-        result = active_runtime.run(mission)
-        updated = session.transition(FrontDeskStatus.HANDED_OFF)
-        self.workspace.write_json(updated.session_ref, updated.to_dict())
         return result
 
     def build_intent_bundle(

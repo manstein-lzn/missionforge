@@ -8,13 +8,9 @@ from typing import Any
 from missionforge.agentic_flow import AgenticFlowResult, AgenticFlowRunner, AgenticFlowStatus
 from missionforge.agent_packets import HardCheckStatus
 from missionforge.contracts import ContractValidationError, VerificationStatus, validate_ref
-from missionforge.ir import MissionIR
 from missionforge.piworker_runtime import create_default_task_contract_flow
-from missionforge.runner import MissionRuntime
-from missionforge.runner import MissionResult
-from missionforge.state import mission_run_id_for
+from missionforge.runtime_results import MissionResult
 
-from .compiler import SkillFoundryCompileResult, compile_skillfoundry_bundle
 from .product_contract import SkillFoundryRequest
 from .product_grade_gate import PRODUCT_GRADE_REPORT_REF, evaluate_product_grade
 from .registry import RegistryEntry, register_skill_bundle
@@ -25,55 +21,7 @@ from .task_contract_compiler import (
     load_skillfoundry_task_contract,
 )
 from .validators import BUNDLE_VALIDATION_REPORT_REF, validate_skill_bundle
-from .workspace import read_json_ref, write_json_ref
-
-
-def run_skillfoundry_bundle_build(
-    request: SkillFoundryRequest,
-    *,
-    workspace: str | Path = ".",
-    runtime: MissionRuntime | None = None,
-    max_attempts: int = 1,
-    pi_agent_config: Any | None = None,
-    allow_candidate_registration: bool = True,
-) -> SkillFoundryProductReport:
-    """Compatibility MissionIR runtime path; new work should use TaskContract flow."""
-
-    compile_result = compile_skillfoundry_bundle(request, workspace=workspace)
-    mission = _load_mission(workspace, compile_result)
-    active_runtime = runtime or MissionRuntime(workspace=workspace, max_attempts=max_attempts, pi_agent_config=pi_agent_config)
-    mission_result = active_runtime.run(mission)
-    validate_skill_bundle(
-        workspace=workspace,
-        bundle_id=request.bundle_id,
-        matrix_ref=compile_result.acceptance_matrix_ref or "product_contract/product_acceptance_matrix.json",
-        report_ref=BUNDLE_VALIDATION_REPORT_REF,
-    )
-    product_grade = evaluate_product_grade(
-        workspace=workspace,
-        bundle_id=request.bundle_id,
-        mission_result=mission_result,
-        bundle_validation_report_ref=BUNDLE_VALIDATION_REPORT_REF,
-        report_ref=PRODUCT_GRADE_REPORT_REF,
-    )
-    registry_entry = register_skill_bundle(
-        workspace=workspace,
-        product_grade_report_ref=PRODUCT_GRADE_REPORT_REF,
-        allow_candidate=allow_candidate_registration,
-    )
-    return write_product_report(
-        workspace=workspace,
-        bundle_id=request.bundle_id,
-        request_ref=compile_result.request_ref or "product_contract/skillfoundry_request.json",
-        product_contract_ref=compile_result.product_contract_ref or "product_contract/skill_product_contract.json",
-        mission_ref=compile_result.mission_ir_ref,
-        mission_run_id=mission_run_id_for(mission.mission_id),
-        verifier_refs=list(mission_result.evidence_refs),
-        product_grade_report_ref=PRODUCT_GRADE_REPORT_REF,
-        registry_entry=registry_entry,
-        package_refs=list(product_grade.package_refs),
-        product_grade_outcome_category=product_grade.outcome_category,
-    )
+from .workspace import write_json_ref
 
 
 def run_skillfoundry_task_contract_bundle_build(
@@ -177,11 +125,6 @@ def run_skillfoundry_task_contract_bundle_build(
         ],
         product_grade_outcome_category=product_grade.outcome_category,
     )
-
-
-def _load_mission(workspace: str | Path, compile_result: SkillFoundryCompileResult) -> MissionIR:
-    payload = read_json_ref(workspace, compile_result.mission_ir_ref, "mission_ir")
-    return MissionIR.from_dict(payload)
 
 
 def _write_task_contract_hard_check(

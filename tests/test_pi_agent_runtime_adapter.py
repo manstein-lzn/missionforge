@@ -21,21 +21,20 @@ from missionforge.adapters.pi_agent_runtime import (
 from missionforge.agent_packets import AgentExecutionPacket, AgentExecutionStatus, HardCheckStatus, JudgePacket, JudgeReportDecision
 from missionforge.contracts import ContractValidationError, stable_json_hash
 from missionforge.evidence_store import InMemoryEvidenceStore
-from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult
-from missionforge.work_unit import WorkUnitContract
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
 
 
-def sample_work_unit() -> WorkUnitContract:
-    return WorkUnitContract(
-        work_unit_id="WU-000001",
-        mission_id="mission-001",
-        iteration=1,
-        next_objective="Produce deterministic PI Agent output.",
-        allowed_scope=["package"],
+def sample_piworker_call() -> PiWorkerCall:
+    return PiWorkerCall(
+        call_id="WU-000001",
+        role=PiWorkerCallRole.EXECUTOR,
+        contract_id="mission-001",
+        contract_hash="sha256:" + "a" * 64,
+        contract_ref="mission/frozen_contract.json",
+        objective="Produce deterministic PI Agent output.",
         visible_refs=["mission/frozen_contract.json"],
-        expected_outputs=["package/SKILL.md"],
-        exit_criteria=["Verifier runs."],
-        stop_conditions=["Halt control is active."],
+        writable_refs=["package"],
+        expected_output_refs=["package/SKILL.md"],
     )
 
 
@@ -308,8 +307,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         store = InMemoryEvidenceStore()
 
         with tempfile.TemporaryDirectory() as tempdir:
-            result = PiAgentRuntimeAdapter(config, runner=runner).run(
-                sample_work_unit(),
+            result = PiAgentRuntimeAdapter(config, runner=runner).run_call(
+                sample_piworker_call(),
                 workspace=tempdir,
                 evidence_store=store,
             )
@@ -359,7 +358,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             result = PiAgentRuntimeAdapter(
                 PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
                 runner=runner,
-            ).run(sample_work_unit(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+            ).run_call(sample_piworker_call(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
             report_payload = json.loads(
                 Path(tempdir, "attempts/WU-000001/pi_agent_execution_report.json").read_text(encoding="utf-8")
             )
@@ -380,8 +379,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            result = PiAgentRuntimeAdapter(config, runner=runner).run(
-                sample_work_unit(),
+            result = PiAgentRuntimeAdapter(config, runner=runner).run_call(
+                sample_piworker_call(),
                 workspace=tempdir,
                 evidence_store=InMemoryEvidenceStore(),
             )
@@ -404,8 +403,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
-            result = repair_adapter.run(
-                sample_work_unit(),
+            result = repair_adapter.run_call(
+                sample_piworker_call(),
                 workspace=tempdir,
                 evidence_store=InMemoryEvidenceStore(),
             )
@@ -436,7 +435,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     "MISSIONFORGE_PI_AGENT_BASE_URL": "https://right.codes/codex/v1",
                     "MISSIONFORGE_PI_AGENT_API_KEY": secret,
                 },
-            ).run(sample_work_unit(), workspace=tempdir, evidence_store=store)
+            ).run_call(sample_piworker_call(), workspace=tempdir, evidence_store=store)
             serialized_workspace = "\n".join(
                 path.read_text(encoding="utf-8") for path in Path(tempdir).rglob("*") if path.is_file()
             )
@@ -454,8 +453,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tempdir:
             with self.assertRaisesRegex(ContractValidationError, "missing"):
-                PiAgentRuntimeAdapter(config, runner=runner, environ={}).run(
-                    sample_work_unit(),
+                PiAgentRuntimeAdapter(config, runner=runner, environ={}).run_call(
+                    sample_piworker_call(),
                     workspace=tempdir,
                     evidence_store=InMemoryEvidenceStore(),
                 )
@@ -476,7 +475,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     result = PiAgentRuntimeAdapter(
                         PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
                         runner=runner,
-                    ).run(sample_work_unit(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+                    ).run_call(sample_piworker_call(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
                     output = json.loads(
                         Path(tempdir, "attempts/WU-000001/pi_agent_output.json").read_text(encoding="utf-8")
                     )
@@ -491,7 +490,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             result = PiAgentRuntimeAdapter(
                 PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
                 runner=runner,
-            ).run(sample_work_unit(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+            ).run_call(sample_piworker_call(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
             output = json.loads(
                 Path(tempdir, "attempts/WU-000001/pi_agent_output.json").read_text(encoding="utf-8")
             )
@@ -531,15 +530,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             result = PiAgentRuntimeAdapter(
                 PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
                 runner=runner,
-            ).run(sample_work_unit(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+            ).run_call(sample_piworker_call(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
 
         self.assertEqual(result.worker_result.status, "failed")
         self.assertIn("outside/SKILL.md", result.execution_report.produced_artifacts)
 
     def test_default_command_invokes_node_faux_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            result = PiAgentRuntimeAdapter(PiAgentRuntimeConfig()).run(
-                sample_work_unit(),
+            result = PiAgentRuntimeAdapter(PiAgentRuntimeConfig()).run_call(
+                sample_piworker_call(),
                 workspace=tempdir,
                 evidence_store=InMemoryEvidenceStore(),
             )

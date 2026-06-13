@@ -8,8 +8,8 @@ import unittest
 from missionforge import ContractValidationError
 from missionforge.frontdesk.pi_node_runner import FrontDeskPiNodeRunner
 from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult
-from missionforge.work_unit import ExecutionReport, WorkerResult
-from missionforge.workers import WorkerAdapterResult
+from missionforge.runtime_results import ExecutionReport, WorkerResult
+from missionforge.runtime_results import WorkerAdapterResult
 
 
 class _ScriptedPiWorker:

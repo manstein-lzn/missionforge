@@ -17,7 +17,7 @@ from missionforge.contracts import (
     stable_json_hash,
     validate_ref,
 )
-from missionforge.runner import MissionResult
+from missionforge.runtime_results import MissionResult
 
 from .product_contract import (
     ACCEPTANCE_COVERAGE_REPORT_REF,

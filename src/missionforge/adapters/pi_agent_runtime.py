@@ -33,9 +33,8 @@ from ..contracts import (
     validate_ref,
 )
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
-from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
-from ..work_unit import ExecutionReport, WorkUnitContract, WorkerResult
-from ..workers import WorkerAdapterResult
+from ..piworker_call import PiWorkerCall, PiWorkerCallResult
+from ..runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from .pi_agent_provider_config import resolve_pi_agent_provider_environment
 
 
@@ -59,8 +58,7 @@ class PiAgentRuntimeContract:
     """Minimal sidecar contract projected from PiWorkerCall.
 
     The Node sidecar still receives this payload under the historical
-    ``contract`` field, but the direct PiWorker path no longer constructs a
-    legacy ``WorkUnitContract`` object.
+    ``contract`` field, but the Python runtime path is PiWorkerCall-native.
     """
 
     work_unit_id: str
@@ -98,23 +96,6 @@ class PiAgentRuntimeContract:
             expected_outputs=list(call.expected_output_refs),
             exit_criteria=exit_criteria or ["Write all expected output refs through the PiWorker runtime."],
             stop_conditions=stop_conditions or ["Stop if the PiWorker runtime reports failed or blocked."],
-        )
-        contract.validate()
-        return contract
-
-    @classmethod
-    def from_work_unit(cls, work_unit: WorkUnitContract) -> "PiAgentRuntimeContract":
-        work_unit.validate()
-        contract = cls(
-            work_unit_id=work_unit.work_unit_id,
-            mission_id=work_unit.mission_id,
-            iteration=work_unit.iteration,
-            next_objective=work_unit.next_objective,
-            allowed_scope=list(work_unit.allowed_scope),
-            visible_refs=list(work_unit.visible_refs),
-            expected_outputs=list(work_unit.expected_outputs),
-            exit_criteria=list(work_unit.exit_criteria),
-            stop_conditions=list(work_unit.stop_conditions),
         )
         contract.validate()
         return contract
@@ -699,37 +680,6 @@ class PiAgentRuntimeAdapter:
             runner=self.runner,
             environ=self.environ,
             codex_home=self.codex_home,
-        )
-
-    def run(
-        self,
-        work_unit: WorkUnitContract,
-        *,
-        workspace: str | Path = ".",
-        evidence_store: EvidenceLedger | None = None,
-    ) -> WorkerAdapterResult:
-        if not isinstance(work_unit, WorkUnitContract):
-            raise ContractValidationError("PiAgentRuntimeAdapter consumes committed WorkUnitContract objects only")
-        work_unit.validate()
-        call = PiWorkerCall(
-            call_id=work_unit.work_unit_id,
-            role=_role_from_work_unit(work_unit),
-            contract_id=work_unit.mission_id,
-            contract_hash="sha256:" + ("0" * 64),
-            contract_ref="contract/compat_task_contract.json",
-            objective=work_unit.next_objective,
-            visible_refs=list(work_unit.visible_refs),
-            writable_refs=list(work_unit.allowed_scope),
-            expected_output_refs=list(work_unit.expected_outputs),
-            output_schema_ref="schemas/legacy_work_unit_execution_report.json",
-            validation_policy_ref="validation/legacy_work_unit_policy.json",
-            metadata={"compatibility_surface_ref": "contract/compat_task_contract.json"},
-        )
-        return self.run_call(
-            call,
-            workspace=workspace,
-            evidence_store=evidence_store,
-            runtime_contract=PiAgentRuntimeContract.from_work_unit(work_unit),
         )
 
     def run_call(
@@ -1359,12 +1309,6 @@ def _agent_node_workspace_root(workspace: object, *, fallback: str | Path) -> Pa
     if workspace_root_path is not None:
         return Path(workspace_root_path).resolve()
     return Path(fallback).resolve()
-
-
-def _role_from_work_unit(work_unit: WorkUnitContract) -> PiWorkerCallRole:
-    if "judge" in work_unit.work_unit_id.lower():
-        return PiWorkerCallRole.JUDGE
-    return PiWorkerCallRole.EXECUTOR
 
 
 def _pi_agent_refs(work_unit_id: str) -> dict[str, str]:

@@ -14,10 +14,9 @@ test("parseRuntimeInput accepts valid input", () => {
   assert.deepEqual(input.permission_manifest.writable_refs, ["attempts/WU-000001"]);
 });
 
-test("parseRuntimeInput accepts legacy input without PiWorkerCall", () => {
+test("parseRuntimeInput fails closed without PiWorkerCall", () => {
   const payload = sampleInput({ piworker_call: null });
-  const input = parseRuntimeInput(payload);
-  assert.equal(input.piworker_call, null);
+  assert.throws(() => parseRuntimeInput(payload), /piworker_call/);
 });
 
 test("parseRuntimeInput rejects PiWorkerCall authority mismatch", () => {

@@ -53,8 +53,10 @@ This branch should not:
 ## Current Branch Truth
 
 - `TaskContract` and PiWorker are the primary direction.
-- `MissionIR`, old runtime, steering, work-unit, and metric-dict surfaces remain
-  legacy submodule compatibility paths; they are not package-root public API.
+- `MissionIR` remains a high-detail compatibility data shape; the old runtime,
+  harness, work-unit, runner, and fake-worker modules have been removed.
+- Steering and metric modules remain product-neutral diagnostics/data surfaces,
+  not a parallel execution path.
 - `create_default_task_contract_flow(...)` is the default product-neutral flow.
 - Runtime-owned `attempts/...` artifacts are the PiWorker audit plane.
 - Runtime projections are exposed as refs, not as worker-owned artifacts.
