@@ -2,6 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 
 import type { RuntimeInput } from "./contract.js";
+import type { ToolObservation } from "./context-observations.js";
 import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
 import { redactJson, redactText } from "./redaction.js";
 import type { ToolGatewayDecision } from "./tool-gateway.js";
@@ -111,6 +112,35 @@ export class EvidenceRecorder {
     });
   }
 
+  async recordToolObservation(observation: ToolObservation): Promise<void> {
+    await appendJsonLine(
+      resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
+      {
+        schema_version: "missionforge.pi_agent_runtime_event.v1",
+        event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
+        created_at: new Date().toISOString(),
+        call_id: this.input.call_id,
+        event_type: "tool_observation",
+        payload: redactJson({
+          schema_version: observation.schema_version,
+          observation_id: observation.observation_id,
+          tool_call_id: observation.tool_call_id,
+          tool_name: observation.tool_name,
+          status: observation.status,
+          content_hash: observation.content_hash,
+          content_bytes: observation.content_bytes,
+          content_lines: observation.content_lines,
+          inline_policy: observation.inline_policy,
+          raw_ref: observation.raw_ref,
+          source_ref: observation.source_ref,
+          source_range: observation.source_range,
+          source_hash: observation.source_hash,
+        }, this.env),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
+  }
+
   async writeMetrics(durationMs: number): Promise<void> {
     await this.flushToolGatewayDecisions();
     await this.recordFirstArtifactIfPresent();
@@ -167,6 +197,8 @@ export class EvidenceRecorder {
           reason,
           turn_index: this.metrics.turn_count,
           savepoints_ref: this.input.savepoints_ref,
+          context_observations_ref: this.input.context_observations_ref,
+          context_projection_ref: this.input.context_projection_ref,
           resume_boundary: "after_completed_turn",
         }, this.env),
       },
@@ -181,6 +213,8 @@ export class EvidenceRecorder {
         created_at: new Date().toISOString(),
         message_ref: `${this.input.session_ref}#compact`,
         events_ref: this.input.events_ref,
+        context_observations_ref: this.input.context_observations_ref,
+        context_projection_ref: this.input.context_projection_ref,
         changed_refs: [],
         tool_call_count: this.metrics.tool_call_count,
         commands_run: this.metrics.commands_run.slice(),
@@ -297,6 +331,8 @@ export class EvidenceRecorder {
         created_at: new Date().toISOString(),
         message_ref: `${this.input.session_ref}#turn=${this.metrics.turn_count}`,
         events_ref: this.input.events_ref,
+        context_observations_ref: this.input.context_observations_ref,
+        context_projection_ref: this.input.context_projection_ref,
         changed_refs: [],
         tool_call_count: event.toolResults.length,
         commands_run: this.metrics.commands_run.slice(),

@@ -43,6 +43,9 @@ from .pi_agent_provider_config import resolve_pi_agent_provider_environment
 
 PI_AGENT_INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1"
 PI_AGENT_OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1"
+PI_AGENT_CONTEXT_PROJECTION_SCHEMA_VERSION = "missionforge.pi_agent_context_projection.v1"
+PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1"
+DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024
 DEFAULT_PI_AGENT_TIMEOUT_SECONDS = 300
 MAX_CAPTURED_STREAM_CHARS = 4000
 
@@ -136,6 +139,10 @@ class PiAgentRuntimeInput:
     events_ref: str
     metrics_ref: str
     savepoints_ref: str
+    context_observations_ref: str
+    context_projection_ref: str
+    context_raw_dir_ref: str
+    context_projection_config: Mapping[str, Any]
     attempt_dir_ref: str
     permission_manifest: Mapping[str, Any]
     capability_grant: Mapping[str, Any]
@@ -176,6 +183,16 @@ class PiAgentRuntimeInput:
             events_ref=validate_ref(refs["events"], "pi_agent_runtime_input.events_ref"),
             metrics_ref=validate_ref(refs["metrics"], "pi_agent_runtime_input.metrics_ref"),
             savepoints_ref=validate_ref(refs["savepoints"], "pi_agent_runtime_input.savepoints_ref"),
+            context_observations_ref=validate_ref(
+                refs["context_observations"],
+                "pi_agent_runtime_input.context_observations_ref",
+            ),
+            context_projection_ref=validate_ref(
+                refs["context_projection"],
+                "pi_agent_runtime_input.context_projection_ref",
+            ),
+            context_raw_dir_ref=validate_ref(refs["context_raw_dir"], "pi_agent_runtime_input.context_raw_dir_ref"),
+            context_projection_config=_context_projection_config_payload(config),
             attempt_dir_ref=validate_ref(refs["attempt_dir"], "pi_agent_runtime_input.attempt_dir_ref"),
             permission_manifest=permission_manifest,
             capability_grant=capability_grant,
@@ -199,6 +216,9 @@ class PiAgentRuntimeInput:
             "events_ref",
             "metrics_ref",
             "savepoints_ref",
+            "context_observations_ref",
+            "context_projection_ref",
+            "context_raw_dir_ref",
             "attempt_dir_ref",
         ):
             validate_ref(getattr(self, field_name), f"pi_agent_runtime_input.{field_name}")
@@ -214,6 +234,7 @@ class PiAgentRuntimeInput:
             require_mapping(self.sandbox_profile, "pi_agent_runtime_input.sandbox_profile"),
             "pi_agent_runtime_input.sandbox_profile",
         )
+        _validate_context_projection_config_payload(self.context_projection_config)
         _validate_runtime_authority(
             call=self.piworker_call,
             permission_manifest=PermissionManifest.from_dict(self.permission_manifest),
@@ -236,6 +257,13 @@ class PiAgentRuntimeInput:
             "events_ref": self.events_ref,
             "metrics_ref": self.metrics_ref,
             "savepoints_ref": self.savepoints_ref,
+            "context_observations_ref": self.context_observations_ref,
+            "context_projection_ref": self.context_projection_ref,
+            "context_raw_dir_ref": self.context_raw_dir_ref,
+            "context_projection_config": ensure_json_value(
+                dict(self.context_projection_config),
+                "pi_agent_runtime_input.context_projection_config",
+            ),
             "piworker_call": self.piworker_call.to_dict(),
             "call_spec": self.call_spec.to_dict(),
             "permission_manifest": ensure_json_value(
@@ -269,6 +297,7 @@ class PiAgentRuntimeInput:
                 "savepoint_ref": self.config.resume_savepoint_ref,
                 "session_ref": self.config.resume_session_ref,
                 "events_ref": self.config.resume_events_ref,
+                "summary_artifact_refs": list(self.config.resume_summary_artifact_refs),
                 "resume_prompt": self.config.resume_prompt,
             },
         }
@@ -296,7 +325,9 @@ class PiAgentRuntimeConfig:
     resume_savepoint_ref: str | None = None
     resume_session_ref: str | None = None
     resume_events_ref: str | None = None
+    resume_summary_artifact_refs: tuple[str, ...] = ()
     resume_prompt: str | None = None
+    context_large_observation_bytes: int = DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES
 
     def __post_init__(self) -> None:
         command = self.command or default_pi_agent_runtime_command()
@@ -347,6 +378,14 @@ class PiAgentRuntimeConfig:
             value = getattr(self, field_name)
             if value is not None:
                 validate_ref(value, f"pi_agent_config.{field_name}")
+        object.__setattr__(
+            self,
+            "resume_summary_artifact_refs",
+            tuple(
+                validate_ref(ref, "pi_agent_config.resume_summary_artifact_refs[]")
+                for ref in self.resume_summary_artifact_refs
+            ),
+        )
         if self.resume_mode == "follow_up":
             if self.resume_boundary != "after_completed_turn":
                 raise ContractValidationError("pi_agent_config resume follow_up requires after_completed_turn boundary")
@@ -354,6 +393,11 @@ class PiAgentRuntimeConfig:
                 raise ContractValidationError("pi_agent_config resume follow_up requires savepoint/session/events refs")
             if not self.resume_prompt:
                 raise ContractValidationError("pi_agent_config resume follow_up requires resume_prompt")
+        require_int_at_least(
+            self.context_large_observation_bytes,
+            "pi_agent_config.context_large_observation_bytes",
+            1,
+        )
 
 
 @dataclass(frozen=True)
@@ -437,6 +481,8 @@ class PiAgentRunResult:
     events_ref: str = ""
     metrics_ref: str = ""
     savepoints_ref: str = ""
+    context_observations_ref: str = ""
+    context_projection_ref: str = ""
     duration_ms: int = 0
     metrics: dict[str, Any] = field(default_factory=dict)
 
@@ -482,6 +528,16 @@ class PiAgentRunResult:
             events_ref=validate_ref(data.get("events_ref"), "pi_agent_run_result.events_ref"),
             metrics_ref=validate_ref(data.get("metrics_ref"), "pi_agent_run_result.metrics_ref"),
             savepoints_ref=validate_ref(data.get("savepoints_ref"), "pi_agent_run_result.savepoints_ref"),
+            context_observations_ref=validate_ref(
+                data.get("context_observations_ref")
+                or f"attempts/{default_call_id}/context/tool_observations.jsonl",
+                "pi_agent_run_result.context_observations_ref",
+            ),
+            context_projection_ref=validate_ref(
+                data.get("context_projection_ref")
+                or f"attempts/{default_call_id}/context/projection.json",
+                "pi_agent_run_result.context_projection_ref",
+            ),
             duration_ms=require_int_at_least(
                 data.get("duration_ms", default_duration_ms),
                 "pi_agent_run_result.duration_ms",
@@ -503,7 +559,16 @@ class PiAgentRunResult:
         for field_name in ("produced_artifacts", "changed_refs", "verifier_evidence", "new_unknowns"):
             for ref in getattr(self, field_name):
                 validate_ref(ref, f"pi_agent_run_result.{field_name}[]")
-        for field_name in ("input_ref", "output_ref", "session_ref", "events_ref", "metrics_ref", "savepoints_ref"):
+        for field_name in (
+            "input_ref",
+            "output_ref",
+            "session_ref",
+            "events_ref",
+            "metrics_ref",
+            "savepoints_ref",
+            "context_observations_ref",
+            "context_projection_ref",
+        ):
             validate_ref(getattr(self, field_name), f"pi_agent_run_result.{field_name}")
         for field_name in ("commands_run", "tests_run", "failures", "worker_claims", "recommended_next_steps"):
             require_str_list(getattr(self, field_name), f"pi_agent_run_result.{field_name}")
@@ -691,6 +756,7 @@ class PiAgentRuntimeAdapter:
         session_ref: str,
         events_ref: str,
         follow_up_prompt: str,
+        summary_artifact_refs: Sequence[str] = (),
     ) -> "PiAgentRuntimeAdapter":
         """Clone this adapter for a completed-turn resume follow-up."""
 
@@ -712,6 +778,10 @@ class PiAgentRuntimeAdapter:
             resume_savepoint_ref=savepoint_ref,
             resume_session_ref=session_ref,
             resume_events_ref=events_ref,
+            resume_summary_artifact_refs=tuple(
+                validate_ref(ref, "pi_agent_config.resume_summary_artifact_refs[]")
+                for ref in summary_artifact_refs
+            ),
             resume_prompt=follow_up_prompt,
         )
         return PiAgentRuntimeAdapter(
@@ -798,6 +868,14 @@ class PiAgentRuntimeAdapter:
             env=provider_env.env,
         )
         run_result = self._enforce_output_contract(root=root, spec=spec, refs=refs, result=run_result)
+        _ensure_context_observations_index(root, run_result.context_observations_ref)
+        _ensure_context_projection_snapshot(
+            root,
+            run_result.context_projection_ref,
+            call_id=spec.call_id,
+            context_observations_ref=run_result.context_observations_ref,
+            context_projection_config=_context_projection_config_payload(self.config),
+        )
 
         event_refs.append(
             _record_adapter_event(
@@ -815,8 +893,15 @@ class PiAgentRuntimeAdapter:
                     "events_ref": run_result.events_ref,
                     "metrics_ref": run_result.metrics_ref,
                     "savepoints_ref": run_result.savepoints_ref,
+                    "context_observations_ref": run_result.context_observations_ref,
+                    "context_projection_ref": run_result.context_projection_ref,
                 },
-                source_refs=[refs["input"], run_result.output_ref],
+                source_refs=[
+                    refs["input"],
+                    run_result.output_ref,
+                    run_result.context_observations_ref,
+                    run_result.context_projection_ref,
+                ],
                 trust_level=EvidenceTrustLevel.COMMAND_RESULT,
             )
         )
@@ -828,11 +913,17 @@ class PiAgentRuntimeAdapter:
                 payload={
                     "metrics_ref": run_result.metrics_ref,
                     "savepoints_ref": run_result.savepoints_ref,
+                    "context_observations_ref": run_result.context_observations_ref,
+                    "context_projection_ref": run_result.context_projection_ref,
                     "duration_ms": run_result.duration_ms,
                     "produced_artifact_count": len(run_result.produced_artifacts),
                     "provider_mode": self.config.provider_mode,
                 },
-                source_refs=[run_result.metrics_ref],
+                source_refs=[
+                    run_result.metrics_ref,
+                    run_result.context_observations_ref,
+                    run_result.context_projection_ref,
+                ],
             )
         )
 
@@ -850,6 +941,8 @@ class PiAgentRuntimeAdapter:
                 refs["events"],
                 refs["metrics"],
                 refs["savepoints"],
+                refs["context_observations"],
+                refs["context_projection"],
             ]),
             evidence_refs=_dedupe_refs(event_refs),
             worker_claims=list(run_result.worker_claims),
@@ -885,6 +978,8 @@ class PiAgentRuntimeAdapter:
                 "output_ref": run_result.output_ref,
                 "metrics_ref": run_result.metrics_ref,
                 "savepoints_ref": run_result.savepoints_ref,
+                "context_observations_ref": run_result.context_observations_ref,
+                "context_projection_ref": run_result.context_projection_ref,
             },
         )
         _write_json(_resolve_workspace_ref(root, report_ref), report.to_dict())
@@ -893,7 +988,15 @@ class PiAgentRuntimeAdapter:
             invocation_id=f"invoke-{spec.call_id}",
             adapter_id=self.adapter_id,
             status=report_status,
-            output_refs=_dedupe_refs([report_ref, refs["input"], run_result.output_ref, run_result.savepoints_ref, *run_result.produced_artifacts]),
+            output_refs=_dedupe_refs([
+                report_ref,
+                refs["input"],
+                run_result.output_ref,
+                run_result.savepoints_ref,
+                run_result.context_observations_ref,
+                run_result.context_projection_ref,
+                *run_result.produced_artifacts,
+            ]),
             evidence_refs=list(report.evidence_refs),
             metrics={
                 "duration_ms": run_result.duration_ms,
@@ -966,6 +1069,22 @@ class PiAgentRuntimeAdapter:
     ) -> PiAgentRunResult:
         if result.call_id != spec.call_id:
             return _rewrite_contract_failure(root, spec=spec, refs=refs, result=result, failure=f"pi-agent-runtime output call_id mismatch: {result.call_id}")
+        if result.context_observations_ref != refs["context_observations"]:
+            return _rewrite_contract_failure(
+                root,
+                spec=spec,
+                refs=refs,
+                result=result,
+                failure=f"pi-agent-runtime context_observations_ref mismatch: {result.context_observations_ref}",
+            )
+        if result.context_projection_ref != refs["context_projection"]:
+            return _rewrite_contract_failure(
+                root,
+                spec=spec,
+                refs=refs,
+                result=result,
+                failure=f"pi-agent-runtime context_projection_ref mismatch: {result.context_projection_ref}",
+            )
         for ref in result.produced_artifacts:
             if not any(_is_within(ref, scope) for scope in spec.allowed_scope):
                 return _rewrite_contract_failure(root, spec=spec, refs=refs, result=result, failure=f"pi-agent-runtime produced artifact outside allowed scope: {ref}")
@@ -1089,12 +1208,24 @@ def _rewrite_contract_failure(
         "call_id": spec.call_id,
         "status": "failed",
         "produced_artifacts": list(result.produced_artifacts),
-        "changed_refs": _dedupe_refs([*result.changed_refs, refs["output"], refs["savepoints"]]),
+        "changed_refs": _dedupe_refs([
+            *result.changed_refs,
+            refs["output"],
+            refs["savepoints"],
+            refs["context_observations"],
+            refs["context_projection"],
+        ]),
         "commands_run": list(result.commands_run),
         "tests_run": list(result.tests_run),
         "failures": _dedupe_refs([*result.failures, failure]),
         "worker_claims": list(result.worker_claims),
-        "verifier_evidence": _dedupe_refs([*result.verifier_evidence, refs["output"], refs["savepoints"]]),
+        "verifier_evidence": _dedupe_refs([
+            *result.verifier_evidence,
+            refs["output"],
+            refs["savepoints"],
+            refs["context_observations"],
+            refs["context_projection"],
+        ]),
         "new_unknowns": _dedupe_refs([*result.new_unknowns, *spec.expected_outputs]),
         "recommended_next_steps": ["Inspect PI Agent runtime output spec failure before retrying."],
         "verification_status": "failed",
@@ -1104,6 +1235,8 @@ def _rewrite_contract_failure(
         "events_ref": refs["events"],
         "metrics_ref": refs["metrics"],
         "savepoints_ref": refs["savepoints"],
+        "context_observations_ref": refs["context_observations"],
+        "context_projection_ref": refs["context_projection"],
         "duration_ms": result.duration_ms,
         "metrics": dict(result.metrics),
     }
@@ -1135,12 +1268,22 @@ def _failure_payload(
         "call_id": spec.call_id,
         "status": "failed",
         "produced_artifacts": [],
-        "changed_refs": [refs["output"], refs["savepoints"]],
+        "changed_refs": [
+            refs["output"],
+            refs["savepoints"],
+            refs["context_observations"],
+            refs["context_projection"],
+        ],
         "commands_run": [_format_command([])],
         "tests_run": [],
         "failures": [*failures, *stream_failures],
         "worker_claims": [],
-        "verifier_evidence": [refs["output"], refs["savepoints"]],
+        "verifier_evidence": [
+            refs["output"],
+            refs["savepoints"],
+            refs["context_observations"],
+            refs["context_projection"],
+        ],
         "new_unknowns": list(spec.expected_outputs),
         "recommended_next_steps": ["Inspect PI Agent runtime failure before retrying."],
         "verification_status": "failed",
@@ -1150,6 +1293,8 @@ def _failure_payload(
         "events_ref": refs["events"],
         "metrics_ref": refs["metrics"],
         "savepoints_ref": refs["savepoints"],
+        "context_observations_ref": refs["context_observations"],
+        "context_projection_ref": refs["context_projection"],
         "duration_ms": duration_ms,
         "metrics": {
             "duration_ms": duration_ms,
@@ -1211,6 +1356,8 @@ def _pi_agent_runtime_owned_refs(call_id: str) -> set[str]:
         refs["events"],
         refs["metrics"],
         refs["savepoints"],
+        refs["context_observations"],
+        refs["context_projection"],
         refs["report"],
         _piworker_call_result_ref(call_id),
     }
@@ -1365,11 +1512,40 @@ def _pi_agent_refs(call_id: str) -> dict[str, str]:
         "events": f"{attempt_dir}/pi_agent_events.jsonl",
         "metrics": f"{attempt_dir}/pi_agent_metrics.json",
         "savepoints": f"{attempt_dir}/pi_agent_savepoints.jsonl",
+        "context_observations": f"{attempt_dir}/context/tool_observations.jsonl",
+        "context_projection": f"{attempt_dir}/context/projection.json",
+        "context_raw_dir": f"{attempt_dir}/context/raw",
         "workspace_policy": f"{attempt_dir}/runtime_workspace_policy.json",
         "permission_manifest": f"{attempt_dir}/runtime_permission_manifest.json",
         "sandbox_profile": f"{attempt_dir}/sandbox_profile.json",
         "workspace_view": f"{attempt_dir}/workspace_view",
         "report": f"{attempt_dir}/pi_agent_execution_report.json",
+    }
+
+
+def _context_projection_config_payload(config: PiAgentRuntimeConfig) -> dict[str, Any]:
+    payload = {
+        "schema_version": PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
+        "large_observation_bytes": config.context_large_observation_bytes,
+    }
+    return _validate_context_projection_config_payload(payload)
+
+
+def _validate_context_projection_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    data = require_mapping(payload, "pi_agent_context_projection_config")
+    schema_version = data.get("schema_version") or PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION
+    if schema_version != PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION:
+        raise ContractValidationError(
+            f"unsupported pi_agent_context_projection_config.schema_version: {schema_version}"
+        )
+    large_observation_bytes = require_int_at_least(
+        data.get("large_observation_bytes", DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES),
+        "pi_agent_context_projection_config.large_observation_bytes",
+        1,
+    )
+    return {
+        "schema_version": PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
+        "large_observation_bytes": large_observation_bytes,
     }
 
 
@@ -1542,6 +1718,44 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     compatible = ensure_json_value(dict(payload), "json_payload")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(compatible, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _ensure_context_observations_index(root: Path, ref: str) -> None:
+    path = _resolve_workspace_ref(root, ref)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("", encoding="utf-8")
+
+
+def _ensure_context_projection_snapshot(
+    root: Path,
+    ref: str,
+    *,
+    call_id: str,
+    context_observations_ref: str,
+    context_projection_config: Mapping[str, Any],
+) -> None:
+    path = _resolve_workspace_ref(root, ref)
+    if path.exists():
+        return
+    config = _validate_context_projection_config_payload(context_projection_config)
+    _write_json(
+        path,
+        {
+            "schema_version": PI_AGENT_CONTEXT_PROJECTION_SCHEMA_VERSION,
+            "call_id": call_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "context_observations_ref": context_observations_ref,
+            "projection_count": 0,
+            "latest_turn_index": 0,
+            "input_message_count": 0,
+            "projected_message_count": 0,
+            "context_projection_config": config,
+            "projected_observations": [],
+            "active_observations": [],
+            "warnings": ["projection diagnostics were synthesized by the Python adapter fallback path"],
+        },
+    )
 
 
 def _command_failure(command_result: PiAgentCommandResult, timeout_seconds: int) -> str | None:

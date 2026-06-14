@@ -16,6 +16,13 @@ test("parseRuntimeInput accepts valid input", () => {
   assert.equal(input.capability_grant.role, "executor_piworker");
   assert.equal(input.sandbox_profile.schema_version, "sandbox_profile.v1");
   assert.deepEqual(input.sandbox_profile.writable_refs, ["attempts/WU-000001"]);
+  assert.equal(input.context_observations_ref, "attempts/WU-000001/context/tool_observations.jsonl");
+  assert.equal(input.context_projection_ref, "attempts/WU-000001/context/projection.json");
+  assert.equal(input.context_raw_dir_ref, "attempts/WU-000001/context/raw");
+  assert.deepEqual(input.context_projection_config, {
+    schema_version: "missionforge.pi_agent_context_projection_config.v1",
+    large_observation_bytes: 8192,
+  });
 });
 
 test("parseRuntimeInput fails closed without PiWorkerCall", () => {
@@ -46,6 +53,36 @@ test("parseRuntimeInput rejects PiWorkerCall output outside writable refs", () =
 test("parseRuntimeInput rejects escaping refs", () => {
   const payload = sampleInput({ output_ref: "../escape.json" });
   assert.throws(() => parseRuntimeInput(payload), /workspace-relative/);
+});
+
+test("parseRuntimeInput rejects context refs outside the attempt directory", () => {
+  assert.throws(
+    () => parseRuntimeInput(sampleInput({ context_observations_ref: "context/tool_observations.jsonl" })),
+    /context_observations_ref must be inside attempt_dir_ref/,
+  );
+  assert.throws(
+    () => parseRuntimeInput(sampleInput({ context_projection_ref: "context/projection.json" })),
+    /context_projection_ref must be inside attempt_dir_ref/,
+  );
+  assert.throws(
+    () => parseRuntimeInput(sampleInput({ context_raw_dir_ref: "context/raw" })),
+    /context_raw_dir_ref must be inside attempt_dir_ref/,
+  );
+});
+
+test("parseRuntimeInput validates context projection config", () => {
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          context_projection_config: {
+            schema_version: "missionforge.pi_agent_context_projection_config.v1",
+            large_observation_bytes: 0,
+          },
+        }),
+      ),
+    /large_observation_bytes must be at least 1/,
+  );
 });
 
 test("parseRuntimeInput fails closed without permission manifest", () => {
@@ -236,6 +273,7 @@ test("parseRuntimeInput validates completed-turn resume envelope", () => {
         savepoint_ref: "attempts/WU-000001/pi_agent_savepoints.jsonl#turn=1",
         session_ref: "attempts/WU-000001/pi_agent_session.jsonl",
         events_ref: "attempts/WU-000001/pi_agent_events.jsonl",
+        summary_artifact_refs: ["attempts/WU-000001/context/summary.json"],
         resume_prompt: "Continue from the last completed turn.",
       },
     }),
@@ -243,6 +281,7 @@ test("parseRuntimeInput validates completed-turn resume envelope", () => {
 
   assert.equal(input.resume.mode, "follow_up");
   assert.equal(input.resume.boundary, "after_completed_turn");
+  assert.deepEqual(input.resume.summary_artifact_refs, ["attempts/WU-000001/context/summary.json"]);
 });
 
 test("parseRuntimeInput rejects unsupported resume boundary", () => {

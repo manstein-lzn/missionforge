@@ -127,6 +127,38 @@ Boundary evidence for one call:
 - `evidence_refs`
 - `metric_refs`
 
+## ContextSummaryArtifact
+
+Explicit semantic context produced by a PiWorker or Judge. MissionForge validates
+the artifact shape but does not synthesize or rank semantic memory.
+
+It holds:
+
+- `summary_id`
+- `call_id`
+- `role`
+- `kind`
+- `summary_text`
+- `sources`
+- `permission_manifest_ref`
+- `created_by`
+- `metadata`
+
+Each `ContextSummarySource` cites:
+
+- `source_id`
+- `observation_id`
+- `ref`
+- `content_hash`
+- `source_role`
+- `permission_manifest_ref`
+- optional `range_hint`
+- refs-only `metadata`
+
+The artifact rejects hidden raw bodies, prompts, transcripts, and provider
+payloads. It is a durable artifact that cites evidence refs; it is not hidden
+runtime memory and does not grant read access.
+
 ## RepairTicket
 
 Durable same-contract repair authority:

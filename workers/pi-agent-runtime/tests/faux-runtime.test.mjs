@@ -33,6 +33,12 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     await access(join(root, input.session_ref));
     await access(join(root, input.metrics_ref));
     await access(join(root, input.savepoints_ref));
+    await access(join(root, output.context_observations_ref));
+    await access(join(root, output.context_projection_ref));
+    const projection = await readJson(join(root, output.context_projection_ref));
+    assert.equal(projection.schema_version, "missionforge.pi_agent_context_projection.v1");
+    assert.equal(projection.context_observations_ref, output.context_observations_ref);
+    assert.equal(projection.projected_observations.length, 0);
     const metrics = await readJson(join(root, input.metrics_ref));
     assert.equal(metrics.tool_call_count, 2);
     assert.equal(metrics.cache_read_tokens, 0);
@@ -50,6 +56,7 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     assert.equal(savepoints.includes("missionforge.pi_agent_runtime_savepoint.v1"), true);
     assert.equal(savepoints.includes("after_completed_turn"), true);
     assert.equal(eventsContainGatewayDecision(await readFile(join(root, input.events_ref), "utf-8"), "write"), true);
+    assert.equal(eventsContainType(await readFile(join(root, input.events_ref), "utf-8"), "tool_observation"), true);
   });
 });
 
@@ -83,8 +90,11 @@ test("faux runtime does not serialize api keys", async () => {
     const session = await readFile(join(root, input.session_ref), "utf-8");
     const metrics = await readFile(join(root, input.metrics_ref), "utf-8");
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
-    assert.equal(`${output}${events}${session}${metrics}${savepoints}`.includes("secret-value-12345"), false);
+    const observations = await readFile(join(root, outputData.context_observations_ref), "utf-8");
+    const projection = await readFile(join(root, outputData.context_projection_ref), "utf-8");
+    assert.equal(`${output}${events}${session}${metrics}${savepoints}${observations}${projection}`.includes("secret-value-12345"), false);
     assert.equal(`${events}${session}${savepoints}`.includes("pi-agent-runtime faux artifact"), false);
+    assert.equal(projection.includes("pi-agent-runtime faux artifact"), false);
     assert.equal(`${output}${events}${session}`.includes("Completed WU-000001"), false);
     assert.deepEqual(outputData.worker_claims, ["assistant_final_text_present:length=20"]);
   });
@@ -98,6 +108,17 @@ function eventsContainGatewayDecision(events, toolName) {
     .some((line) => {
       const event = JSON.parse(line);
       return event.event_type === "tool_gateway_decision" && event.payload.tool_name === toolName;
+    });
+}
+
+function eventsContainType(events, eventType) {
+  return events
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .some((line) => {
+      const event = JSON.parse(line);
+      return event.event_type === eventType;
     });
 }
 

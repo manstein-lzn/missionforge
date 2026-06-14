@@ -56,7 +56,7 @@ def sample_grant(**overrides: object) -> CapabilityGrant:
         "sandbox_profile_ref": "policy/sandbox_profile.json",
         "issued_by": "missionforge.runtime",
         "issued_at": "2026-06-13T00:00:00Z",
-        "expires_at": "2026-06-14T00:00:00Z",
+        "expires_at": "2999-01-01T00:00:00Z",
     }
     payload.update(overrides)
     return CapabilityGrant.from_dict(payload)
@@ -64,7 +64,7 @@ def sample_grant(**overrides: object) -> CapabilityGrant:
 
 class RuntimeControlTests(unittest.TestCase):
     def test_capability_grant_round_trip_and_activity(self) -> None:
-        grant = sample_grant()
+        grant = sample_grant(expires_at="2026-06-14T00:00:00Z")
 
         self.assertTrue(grant.is_active(now="2026-06-13T00:30:00Z"))
         self.assertFalse(grant.is_active(now="2026-06-14T00:00:00Z"))

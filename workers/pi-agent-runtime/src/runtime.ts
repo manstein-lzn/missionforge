@@ -4,6 +4,8 @@ import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { access } from "node:fs/promises";
 
 import type { RuntimeInput } from "./contract.js";
+import { ToolObservationRecorder } from "./context-observations.js";
+import { ContextProjector } from "./context-projector.js";
 import { EvidenceRecorder } from "./evidence-recorder.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
 import { resolveWorkspaceRef } from "./paths.js";
@@ -18,6 +20,11 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   const started = Date.now();
   const before = await snapshotWorkspace(workspaceRoot);
   const recorder = new EvidenceRecorder(input, workspaceRoot);
+  const observations = new ToolObservationRecorder({ input, workspaceRoot });
+  const projector = new ContextProjector({
+    observations: () => observations.list(),
+    currentTurnIndex: () => turnStartCount,
+  });
   const failures: string[] = [];
   const workerClaims: string[] = [];
   let turnStartCount = 0;
@@ -34,6 +41,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       toolTimeoutSeconds: provider.toolTimeoutSeconds,
       knownFileRefs: runtimeKnownFileRefs(input),
       knownDirectoryRefs: runtimeKnownDirectoryRefs(input),
+      contextSnapshot: {
+        callId: input.call_id,
+        workspaceRoot,
+        permissionManifest: input.permission_manifest,
+        contextObservationsRef: input.context_observations_ref,
+        contextProjectionRef: input.context_projection_ref,
+        observations: () => observations.list(),
+        currentTurnIndex: () => turnStartCount,
+        projectionDiagnostics: () => projector.diagnostics(input),
+      },
       onToolGatewayDecision: (decision) => recorder.recordToolGatewayDecision(decision),
     });
     permissionBoundaryReady = true;
@@ -71,12 +88,19 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       },
       streamFn: streamSimple,
       getApiKey: () => provider.apiKey,
-      transformContext: stripUnreplayableResponsesReasoning,
+      transformContext: async (messages) => projector.project(await stripUnreplayableResponsesReasoning(messages)),
+      afterToolCall: async (context) => {
+        await observations.recordAfterToolCall(context);
+        const observation = observations.list().find((item) => item.tool_call_id === context.toolCall.id);
+        if (observation) await recorder.recordToolObservation(observation);
+        return undefined;
+      },
       toolExecution: "parallel",
     });
     agent.subscribe(async (event) => {
       if (event.type === "turn_start") {
         turnStartCount += 1;
+        observations.noteTurnStart();
         if (turnStartCount > provider.maxTurns) {
           throw new Error(`pi-agent-runtime reached max turns: ${provider.maxTurns}`);
         }
@@ -124,6 +148,8 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   }
 
   const durationMs = Date.now() - started;
+  await observations.ensureIndex();
+  await projector.writeDiagnostics(input, workspaceRoot);
   const changed = await changedRefs(workspaceRoot, before);
   await recorder.writeMetrics(durationMs);
   const output = await buildRuntimeOutput({
@@ -203,6 +229,9 @@ function buildSystemPrompt(input: RuntimeInput): string {
     lines.push(`Resume savepoint: ${input.resume.savepoint_ref}`);
     lines.push(`Resume session: ${input.resume.session_ref}`);
     lines.push(`Resume events: ${input.resume.events_ref}`);
+    if (input.resume.summary_artifact_refs.length > 0) {
+      lines.push(`Resume summary artifacts: ${input.resume.summary_artifact_refs.join(", ")}`);
+    }
   }
   return lines.join("\n");
 }
@@ -215,6 +244,7 @@ function buildUserPrompt(input: RuntimeInput): string {
       `Savepoint ref: ${input.resume.savepoint_ref}`,
       `Session ref: ${input.resume.session_ref}`,
       `Events ref: ${input.resume.events_ref}`,
+      `Summary artifact refs: ${input.resume.summary_artifact_refs.join(", ") || "<none>"}`,
       `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
       "Do not claim completion as acceptance; MissionForge will verify after this attempt.",
       "Use only permitted tools and refs, then stop.",

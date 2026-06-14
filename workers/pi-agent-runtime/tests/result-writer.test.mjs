@@ -59,3 +59,28 @@ test("runtime output includes changed exact allowed optional artifacts", async (
     assert.equal(output.produced_artifacts.includes("frontdesk/unplanned.json"), false);
   });
 });
+
+test("runtime output keeps raw context artifacts behind observation index", async () => {
+  await withWorkspace(async (root) => {
+    const input = parseRuntimeInput(sampleInput());
+    await mkdir(join(root, input.context_raw_dir_ref), { recursive: true });
+    await writeFile(join(root, `${input.context_raw_dir_ref}/000001-bash-output.txt`), "raw output\n", "utf-8");
+
+    const output = await buildRuntimeOutput({
+      input,
+      workspaceRoot: root,
+      changedRefs: [`${input.context_raw_dir_ref}/000001-bash-output.txt`],
+      commandsRun: [],
+      testsRun: [],
+      failures: [],
+      durationMs: 10,
+      metrics: {},
+    });
+
+    assert.equal(output.changed_refs.includes(`${input.context_raw_dir_ref}/000001-bash-output.txt`), false);
+    assert.equal(output.changed_refs.includes(input.context_observations_ref), true);
+    assert.equal(output.changed_refs.includes(input.context_projection_ref), true);
+    assert.equal(output.verifier_evidence.includes(input.context_observations_ref), true);
+    assert.equal(output.verifier_evidence.includes(input.context_projection_ref), true);
+  });
+});

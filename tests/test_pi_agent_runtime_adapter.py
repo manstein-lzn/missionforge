@@ -123,6 +123,9 @@ class RecordingRunner:
             events_ref = str(self.captured_input["events_ref"])
             metrics_ref = str(self.captured_input["metrics_ref"])
             savepoints_ref = str(self.captured_input["savepoints_ref"])
+            context_observations_ref = str(self.captured_input["context_observations_ref"])
+            context_projection_ref = str(self.captured_input["context_projection_ref"])
+            context_projection_config = dict(self.captured_input["context_projection_config"])
             metrics = {
                 "tool_call_count": 1,
                 "total_tokens": 7,
@@ -149,14 +152,30 @@ class RecordingRunner:
                 "call_id": "WU-000001",
                 "status": "completed",
                 "produced_artifacts": [artifact_ref],
-                "changed_refs": [artifact_ref, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],
+                "changed_refs": [
+                    artifact_ref,
+                    output_ref,
+                    session_ref,
+                    events_ref,
+                    metrics_ref,
+                    savepoints_ref,
+                    context_observations_ref,
+                    context_projection_ref,
+                ],
                 "commands_run": ["fake-pi-agent"],
                 "tests_run": [],
                 "failures": [],
                 "worker_claims": list(self.worker_claims)
                 if self.worker_claims is not None
                 else ["PI Agent says the artifact is done."],
-                "verifier_evidence": [artifact_ref, events_ref, metrics_ref, savepoints_ref],
+                "verifier_evidence": [
+                    artifact_ref,
+                    events_ref,
+                    metrics_ref,
+                    savepoints_ref,
+                    context_observations_ref,
+                    context_projection_ref,
+                ],
                 "new_unknowns": [],
                 "recommended_next_steps": ["Run verifier."],
                 "verification_status": "not_run",
@@ -166,12 +185,36 @@ class RecordingRunner:
                 "events_ref": events_ref,
                 "metrics_ref": metrics_ref,
                 "savepoints_ref": savepoints_ref,
+                "context_observations_ref": context_observations_ref,
+                "context_projection_ref": context_projection_ref,
                 "duration_ms": 1,
                 "metrics": metrics,
             }
             _write_text(cwd / session_ref, "{}\n")
             _write_text(cwd / events_ref, "{}\n")
             _write_text(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
+            _write_text(cwd / context_observations_ref, "")
+            _write_text(
+                cwd / context_projection_ref,
+                json.dumps(
+                    {
+                        "schema_version": "missionforge.pi_agent_context_projection.v1",
+                        "call_id": "WU-000001",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "context_observations_ref": context_observations_ref,
+                        "projection_count": 0,
+                        "latest_turn_index": 0,
+                        "input_message_count": 0,
+                        "projected_message_count": 0,
+                        "context_projection_config": context_projection_config,
+                        "projected_observations": [],
+                        "active_observations": [],
+                        "warnings": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+            )
             if self.write_savepoints:
                 _write_text(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
             _write_text(cwd / output_ref, json.dumps(payload, sort_keys=True, indent=2) + "\n")
@@ -196,6 +239,9 @@ class JudgeRecordingRunner:
             events_ref = str(self.captured_input["events_ref"])
             metrics_ref = str(self.captured_input["metrics_ref"])
             savepoints_ref = str(self.captured_input["savepoints_ref"])
+            context_observations_ref = str(self.captured_input["context_observations_ref"])
+            context_projection_ref = str(self.captured_input["context_projection_ref"])
+            context_projection_config = dict(self.captured_input["context_projection_config"])
             spec_ref = str(self.captured_input["call_spec"]["visible_refs"][0])
             spec = json.loads((cwd / spec_ref).read_text(encoding="utf-8"))
             report_ref = str(spec["report_ref"])
@@ -248,12 +294,28 @@ class JudgeRecordingRunner:
                 "call_id": packet_id,
                 "status": "completed",
                 "produced_artifacts": [report_ref],
-                "changed_refs": [report_ref, output_ref, session_ref, events_ref, metrics_ref, savepoints_ref],
+                "changed_refs": [
+                    report_ref,
+                    output_ref,
+                    session_ref,
+                    events_ref,
+                    metrics_ref,
+                    savepoints_ref,
+                    context_observations_ref,
+                    context_projection_ref,
+                ],
                 "commands_run": ["fake-pi-agent"],
                 "tests_run": [],
                 "failures": [],
                 "worker_claims": ["judge_claim_present:length=24"],
-                "verifier_evidence": [report_ref, events_ref, metrics_ref, savepoints_ref],
+                "verifier_evidence": [
+                    report_ref,
+                    events_ref,
+                    metrics_ref,
+                    savepoints_ref,
+                    context_observations_ref,
+                    context_projection_ref,
+                ],
                 "new_unknowns": [],
                 "recommended_next_steps": ["Record judge decision."],
                 "verification_status": "not_run",
@@ -263,6 +325,8 @@ class JudgeRecordingRunner:
                 "events_ref": events_ref,
                 "metrics_ref": metrics_ref,
                 "savepoints_ref": savepoints_ref,
+                "context_observations_ref": context_observations_ref,
+                "context_projection_ref": context_projection_ref,
                 "duration_ms": 1,
                 "metrics": metrics,
             }
@@ -272,6 +336,28 @@ class JudgeRecordingRunner:
             _write_text(cwd / events_ref, "{}\n")
             _write_text(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
             _write_text(cwd / savepoints_ref, '{"schema_version": "missionforge.pi_agent_runtime_savepoint.v1"}\n')
+            _write_text(cwd / context_observations_ref, "")
+            _write_text(
+                cwd / context_projection_ref,
+                json.dumps(
+                    {
+                        "schema_version": "missionforge.pi_agent_context_projection.v1",
+                        "call_id": packet_id,
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                        "context_observations_ref": context_observations_ref,
+                        "projection_count": 0,
+                        "latest_turn_index": 0,
+                        "input_message_count": 0,
+                        "projected_message_count": 0,
+                        "context_projection_config": context_projection_config,
+                        "projected_observations": [],
+                        "active_observations": [],
+                        "warnings": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+            )
             _write_text(cwd / output_ref, json.dumps(output_payload, sort_keys=True, indent=2) + "\n")
         return self.result
 
@@ -342,6 +428,19 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertEqual(input_payload["piworker_call"]["writable_refs"], ["package"])
             self.assertEqual(input_payload["repair"]["mode"], "none")
             self.assertEqual(input_payload["savepoints_ref"], "attempts/WU-000001/pi_agent_savepoints.jsonl")
+            self.assertEqual(
+                input_payload["context_observations_ref"],
+                "attempts/WU-000001/context/tool_observations.jsonl",
+            )
+            self.assertEqual(input_payload["context_projection_ref"], "attempts/WU-000001/context/projection.json")
+            self.assertEqual(input_payload["context_raw_dir_ref"], "attempts/WU-000001/context/raw")
+            self.assertEqual(
+                input_payload["context_projection_config"],
+                {
+                    "schema_version": "missionforge.pi_agent_context_projection_config.v1",
+                    "large_observation_bytes": 8192,
+                },
+            )
             self.assertEqual(input_payload["permission_manifest"]["schema_version"], "permission_manifest.v1")
             self.assertEqual(input_payload["permission_manifest"]["writable_refs"], ["package"])
             self.assertEqual(input_payload["permission_manifest"]["allowed_commands"], [])
@@ -358,6 +457,21 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertNotIn("api_key", json.dumps(input_payload).lower())
             self.assertNotIn("# Skill", json.dumps(report_payload))
             self.assertNotIn("PI Agent says the artifact is done.", json.dumps(report_payload))
+            self.assertIn("attempts/WU-000001/context/tool_observations.jsonl", report_payload["changed_refs"])
+            self.assertIn("attempts/WU-000001/context/projection.json", report_payload["changed_refs"])
+            self.assertEqual(
+                report_payload["metrics"]["context_projection_ref"],
+                "attempts/WU-000001/context/projection.json",
+            )
+            projection_payload = json.loads(
+                (root / "attempts/WU-000001/context/projection.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(projection_payload["schema_version"], "missionforge.pi_agent_context_projection.v1")
+            self.assertEqual(
+                projection_payload["context_observations_ref"],
+                "attempts/WU-000001/context/tool_observations.jsonl",
+            )
+            self.assertEqual(projection_payload["context_projection_config"]["large_observation_bytes"], 8192)
             self.assertEqual(
                 json.loads((root / "attempts/WU-000001/runtime_workspace_policy.json").read_text(encoding="utf-8"))["schema_version"],
                 "workspace_policy.v1",
@@ -520,6 +634,32 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(output["status"], "failed")
         self.assertIn("savepoint artifact is missing", " ".join(output["failures"]))
 
+    def test_resume_payload_carries_explicit_summary_artifact_refs(self) -> None:
+        runner = RecordingRunner()
+        adapter = PiAgentRuntimeAdapter(
+            PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+            runner=runner,
+        ).with_resume(
+            savepoint_ref="attempts/WU-000001/pi_agent_savepoints.jsonl#turn=1",
+            session_ref="attempts/WU-000001/pi_agent_session.jsonl",
+            events_ref="attempts/WU-000001/pi_agent_events.jsonl",
+            summary_artifact_refs=("attempts/WU-000001/context/summary.json",),
+            follow_up_prompt="Continue using the explicit context summary artifact.",
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            adapter.run_call(sample_piworker_call(), workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+
+        assert runner.captured_input is not None
+        self.assertEqual(
+            runner.captured_input["resume"]["summary_artifact_refs"],
+            ["attempts/WU-000001/context/summary.json"],
+        )
+        self.assertEqual(
+            runner.captured_input["resume"]["resume_prompt"],
+            "Continue using the explicit context summary artifact.",
+        )
+
     def test_out_of_scope_produced_artifact_is_rewritten_as_failure(self) -> None:
         runner = RecordingRunner(
             output_payload={
@@ -572,6 +712,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertTrue((root / "attempts/WU-000001/pi_agent_session.jsonl").exists())
             self.assertTrue((root / "attempts/WU-000001/pi_agent_metrics.json").exists())
             self.assertTrue((root / "attempts/WU-000001/pi_agent_savepoints.jsonl").exists())
+            self.assertTrue((root / "attempts/WU-000001/context/tool_observations.jsonl").exists())
+            self.assertTrue((root / "attempts/WU-000001/context/projection.json").exists())
 
     def test_pi_agent_executor_node_preserves_packet_hash(self) -> None:
         runner = RecordingRunner()
@@ -701,6 +843,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             (root / "reports/hard_checks.json").write_text('{"status":"passed"}\n', encoding="utf-8")
             (root / "reports/tool_events.jsonl").write_text("{}\n", encoding="utf-8")
             (root / "artifacts/final.md").write_text("# final\n", encoding="utf-8")
+            (root / "attempts/WU-000001/context/raw").mkdir(parents=True, exist_ok=True)
+            (root / "attempts/WU-000001/context/raw/executor-output.txt").write_text(
+                "executor raw output body\n",
+                encoding="utf-8",
+            )
+            (root / "attempts/WU-000001/context/tool_observations.jsonl").write_text(
+                '{"raw_ref":"attempts/WU-000001/context/raw/executor-output.txt"}\n',
+                encoding="utf-8",
+            )
 
             report = PiAgentJudgeNode(workspace_root=tempdir, adapter=adapter).judge(
                 packet,
@@ -724,6 +875,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     "revisions/request.json",
                 ],
             )
+            self.assertNotIn(
+                "attempts/WU-000001/context/raw",
+                runner.captured_input["permission_manifest"]["readable_refs"],
+            )
+            self.assertNotIn(
+                "attempts/WU-000001/context/tool_observations.jsonl",
+                runner.captured_input["permission_manifest"]["readable_refs"],
+            )
+            self.assertNotIn("executor raw output body", json.dumps(runner.captured_input, sort_keys=True))
             self.assertEqual(runner.captured_input["call_spec"]["visible_refs"][0], "attempts/judge-packet-001/judge_node_spec.json")
             call_result = PiWorkerCallResult.from_dict(call_result_payload)
             self.assertEqual(call_result.output_refs, ["reports/judge_report.json"])

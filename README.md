@@ -36,6 +36,9 @@ This branch is centered on the TaskContract-native PiWorker runtime:
 - Executor and judge are separate PiWorker roles.
 - `DecisionLedger`, `FinalPackage`, repair, revision, and replay are refs-first
   runtime surfaces.
+- Context management separates raw evidence from active model context: large
+  tool output is preserved behind refs while later model calls receive
+  deterministic projection stubs.
 - SkillFoundry is the active external product integration.
 - The old active value-benchmark lane has been removed from the product path.
 
@@ -86,6 +89,8 @@ MissionForge code owns hard boundaries:
 - no executor self-acceptance;
 - explicit same-contract repair;
 - explicit contract revision before task truth changes;
+- context observations, raw refs, projection diagnostics, and explicit
+  PiWorker/Judge-authored context summary artifacts;
 - secret and raw transcript/provider/stdout/stderr/artifact-body exclusion from
   durable operational truth.
 
@@ -116,6 +121,7 @@ src/missionforge/
   agent_packets.py          Executor and judge packets/reports
   agentic_flow.py           Minimal TaskContract executor -> judge flow
   agentic_ledger.py         DecisionLedger, FinalPackage, replay summary
+  context_summary.py        Explicit context summary artifact contracts
   agentic_repair.py         RepairBrief and TaskRevisionRequest contracts
   agentic_repair_controller.py
                             RepairTicket and RepairExecutionDirective
@@ -131,6 +137,10 @@ workers/pi-agent-runtime/
   src/contract.ts           Node-side runtime input/output parser
   src/runtime.ts            Pi Agent loop sidecar
   src/tools.ts              Permission-aware file/bash tools
+  src/context-observations.ts
+                            ToolObservation raw/source ref capture
+  src/context-projector.ts  Deterministic active-context projection
+  src/context-snapshot.ts   Read-only context inspection tool
 
 integrations/skillfoundry/
   External product integration that compiles SkillFoundry meaning into

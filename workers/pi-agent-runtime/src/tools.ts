@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { PermissionManifest, SandboxProfile } from "./contract.js";
+import { createContextSnapshotTool, type ContextSnapshotToolOptions } from "./context-snapshot.js";
 import { resolveWorkspaceRef } from "./paths.js";
 import { assertNoSymlinkSegments, guardWorkspacePath, ToolPermissionEnforcer } from "./permissions.js";
 import { createBubblewrapBashOperations } from "./sandbox.js";
@@ -25,6 +26,7 @@ export interface MissionForgeToolOptions {
   toolTimeoutSeconds: number;
   knownFileRefs?: string[];
   knownDirectoryRefs?: string[];
+  contextSnapshot?: ContextSnapshotToolOptions;
   onToolGatewayDecision?: (decision: ToolGatewayDecision) => void;
 }
 
@@ -50,6 +52,12 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
       operations: createGatewayWriteOperations(gateway),
     }),
   ];
+  if (options.contextSnapshot) {
+    tools.push(createContextSnapshotTool({
+      ...options.contextSnapshot,
+      permissionManifest: effectiveManifest,
+    }));
+  }
   if (effectiveManifest.allowed_commands.length > 0) {
     if (options.sandboxProfile && options.sandboxProfile.mode !== "bubblewrap") {
       throw new Error(`sandbox_profile.mode is not supported for bash: ${options.sandboxProfile.mode}`);

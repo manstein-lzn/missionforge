@@ -72,6 +72,9 @@ Refs and evidence:
 - `Ref`
 - `ArtifactRef`
 - `EvidenceRef`
+- `ContextSummaryArtifact`
+- `ContextSummaryKind`
+- `ContextSummarySource`
 - `EvidenceLedger`
 - `EvidenceRecord`
 - `FileEvidenceStore`
@@ -133,6 +136,11 @@ Use module imports when you want a higher-level composition.
 `missionforge.adapters.pi_agent_runtime`
 : The Pi Agent sidecar adapter, runtime config, executor node, and judge node.
   Adapter internals are intentionally not exported from root.
+
+`missionforge.context_summary`
+: Explicit PiWorker/Judge-authored semantic context summary artifact schemas.
+  These are exported from the root because they are product-neutral evidence
+  contracts, not runtime internals.
 
 `missionforge.profiles`, `missionforge.verification`, `missionforge.verifier`
 : Compatibility and supporting validation infrastructure. These are useful, but

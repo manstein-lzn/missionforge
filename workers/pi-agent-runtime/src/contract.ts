@@ -3,11 +3,23 @@ export const OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1";
 export const PERMISSION_MANIFEST_SCHEMA_VERSION = "permission_manifest.v1";
 export const CAPABILITY_GRANT_SCHEMA_VERSION = "runtime_capability_grant.v1";
 export const SANDBOX_PROFILE_SCHEMA_VERSION = "sandbox_profile.v1";
+export const CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1";
+export const DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024;
 
 export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 export type SandboxMode = "bubblewrap" | "nsjail" | "subprocess" | "unsupported";
 
 export type JsonObject = Record<string, unknown>;
+
+export interface ContextProjectionConfig {
+  schema_version: typeof CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION;
+  large_observation_bytes: number;
+}
+
+export const DEFAULT_CONTEXT_PROJECTION_CONFIG: ContextProjectionConfig = {
+  schema_version: CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
+  large_observation_bytes: DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES,
+};
 
 export interface PiAgentCallSpec {
   call_id: string;
@@ -34,6 +46,10 @@ export interface RuntimeInput {
   events_ref: string;
   metrics_ref: string;
   savepoints_ref: string;
+  context_observations_ref: string;
+  context_projection_ref: string;
+  context_raw_dir_ref: string;
+  context_projection_config: ContextProjectionConfig;
   piworker_call: PiWorkerCall;
   call_spec: PiAgentCallSpec;
   permission_manifest: PermissionManifest;
@@ -131,6 +147,7 @@ export interface ResumeInput {
   savepoint_ref: string | null;
   session_ref: string | null;
   events_ref: string | null;
+  summary_artifact_refs: string[];
   resume_prompt: string | null;
 }
 
@@ -154,6 +171,8 @@ export interface RuntimeOutput {
   events_ref: string;
   metrics_ref: string;
   savepoints_ref: string;
+  context_observations_ref: string;
+  context_projection_ref: string;
   duration_ms: number;
   metrics: JsonObject;
 }
@@ -166,19 +185,33 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
 
   const callSpec = parsePiAgentCallSpec(data.call_spec);
+  const attemptDirRef = requireRef(data.attempt_dir_ref, "attempt_dir_ref");
   const result: RuntimeInput = {
     schema_version: INPUT_SCHEMA_VERSION,
     call_id: requireString(data.call_id, "call_id"),
     mission_id: requireString(data.mission_id, "mission_id"),
     iteration: requirePositiveInteger(data.iteration, "iteration"),
     workspace_root: requireString(data.workspace_root, "workspace_root"),
-    attempt_dir_ref: requireRef(data.attempt_dir_ref, "attempt_dir_ref"),
+    attempt_dir_ref: attemptDirRef,
     input_ref: requireRef(data.input_ref, "input_ref"),
     output_ref: requireRef(data.output_ref, "output_ref"),
     session_ref: requireRef(data.session_ref, "session_ref"),
     events_ref: requireRef(data.events_ref, "events_ref"),
     metrics_ref: requireRef(data.metrics_ref, "metrics_ref"),
     savepoints_ref: requireRef(data.savepoints_ref, "savepoints_ref"),
+    context_observations_ref:
+      data.context_observations_ref === undefined || data.context_observations_ref === null
+        ? `${attemptDirRef}/context/tool_observations.jsonl`
+        : requireRef(data.context_observations_ref, "context_observations_ref"),
+    context_projection_ref:
+      data.context_projection_ref === undefined || data.context_projection_ref === null
+        ? `${attemptDirRef}/context/projection.json`
+        : requireRef(data.context_projection_ref, "context_projection_ref"),
+    context_raw_dir_ref:
+      data.context_raw_dir_ref === undefined || data.context_raw_dir_ref === null
+        ? `${attemptDirRef}/context/raw`
+        : requireRef(data.context_raw_dir_ref, "context_raw_dir_ref"),
+    context_projection_config: parseContextProjectionConfig(data.context_projection_config),
     piworker_call: parsePiWorkerCall(data.piworker_call),
     call_spec: callSpec,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
@@ -200,6 +233,15 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
   if (result.piworker_call.contract_id !== result.mission_id) {
     throw new Error("input.piworker_call.contract_id must match mission_id");
+  }
+  if (!refIsUnder(result.context_observations_ref, result.attempt_dir_ref)) {
+    throw new Error("input.context_observations_ref must be inside attempt_dir_ref");
+  }
+  if (!refIsUnder(result.context_projection_ref, result.attempt_dir_ref)) {
+    throw new Error("input.context_projection_ref must be inside attempt_dir_ref");
+  }
+  if (!refIsUnder(result.context_raw_dir_ref, result.attempt_dir_ref)) {
+    throw new Error("input.context_raw_dir_ref must be inside attempt_dir_ref");
   }
   for (const ref of result.piworker_call.expected_output_refs) {
     if (!callSpec.expected_outputs.includes(ref)) {
@@ -333,6 +375,27 @@ export function parseSandboxProfile(value: unknown): SandboxProfile {
   };
 }
 
+export function parseContextProjectionConfig(value: unknown): ContextProjectionConfig {
+  if (value === undefined || value === null) {
+    return { ...DEFAULT_CONTEXT_PROJECTION_CONFIG };
+  }
+  const data = requireObject(value, "context_projection_config");
+  const schemaVersion = requireString(
+    data.schema_version ?? CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
+    "context_projection_config.schema_version",
+  );
+  if (schemaVersion !== CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION) {
+    throw new Error(`Unsupported context_projection_config.schema_version: ${schemaVersion}`);
+  }
+  return {
+    schema_version: CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
+    large_observation_bytes: requirePositiveInteger(
+      data.large_observation_bytes ?? DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES,
+      "context_projection_config.large_observation_bytes",
+    ),
+  };
+}
+
 function parseResume(value: unknown): ResumeInput {
   if (value === undefined || value === null) {
     return {
@@ -341,6 +404,7 @@ function parseResume(value: unknown): ResumeInput {
       savepoint_ref: null,
       session_ref: null,
       events_ref: null,
+      summary_artifact_refs: [],
       resume_prompt: null,
     };
   }
@@ -368,6 +432,7 @@ function parseResume(value: unknown): ResumeInput {
     data.events_ref === undefined || data.events_ref === null
       ? null
       : requireRef(data.events_ref, "resume.events_ref");
+  const summaryArtifactRefs = requireRefList(data.summary_artifact_refs ?? [], "resume.summary_artifact_refs");
   const resumePrompt =
     data.resume_prompt === undefined || data.resume_prompt === null
       ? null
@@ -389,6 +454,7 @@ function parseResume(value: unknown): ResumeInput {
     savepoint_ref: savepointRef,
     session_ref: sessionRef,
     events_ref: eventsRef,
+    summary_artifact_refs: summaryArtifactRefs,
     resume_prompt: resumePrompt,
   };
 }
@@ -412,7 +478,16 @@ export function validateOutput(output: RuntimeOutput): RuntimeOutput {
   ] as const) {
     for (const ref of output[field]) requireRef(ref, `output.${field}[]`);
   }
-  for (const field of ["input_ref", "output_ref", "session_ref", "events_ref", "metrics_ref", "savepoints_ref"] as const) {
+  for (const field of [
+    "input_ref",
+    "output_ref",
+    "session_ref",
+    "events_ref",
+    "metrics_ref",
+    "savepoints_ref",
+    "context_observations_ref",
+    "context_projection_ref",
+  ] as const) {
     requireRef(output[field], `output.${field}`);
   }
   requireNonNegativeInteger(output.duration_ms, "output.duration_ms");
@@ -609,6 +684,12 @@ function requireSameStringList(actual: readonly string[], expected: readonly str
   if (actual.length !== expected.length || actual.some((item, index) => item !== expected[index])) {
     throw new Error(`${field} must match permission_manifest`);
   }
+}
+
+function refIsUnder(ref: string, rootRef: string): boolean {
+  const safeRef = requireRef(ref, "ref");
+  const safeRoot = requireRef(rootRef, "root_ref");
+  return safeRef === safeRoot || safeRef.startsWith(`${safeRoot}/`);
 }
 
 function requireRefList(value: unknown, field: string): string[] {

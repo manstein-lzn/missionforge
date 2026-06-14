@@ -20,6 +20,7 @@ export interface BuildOutputOptions {
 }
 
 export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<RuntimeOutput> {
+  const changedRefs = options.changedRefs.filter((ref) => !isContextRawRef(options.input, ref));
   const producedArtifacts: string[] = [];
   const missingOutputs: string[] = [];
   const produced = new Set<string>();
@@ -31,7 +32,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
       missingOutputs.push(ref);
     }
   }
-  for (const ref of options.changedRefs) {
+  for (const ref of changedRefs) {
     if (produced.has(ref)) continue;
     if (!options.input.call_spec.allowed_scope.includes(ref)) continue;
     if (!(await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref)))) continue;
@@ -50,12 +51,14 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
     status,
     produced_artifacts: producedArtifacts,
     changed_refs: dedupe([
-      ...options.changedRefs,
+      ...changedRefs,
       options.input.output_ref,
       options.input.session_ref,
       options.input.events_ref,
       options.input.metrics_ref,
       options.input.savepoints_ref,
+      options.input.context_observations_ref,
+      options.input.context_projection_ref,
     ]),
     commands_run: options.commandsRun.map((item) => redactText(item)),
     tests_run: options.testsRun.map((item) => redactText(item)),
@@ -66,6 +69,8 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
       options.input.events_ref,
       options.input.metrics_ref,
       options.input.savepoints_ref,
+      options.input.context_observations_ref,
+      options.input.context_projection_ref,
     ],
     new_unknowns: status === "completed" ? [] : missingOutputs,
     recommended_next_steps:
@@ -77,6 +82,8 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
     events_ref: options.input.events_ref,
     metrics_ref: options.input.metrics_ref,
     savepoints_ref: options.input.savepoints_ref,
+    context_observations_ref: options.input.context_observations_ref,
+    context_projection_ref: options.input.context_projection_ref,
     duration_ms: options.durationMs,
     metrics: options.metrics,
   };
@@ -109,6 +116,11 @@ function dedupe(values: string[]): string[] {
     result.push(value);
   }
   return result;
+}
+
+function isContextRawRef(input: RuntimeInput, ref: string): boolean {
+  const rawDir = input.context_raw_dir_ref.replace(/\/+$/, "");
+  return ref === rawDir || ref.startsWith(`${rawDir}/`);
 }
 
 function summarizeWorkerClaim(value: string): string {
