@@ -3,11 +3,25 @@ export const OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1";
 export const PERMISSION_MANIFEST_SCHEMA_VERSION = "permission_manifest.v1";
 export const CAPABILITY_GRANT_SCHEMA_VERSION = "runtime_capability_grant.v1";
 export const SANDBOX_PROFILE_SCHEMA_VERSION = "sandbox_profile.v1";
+export const EXTENSION_LOCK_SCHEMA_VERSION = "missionforge_extension_lock.v1";
+export const EXTENSION_LOAD_REPORT_SCHEMA_VERSION = "missionforge_extension_load_report.v1";
 export const CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1";
 export const DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024;
 
 export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 export type SandboxMode = "bubblewrap" | "nsjail" | "subprocess" | "unsupported";
+export type ExtensionCapability =
+  | "code_search"
+  | "lsp"
+  | "web"
+  | "mcp"
+  | "browser"
+  | "subagent"
+  | "memory"
+  | "preview"
+  | "workflow"
+  | "ui";
+export type ExtensionAdapterMode = "missionforge_provider" | "untrusted_pi_extension";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -50,6 +64,8 @@ export interface RuntimeInput {
   context_projection_ref: string;
   context_raw_dir_ref: string;
   context_projection_config: ContextProjectionConfig;
+  extension_lock_ref: string | null;
+  extension_load_report_ref: string;
   piworker_call: PiWorkerCall;
   call_spec: PiAgentCallSpec;
   permission_manifest: PermissionManifest;
@@ -130,7 +146,73 @@ export interface PermissionManifest {
   env_allowlist: string[];
   secret_ref: string | null;
   unsupported_hard_policies: string[];
+  extension_grants: ExtensionGrant[];
   schema_version: typeof PERMISSION_MANIFEST_SCHEMA_VERSION;
+}
+
+export interface ExtensionGrant {
+  grant_id: string;
+  package: string;
+  version_spec: string;
+  capability: ExtensionCapability;
+  config_ref: string | null;
+  requires_network: boolean;
+  requires_bash: boolean;
+  required_env: string[];
+  sandbox_profile_ref: string | null;
+  adapter_mode: ExtensionAdapterMode;
+  integrity: string | null;
+  metadata: JsonObject;
+}
+
+export interface ExtensionLockEntry {
+  grant_id: string;
+  package: string;
+  name: string;
+  version: string;
+  capability: ExtensionCapability;
+  install_path: string;
+  adapter_mode: ExtensionAdapterMode;
+  requires_network: boolean;
+  requires_bash: boolean;
+  required_env: string[];
+  resolved: string | null;
+  integrity: string | null;
+  package_hash: string | null;
+  metadata: JsonObject;
+}
+
+export interface ExtensionLock {
+  schema_version: typeof EXTENSION_LOCK_SCHEMA_VERSION;
+  source_permission_manifest_ref: string;
+  compiled_at: string;
+  install_root_ref: string;
+  compiled_by: string;
+  extensions: ExtensionLockEntry[];
+  lock_hash?: string;
+}
+
+export interface ExtensionLoadRecord {
+  grant_id: string;
+  package: string;
+  capability: ExtensionCapability;
+  status: "loaded" | "loadable" | "rejected";
+  adapter_mode: ExtensionAdapterMode;
+  reason: string;
+  version: string | null;
+  integrity: string | null;
+  requires_network: boolean;
+  network_policy_at_load: NetworkPolicy;
+  tool_names: string[];
+}
+
+export interface ExtensionLoadReport {
+  schema_version: typeof EXTENSION_LOAD_REPORT_SCHEMA_VERSION;
+  call_id: string;
+  extension_lock_ref: string | null;
+  permission_manifest_ref: string | null;
+  loaded_extensions: ExtensionLoadRecord[];
+  rejected_extensions: ExtensionLoadRecord[];
 }
 
 export interface RepairInput {
@@ -212,6 +294,14 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
         ? `${attemptDirRef}/context/raw`
         : requireRef(data.context_raw_dir_ref, "context_raw_dir_ref"),
     context_projection_config: parseContextProjectionConfig(data.context_projection_config),
+    extension_lock_ref:
+      data.extension_lock_ref === undefined || data.extension_lock_ref === null
+        ? null
+        : requireRef(data.extension_lock_ref, "extension_lock_ref"),
+    extension_load_report_ref:
+      data.extension_load_report_ref === undefined || data.extension_load_report_ref === null
+        ? `${attemptDirRef}/reports/extension_load_report.json`
+        : requireRef(data.extension_load_report_ref, "extension_load_report_ref"),
     piworker_call: parsePiWorkerCall(data.piworker_call),
     call_spec: callSpec,
     permission_manifest: parsePermissionManifest(data.permission_manifest),
@@ -242,6 +332,9 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
   if (!refIsUnder(result.context_raw_dir_ref, result.attempt_dir_ref)) {
     throw new Error("input.context_raw_dir_ref must be inside attempt_dir_ref");
+  }
+  if (!refIsUnder(result.extension_load_report_ref, result.attempt_dir_ref)) {
+    throw new Error("input.extension_load_report_ref must be inside attempt_dir_ref");
   }
   for (const ref of result.piworker_call.expected_output_refs) {
     if (!callSpec.expected_outputs.includes(ref)) {
@@ -288,7 +381,106 @@ export function parsePermissionManifest(value: unknown): PermissionManifest {
       data.unsupported_hard_policies ?? [],
       "permission_manifest.unsupported_hard_policies",
     ),
+    extension_grants: parseExtensionGrants(data.extension_grants ?? []),
     schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
+  };
+}
+
+export function parseExtensionGrant(value: unknown): ExtensionGrant {
+  const data = requireObject(value, "extension_grant");
+  const capability = requireString(data.capability, "extension_grant.capability") as ExtensionCapability;
+  if (!isExtensionCapability(capability)) {
+    throw new Error("extension_grant.capability is invalid");
+  }
+  const adapterMode = requireString(
+    data.adapter_mode ?? "missionforge_provider",
+    "extension_grant.adapter_mode",
+  ) as ExtensionAdapterMode;
+  if (!isExtensionAdapterMode(adapterMode)) {
+    throw new Error("extension_grant.adapter_mode is invalid");
+  }
+  const requiredEnv = requireStringList(data.required_env ?? [], "extension_grant.required_env");
+  for (const name of requiredEnv) requireEnvName(name, "extension_grant.required_env[]");
+  return {
+    grant_id: requireString(data.grant_id, "extension_grant.grant_id"),
+    package: requireExtensionPackage(data.package, "extension_grant.package"),
+    version_spec: requireString(data.version_spec, "extension_grant.version_spec"),
+    capability,
+    config_ref:
+      data.config_ref === undefined || data.config_ref === null
+        ? null
+        : requireRef(data.config_ref, "extension_grant.config_ref"),
+    requires_network: requireBoolean(data.requires_network ?? false, "extension_grant.requires_network"),
+    requires_bash: requireBoolean(data.requires_bash ?? false, "extension_grant.requires_bash"),
+    required_env: requiredEnv,
+    sandbox_profile_ref:
+      data.sandbox_profile_ref === undefined || data.sandbox_profile_ref === null
+        ? null
+        : requireRef(data.sandbox_profile_ref, "extension_grant.sandbox_profile_ref"),
+    adapter_mode: adapterMode,
+    integrity:
+      data.integrity === undefined || data.integrity === null
+        ? null
+        : requireString(data.integrity, "extension_grant.integrity"),
+    metadata: data.metadata === undefined ? {} : requireObject(data.metadata, "extension_grant.metadata"),
+  };
+}
+
+export function parseExtensionLock(value: unknown): ExtensionLock {
+  const data = requireObject(value, "extension_lock");
+  const schemaVersion = requireString(
+    data.schema_version ?? EXTENSION_LOCK_SCHEMA_VERSION,
+    "extension_lock.schema_version",
+  );
+  if (schemaVersion !== EXTENSION_LOCK_SCHEMA_VERSION) {
+    throw new Error(`Unsupported extension_lock.schema_version: ${schemaVersion}`);
+  }
+  const lockHash =
+    data.lock_hash === undefined || data.lock_hash === null
+      ? undefined
+      : requireSha256(data.lock_hash, "extension_lock.lock_hash");
+  return {
+    schema_version: EXTENSION_LOCK_SCHEMA_VERSION,
+    source_permission_manifest_ref: requireRef(
+      data.source_permission_manifest_ref,
+      "extension_lock.source_permission_manifest_ref",
+    ),
+    compiled_at: requireIsoTimestamp(data.compiled_at, "extension_lock.compiled_at"),
+    install_root_ref: requireRef(data.install_root_ref ?? ".missionforge/extensions", "extension_lock.install_root_ref"),
+    compiled_by: requireString(data.compiled_by ?? "missionforge.extensions", "extension_lock.compiled_by"),
+    extensions: parseExtensionLockEntries(data.extensions ?? []),
+    ...(lockHash ? { lock_hash: lockHash } : {}),
+  };
+}
+
+export function parseExtensionLoadReport(value: unknown): ExtensionLoadReport {
+  const data = requireObject(value, "extension_load_report");
+  const schemaVersion = requireString(
+    data.schema_version ?? EXTENSION_LOAD_REPORT_SCHEMA_VERSION,
+    "extension_load_report.schema_version",
+  );
+  if (schemaVersion !== EXTENSION_LOAD_REPORT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported extension_load_report.schema_version: ${schemaVersion}`);
+  }
+  return {
+    schema_version: EXTENSION_LOAD_REPORT_SCHEMA_VERSION,
+    call_id: requireString(data.call_id, "extension_load_report.call_id"),
+    extension_lock_ref:
+      data.extension_lock_ref === undefined || data.extension_lock_ref === null
+        ? null
+        : requireRef(data.extension_lock_ref, "extension_load_report.extension_lock_ref"),
+    permission_manifest_ref:
+      data.permission_manifest_ref === undefined || data.permission_manifest_ref === null
+        ? null
+        : requireRef(data.permission_manifest_ref, "extension_load_report.permission_manifest_ref"),
+    loaded_extensions: parseExtensionLoadRecords(
+      data.loaded_extensions ?? [],
+      "extension_load_report.loaded_extensions",
+    ),
+    rejected_extensions: parseExtensionLoadRecords(
+      data.rejected_extensions ?? [],
+      "extension_load_report.rejected_extensions",
+    ),
   };
 }
 
@@ -590,6 +782,107 @@ function parseRuntime(value: unknown): RuntimeInput["runtime"] {
   };
 }
 
+function parseExtensionGrants(value: unknown): ExtensionGrant[] {
+  const items = requireArray(value, "permission_manifest.extension_grants").map((item) => parseExtensionGrant(item));
+  requireUnique(items.map((item) => item.grant_id), "permission_manifest.extension_grants.grant_id");
+  return items;
+}
+
+function parseExtensionLockEntries(value: unknown): ExtensionLockEntry[] {
+  const items = requireArray(value, "extension_lock.extensions").map((item) => {
+    const data = requireObject(item, "extension_lock_entry");
+    const capability = requireString(data.capability, "extension_lock_entry.capability") as ExtensionCapability;
+    if (!isExtensionCapability(capability)) {
+      throw new Error("extension_lock_entry.capability is invalid");
+    }
+    const adapterMode = requireString(
+      data.adapter_mode ?? "missionforge_provider",
+      "extension_lock_entry.adapter_mode",
+    ) as ExtensionAdapterMode;
+    if (!isExtensionAdapterMode(adapterMode)) {
+      throw new Error("extension_lock_entry.adapter_mode is invalid");
+    }
+    const requiredEnv = requireStringList(data.required_env ?? [], "extension_lock_entry.required_env");
+    for (const name of requiredEnv) requireEnvName(name, "extension_lock_entry.required_env[]");
+    return {
+      grant_id: requireString(data.grant_id, "extension_lock_entry.grant_id"),
+      package: requireExtensionPackage(data.package, "extension_lock_entry.package"),
+      name: requireString(data.name, "extension_lock_entry.name"),
+      version: requireString(data.version, "extension_lock_entry.version"),
+      capability,
+      install_path: requireRef(data.install_path, "extension_lock_entry.install_path"),
+      adapter_mode: adapterMode,
+      requires_network: requireBoolean(data.requires_network ?? false, "extension_lock_entry.requires_network"),
+      requires_bash: requireBoolean(data.requires_bash ?? false, "extension_lock_entry.requires_bash"),
+      required_env: requiredEnv,
+      resolved:
+        data.resolved === undefined || data.resolved === null
+          ? null
+          : requireString(data.resolved, "extension_lock_entry.resolved"),
+      integrity:
+        data.integrity === undefined || data.integrity === null
+          ? null
+          : requireString(data.integrity, "extension_lock_entry.integrity"),
+      package_hash:
+        data.package_hash === undefined || data.package_hash === null
+          ? null
+          : requireSha256(data.package_hash, "extension_lock_entry.package_hash"),
+      metadata: data.metadata === undefined ? {} : requireObject(data.metadata, "extension_lock_entry.metadata"),
+    };
+  });
+  requireUnique(items.map((item) => item.grant_id), "extension_lock.extensions.grant_id");
+  return items;
+}
+
+function parseExtensionLoadRecords(value: unknown, field: string): ExtensionLoadRecord[] {
+  const items = requireArray(value, field).map((item) => {
+    const data = requireObject(item, "extension_load_record");
+    const capability = requireString(data.capability, "extension_load_record.capability") as ExtensionCapability;
+    if (!isExtensionCapability(capability)) {
+      throw new Error("extension_load_record.capability is invalid");
+    }
+    const adapterMode = requireString(
+      data.adapter_mode ?? "missionforge_provider",
+      "extension_load_record.adapter_mode",
+    ) as ExtensionAdapterMode;
+    if (!isExtensionAdapterMode(adapterMode)) {
+      throw new Error("extension_load_record.adapter_mode is invalid");
+    }
+    const status = requireString(data.status, "extension_load_record.status");
+    if (!["loaded", "loadable", "rejected"].includes(status)) {
+      throw new Error("extension_load_record.status is invalid");
+    }
+    const networkPolicy = requireString(
+      data.network_policy_at_load ?? "disabled",
+      "extension_load_record.network_policy_at_load",
+    ) as NetworkPolicy;
+    if (!["disabled", "restricted", "enabled"].includes(networkPolicy)) {
+      throw new Error("extension_load_record.network_policy_at_load is invalid");
+    }
+    return {
+      grant_id: requireString(data.grant_id, "extension_load_record.grant_id"),
+      package: requireExtensionPackage(data.package, "extension_load_record.package"),
+      capability,
+      status: status as ExtensionLoadRecord["status"],
+      adapter_mode: adapterMode,
+      reason: data.reason === undefined || data.reason === null ? "" : requireString(data.reason, "extension_load_record.reason"),
+      version:
+        data.version === undefined || data.version === null
+          ? null
+          : requireString(data.version, "extension_load_record.version"),
+      integrity:
+        data.integrity === undefined || data.integrity === null
+          ? null
+          : requireString(data.integrity, "extension_load_record.integrity"),
+      requires_network: requireBoolean(data.requires_network ?? false, "extension_load_record.requires_network"),
+      network_policy_at_load: networkPolicy,
+      tool_names: requireStringList(data.tool_names ?? [], "extension_load_record.tool_names"),
+    };
+  });
+  requireUnique(items.map((item) => item.grant_id), `${field}.grant_id`);
+  return items;
+}
+
 function parseRepair(value: unknown): RepairInput {
   if (value === undefined || value === null) {
     return {
@@ -741,6 +1034,50 @@ function requireBoolean(value: unknown, field: string): boolean {
     throw new Error(`${field} must be a boolean`);
   }
   return value;
+}
+
+function requireExtensionPackage(value: unknown, field: string): string {
+  const text = requireString(value, field);
+  if (!text.startsWith("npm:") && !text.startsWith("local:")) {
+    throw new Error(`${field} must start with npm: or local:`);
+  }
+  if (text.startsWith("local:")) {
+    requireRef(text.slice("local:".length), field);
+  }
+  return text;
+}
+
+function requireEnvName(value: unknown, field: string): string {
+  const text = requireString(value, field);
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) {
+    throw new Error(`${field} must be an environment variable name`);
+  }
+  return text;
+}
+
+function requireUnique(values: string[], field: string): void {
+  if (new Set(values).size !== values.length) {
+    throw new Error(`${field} must be unique`);
+  }
+}
+
+function isExtensionCapability(value: string): value is ExtensionCapability {
+  return [
+    "code_search",
+    "lsp",
+    "web",
+    "mcp",
+    "browser",
+    "subagent",
+    "memory",
+    "preview",
+    "workflow",
+    "ui",
+  ].includes(value);
+}
+
+function isExtensionAdapterMode(value: string): value is ExtensionAdapterMode {
+  return ["missionforge_provider", "untrusted_pi_extension"].includes(value);
 }
 
 function requirePositiveInteger(value: unknown, field: string): number {

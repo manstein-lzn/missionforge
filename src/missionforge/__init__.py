@@ -23,6 +23,18 @@ from .context_summary import (
 )
 from .evidence import ArtifactRef, EvidenceRef
 from .evidence_store import EvidenceLedger, EvidenceRecord, FileEvidenceStore, InMemoryEvidenceStore
+from .extensions import (
+    ExtensionCompileReport,
+    ExtensionLoadRecord,
+    ExtensionLoadReport,
+    ExtensionLock,
+    ExtensionLockEntry,
+    compile_extension_lock,
+    extension_load_report_from_lock,
+    read_extension_lock,
+    verify_extension_lock,
+    write_extension_lock,
+)
 from .runtime_control import (
     CapabilityGrant,
     HostSandboxRunner,
@@ -55,6 +67,9 @@ from .product_integration import (
 )
 from .task_contract import (
     ContractClause,
+    ExtensionAdapterMode,
+    ExtensionCapability,
+    ExtensionGrant,
     NetworkPolicy,
     PermissionManifest,
     TaskContract,
@@ -80,6 +95,14 @@ __all__ = [
     "EvidenceLedger",
     "EvidenceRecord",
     "EvidenceRef",
+    "ExtensionAdapterMode",
+    "ExtensionCapability",
+    "ExtensionCompileReport",
+    "ExtensionGrant",
+    "ExtensionLoadRecord",
+    "ExtensionLoadReport",
+    "ExtensionLock",
+    "ExtensionLockEntry",
     "FileEvidenceStore",
     "FinalPackage",
     "CapabilityGrant",
@@ -112,14 +135,19 @@ __all__ = [
     "assert_refs_only_payload",
     "build_judge_rubric",
     "build_worker_brief",
+    "compile_extension_lock",
     "create_capability_grant",
     "create_default_piworker_adapter",
     "create_default_task_contract_flow",
     "create_sandbox_profile_from_workspace",
     "project_judge_rubric",
     "project_worker_brief",
+    "read_extension_lock",
     "replay_decision_ledger",
     "run_piworker_call",
     "stable_json_hash",
     "validate_ref",
+    "verify_extension_lock",
+    "write_extension_lock",
+    "extension_load_report_from_lock",
 ]

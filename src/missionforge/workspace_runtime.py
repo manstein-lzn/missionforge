@@ -113,6 +113,7 @@ class RunWorkspace:
             env_allowlist=list(self.permission_manifest.env_allowlist),
             secret_ref=self.permission_manifest.secret_ref,
             unsupported_hard_policies=list(self.permission_manifest.unsupported_hard_policies),
+            extension_grants=list(self.permission_manifest.extension_grants),
             schema_version=self.permission_manifest.schema_version,
         )
 

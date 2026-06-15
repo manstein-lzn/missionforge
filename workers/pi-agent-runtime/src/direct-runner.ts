@@ -62,7 +62,7 @@ export async function runDirectPiWorkerBenchmark(input: DirectRuntimeInput, work
         systemPrompt: buildDirectSystemPrompt(input),
         model: provider.model,
         thinkingLevel: provider.reasoning,
-        tools: createMissionForgeTools({
+        tools: await createMissionForgeTools({
           workspaceRoot: toolWorkspaceRoot,
           permissionManifest: deriveDirectPermissionManifest(input.task_id, input.expected_output_refs),
           toolTimeoutSeconds: provider.toolTimeoutSeconds,

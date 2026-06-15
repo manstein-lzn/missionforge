@@ -4,6 +4,9 @@ import unittest
 
 from missionforge.contracts import ContractValidationError
 from missionforge.task_contract import (
+    ExtensionAdapterMode,
+    ExtensionCapability,
+    ExtensionGrant,
     PERMISSION_MANIFEST_SCHEMA_VERSION,
     TASK_CONTRACT_REVISION_SCHEMA_VERSION,
     TASK_CONTRACT_SCHEMA_VERSION,
@@ -184,7 +187,7 @@ class TaskContractTests(unittest.TestCase):
                     "manifest_id": "perm-001",
                     "workspace_policy_ref": "../contract/workspace_policy.json",
                 }
-            )
+        )
 
     def test_task_contract_revision_requires_explicit_hash_change(self) -> None:
         contract = TaskContract.from_dict(sample_contract_payload())
@@ -241,6 +244,73 @@ class TaskContractTests(unittest.TestCase):
                     "revised_contract_hash": revised_contract.compute_hash(),
                     "reason": "Malformed old hash.",
                     "requested_by": "judge",
+                }
+            )
+
+    def test_permission_manifest_extension_grants_are_declaration_only(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "schema_version": PERMISSION_MANIFEST_SCHEMA_VERSION,
+                "manifest_id": "perm-extensions",
+                "readable_refs": ["inputs", "contract"],
+                "writable_refs": ["artifacts"],
+                "network_policy": "enabled",
+                "env_allowlist": ["PATH", "SEARCH_API_KEY"],
+                "extension_grants": [
+                    {
+                        "grant_id": "web-search",
+                        "package": "npm:pi-web-access",
+                        "version_spec": "0.10.7",
+                        "capability": "web",
+                        "config_ref": "policy/extensions/web.json",
+                        "requires_network": True,
+                        "requires_bash": False,
+                        "required_env": ["SEARCH_API_KEY"],
+                        "adapter_mode": "missionforge_provider",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(PermissionManifest.from_dict(manifest.to_dict()), manifest)
+        self.assertEqual(manifest.extension_grants[0].capability, ExtensionCapability.WEB)
+        self.assertEqual(manifest.extension_grants[0].adapter_mode, ExtensionAdapterMode.MISSIONFORGE_PROVIDER)
+
+    def test_permission_manifest_defaults_extension_grants_for_old_payloads(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "schema_version": PERMISSION_MANIFEST_SCHEMA_VERSION,
+                "manifest_id": "perm-no-extensions",
+            }
+        )
+
+        self.assertEqual(manifest.extension_grants, [])
+        self.assertEqual(manifest.to_dict()["extension_grants"], [])
+
+    def test_extension_grants_validate_ids_packages_capabilities_and_env(self) -> None:
+        valid = {
+            "grant_id": "code-search",
+            "package": "npm:@example/pi-code-search",
+            "version_spec": "1.2.3",
+            "capability": "code_search",
+            "required_env": ["PATH"],
+        }
+        self.assertEqual(ExtensionGrant.from_dict(valid).package, "npm:@example/pi-code-search")
+
+        for bad in [
+            {**valid, "package": "pip:tool"},
+            {**valid, "capability": "academic_research"},
+            {**valid, "required_env": ["BAD-NAME"]},
+        ]:
+            with self.subTest(bad=bad):
+                with self.assertRaises(ContractValidationError):
+                    ExtensionGrant.from_dict(bad)
+
+        with self.assertRaises(ContractValidationError):
+            PermissionManifest.from_dict(
+                {
+                    "manifest_id": "perm-dupes",
+                    "extension_grants": [valid, valid],
                 }
             )
 

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
+    require_bool,
     require_enum,
     require_mapping,
     require_non_empty_str,
@@ -30,6 +31,28 @@ class NetworkPolicy(StrEnum):
     DISABLED = "disabled"
     RESTRICTED = "restricted"
     ENABLED = "enabled"
+
+
+class ExtensionCapability(StrEnum):
+    """Coarse capability bucket declared for a runtime extension."""
+
+    CODE_SEARCH = "code_search"
+    LSP = "lsp"
+    WEB = "web"
+    MCP = "mcp"
+    BROWSER = "browser"
+    SUBAGENT = "subagent"
+    MEMORY = "memory"
+    PREVIEW = "preview"
+    WORKFLOW = "workflow"
+    UI = "ui"
+
+
+class ExtensionAdapterMode(StrEnum):
+    """How MissionForge expects the runtime to load an extension package."""
+
+    MISSIONFORGE_PROVIDER = "missionforge_provider"
+    UNTRUSTED_PI_EXTENSION = "untrusted_pi_extension"
 
 
 @dataclass(frozen=True)
@@ -65,6 +88,98 @@ class ContractClause:
             "clause_id": self.clause_id,
             "text": self.text,
             "refs": list(self.refs),
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class ExtensionGrant:
+    """Frozen declaration that an extension package may be mounted for a role."""
+
+    grant_id: str
+    package: str
+    version_spec: str
+    capability: ExtensionCapability
+    config_ref: str | None = None
+    requires_network: bool = False
+    requires_bash: bool = False
+    required_env: list[str] = field(default_factory=list)
+    sandbox_profile_ref: str | None = None
+    adapter_mode: ExtensionAdapterMode = ExtensionAdapterMode.MISSIONFORGE_PROVIDER
+    integrity: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ExtensionGrant":
+        data = require_mapping(payload, "extension_grant")
+        integrity = data.get("integrity")
+        if integrity is not None:
+            integrity = require_non_empty_str(integrity, "extension_grant.integrity")
+        grant = cls(
+            grant_id=require_non_empty_str(data.get("grant_id"), "extension_grant.grant_id"),
+            package=_validate_extension_package(data.get("package"), "extension_grant.package"),
+            version_spec=require_non_empty_str(data.get("version_spec"), "extension_grant.version_spec"),
+            capability=require_enum(
+                data.get("capability"),
+                ExtensionCapability,
+                "extension_grant.capability",
+            ),
+            config_ref=_optional_ref(data.get("config_ref"), "extension_grant.config_ref"),
+            requires_network=require_bool(
+                data.get("requires_network", False),
+                "extension_grant.requires_network",
+            ),
+            requires_bash=require_bool(
+                data.get("requires_bash", False),
+                "extension_grant.requires_bash",
+            ),
+            required_env=require_str_list(data.get("required_env", []), "extension_grant.required_env"),
+            sandbox_profile_ref=_optional_ref(
+                data.get("sandbox_profile_ref"),
+                "extension_grant.sandbox_profile_ref",
+            ),
+            adapter_mode=require_enum(
+                data.get("adapter_mode", ExtensionAdapterMode.MISSIONFORGE_PROVIDER.value),
+                ExtensionAdapterMode,
+                "extension_grant.adapter_mode",
+            ),
+            integrity=integrity,
+            metadata=_safe_mapping(data.get("metadata", {}), "extension_grant.metadata"),
+        )
+        grant.validate()
+        return grant
+
+    def validate(self) -> None:
+        require_non_empty_str(self.grant_id, "extension_grant.grant_id")
+        _validate_extension_package(self.package, "extension_grant.package")
+        require_non_empty_str(self.version_spec, "extension_grant.version_spec")
+        require_enum(self.capability, ExtensionCapability, "extension_grant.capability")
+        _optional_ref(self.config_ref, "extension_grant.config_ref")
+        require_bool(self.requires_network, "extension_grant.requires_network")
+        require_bool(self.requires_bash, "extension_grant.requires_bash")
+        _validate_unique_strings(self.required_env, "extension_grant.required_env")
+        for name in self.required_env:
+            _validate_env_name(name, "extension_grant.required_env[]")
+        _optional_ref(self.sandbox_profile_ref, "extension_grant.sandbox_profile_ref")
+        require_enum(self.adapter_mode, ExtensionAdapterMode, "extension_grant.adapter_mode")
+        if self.integrity is not None:
+            require_non_empty_str(self.integrity, "extension_grant.integrity")
+        _safe_mapping(self.metadata, "extension_grant.metadata")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "grant_id": self.grant_id,
+            "package": self.package,
+            "version_spec": self.version_spec,
+            "capability": self.capability.value,
+            "config_ref": self.config_ref,
+            "requires_network": self.requires_network,
+            "requires_bash": self.requires_bash,
+            "required_env": list(self.required_env),
+            "sandbox_profile_ref": self.sandbox_profile_ref,
+            "adapter_mode": self.adapter_mode.value,
+            "integrity": self.integrity,
             "metadata": dict(self.metadata),
         }
 
@@ -150,6 +265,7 @@ class PermissionManifest:
     env_allowlist: list[str] = field(default_factory=list)
     secret_ref: str | None = None
     unsupported_hard_policies: list[str] = field(default_factory=list)
+    extension_grants: list[ExtensionGrant] = field(default_factory=list)
     schema_version: str = PERMISSION_MANIFEST_SCHEMA_VERSION
 
     @classmethod
@@ -194,6 +310,10 @@ class PermissionManifest:
                 data.get("unsupported_hard_policies", []),
                 "permission_manifest.unsupported_hard_policies",
             ),
+            extension_grants=_extension_grants_from_dicts(
+                data.get("extension_grants", []),
+                "permission_manifest.extension_grants",
+            ),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PERMISSION_MANIFEST_SCHEMA_VERSION),
                 "permission_manifest.schema_version",
@@ -215,6 +335,7 @@ class PermissionManifest:
         if self.secret_ref is not None:
             validate_ref(self.secret_ref, "permission_manifest.secret_ref")
         require_str_list(self.unsupported_hard_policies, "permission_manifest.unsupported_hard_policies")
+        _validate_extension_grants(self.extension_grants, "permission_manifest.extension_grants")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -230,6 +351,7 @@ class PermissionManifest:
             "env_allowlist": list(self.env_allowlist),
             "secret_ref": self.secret_ref,
             "unsupported_hard_policies": list(self.unsupported_hard_policies),
+            "extension_grants": [grant.to_dict() for grant in self.extension_grants],
         }
 
 
@@ -487,6 +609,14 @@ def _clauses_from_dicts(value: Any, field_name: str) -> list[ContractClause]:
     return clauses
 
 
+def _extension_grants_from_dicts(value: Any, field_name: str) -> list[ExtensionGrant]:
+    if not isinstance(value, list):
+        raise ContractValidationError(f"{field_name} must be a list")
+    grants = [ExtensionGrant.from_dict(require_mapping(item, f"{field_name}[]")) for item in value]
+    _validate_extension_grants(grants, field_name)
+    return grants
+
+
 def _output_clauses_from_dicts(value: Any, field_name: str) -> list[ContractClause]:
     return _mapped_clauses(
         value,
@@ -565,6 +695,19 @@ def _validate_clause_list(clauses: list[ContractClause], field_name: str) -> Non
         seen.add(clause.clause_id)
 
 
+def _validate_extension_grants(grants: list[ExtensionGrant], field_name: str) -> None:
+    if not isinstance(grants, list):
+        raise ContractValidationError(f"{field_name} must be a list")
+    seen: set[str] = set()
+    for grant in grants:
+        if not isinstance(grant, ExtensionGrant):
+            raise ContractValidationError(f"{field_name}[] must be an ExtensionGrant")
+        grant.validate()
+        if grant.grant_id in seen:
+            raise ContractValidationError(f"duplicate {field_name} grant_id: {grant.grant_id}")
+        seen.add(grant.grant_id)
+
+
 def _ref_list(value: Any, field_name: str) -> list[str]:
     return [validate_ref(item, f"{field_name}[]") for item in require_str_list(value, field_name)]
 
@@ -575,6 +718,12 @@ def _validate_unique_refs(values: list[str], field_name: str) -> None:
         raise ContractValidationError(f"{field_name} must not contain duplicate refs")
 
 
+def _validate_unique_strings(values: list[str], field_name: str) -> None:
+    items = require_str_list(values, field_name)
+    if len(items) != len(set(items)):
+        raise ContractValidationError(f"{field_name} must not contain duplicates")
+
+
 def _safe_mapping(value: Any, field_name: str) -> dict[str, Any]:
     return dict(assert_refs_only_payload(require_mapping(value, field_name), field_name))
 
@@ -583,6 +732,27 @@ def _optional_ref(value: Any, field_name: str) -> str | None:
     if value is None:
         return None
     return validate_ref(value, field_name)
+
+
+def _validate_extension_package(value: Any, field_name: str) -> str:
+    package = require_non_empty_str(value, field_name)
+    allowed_prefixes = ("npm:", "local:")
+    if not package.startswith(allowed_prefixes):
+        raise ContractValidationError(f"{field_name} must start with one of {allowed_prefixes}")
+    if any(ord(char) < 32 or ord(char) == 127 for char in package):
+        raise ContractValidationError(f"{field_name} must not contain control characters")
+    if package.startswith("local:"):
+        validate_ref(package[len("local:"):], field_name)
+    return package
+
+
+def _validate_env_name(value: Any, field_name: str) -> str:
+    name = require_non_empty_str(value, field_name)
+    if not (name[0].isalpha() or name[0] == "_"):
+        raise ContractValidationError(f"{field_name} must be an environment variable name")
+    if not all(char.isalnum() or char == "_" for char in name):
+        raise ContractValidationError(f"{field_name} must be an environment variable name")
+    return name
 
 
 def _revision_policy(value: Any) -> str | dict[str, Any]:

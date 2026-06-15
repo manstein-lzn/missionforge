@@ -41,8 +41,8 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     assert.equal(projection.projected_observations.length, 0);
     const metrics = await readJson(join(root, input.metrics_ref));
     assert.equal(metrics.tool_call_count, 2);
-    assert.equal(metrics.cache_read_tokens, 0);
-    assert.equal(metrics.cache_write_tokens, 0);
+    assert.equal(metrics.cache_read_tokens > 0, true);
+    assert.equal(metrics.cache_write_tokens > 0, true);
     assert.equal(metrics.provider_reported_cost_usd, 0);
     assert.equal(metrics.tool_error_count, 0);
     assert.equal(metrics.command_count, 0);

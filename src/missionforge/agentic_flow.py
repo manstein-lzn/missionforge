@@ -775,6 +775,7 @@ def _runtime_permission_manifest(
         network_policy=worker_manifest.network_policy,
         env_allowlist=[],
         unsupported_hard_policies=list(worker_manifest.unsupported_hard_policies),
+        extension_grants=list(worker_manifest.extension_grants),
     )
 
 

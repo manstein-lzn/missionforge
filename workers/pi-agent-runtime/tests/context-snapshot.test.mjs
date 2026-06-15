@@ -17,7 +17,7 @@ test("context_snapshot reports refs and projection state without raw bodies", as
     await writeFile(join(root, rawRef), rawBody, "utf-8");
     await writeFile(join(root, sourceRef), "alpha\nbeta\ngamma\n", "utf-8");
 
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: permissionManifest({
         readable_refs: ["inputs", "attempts/WU-000001/context/raw"],

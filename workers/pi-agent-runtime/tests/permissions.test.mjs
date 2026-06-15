@@ -24,7 +24,7 @@ test("file tools enforce read, write, and denied refs", async () => {
     await writeFile(join(root, "inputs/public.txt"), "public\n", "utf-8");
     await writeFile(join(root, "inputs/private/secret.txt"), "secret\n", "utf-8");
 
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: samplePermissionManifest(),
       toolTimeoutSeconds: 30,
@@ -65,7 +65,7 @@ test("sandbox profile narrows the effective tool boundary", async () => {
     await writeFile(join(root, "inputs/public.txt"), "public\n", "utf-8");
     await writeFile(join(root, "inputs/hidden.txt"), "hidden\n", "utf-8");
 
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: samplePermissionManifest({
         readable_refs: ["inputs"],
@@ -107,7 +107,7 @@ test("sandbox profile narrows the effective tool boundary", async () => {
 
 test("bash tool is hidden when no command is allowed", async () => {
   await withWorkspace(async (root) => {
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: samplePermissionManifest(),
       toolTimeoutSeconds: 30,
@@ -120,7 +120,7 @@ test("bash tool is hidden when no command is allowed", async () => {
 test("bash requires explicit command permission and exposes only allowlisted env", async () => {
   await withWorkspace(async (root) => {
     const command = "printf '%s|%s' \"${VISIBLE_ENV:-}\" \"${SECRET_ENV:-}\"";
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: {
         ...samplePermissionManifest({
@@ -165,7 +165,7 @@ test("bash runs inside ref-scoped sandbox when command is explicitly allowed", a
       "printf ok > outputs/result.txt",
       "if printf no > outputs/private/result.txt 2>/dev/null; then echo denied-write-succeeded; else echo denied-write-blocked; fi",
     ].join("; ");
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: {
         ...samplePermissionManifest(),
@@ -194,13 +194,14 @@ test("sandboxed bash cannot read host paths outside the workspace view", async (
       await mkdir(join(root, "outputs"), { recursive: true });
       await writeFile(join(outside, "secret.txt"), "outside secret\n", "utf-8");
       const command = `if cat ${JSON.stringify(join(outside, "secret.txt"))} 2>/dev/null; then echo host-visible; else echo host-hidden; fi`;
-      const tools = createMissionForgeTools({
+      const tools = await createMissionForgeTools({
         workspaceRoot: root,
         permissionManifest: {
           ...samplePermissionManifest({
             readable_refs: [],
             writable_refs: ["outputs"],
             denied_refs: [],
+            network_policy: "enabled",
           }),
           allowed_commands: [command],
           env_allowlist: ["PATH"],
@@ -221,7 +222,7 @@ test("sandboxed bash cannot read host paths outside the workspace view", async (
 
 test("write tool can create a root-level file when that exact ref is writable", async () => {
   await withWorkspace(async (root) => {
-    const tools = createMissionForgeTools({
+    const tools = await createMissionForgeTools({
       workspaceRoot: root,
       permissionManifest: {
         ...samplePermissionManifest(),
@@ -248,7 +249,7 @@ test("file tools reject symlink escapes before touching outside paths", async ()
       await writeFile(join(outside, "secret.txt"), "outside secret\n", "utf-8");
       await symlink(outside, join(root, "inputs/link"), "dir");
       await symlink(outside, join(root, "outputs/link"), "dir");
-      const tools = createMissionForgeTools({
+      const tools = await createMissionForgeTools({
         workspaceRoot: root,
         permissionManifest: samplePermissionManifest({
           readable_refs: ["inputs"],

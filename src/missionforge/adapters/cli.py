@@ -32,7 +32,17 @@ from ..state import (
 
 
 COMMAND_RESULT_SCHEMA_VERSION = "missionforge.command_result.v1"
-COMMAND_NAMES = {"inspect", "diagnose", "control halt", "review record", "validate", "frontdesk"}
+COMMAND_NAMES = {
+    "inspect",
+    "diagnose",
+    "control halt",
+    "review record",
+    "validate",
+    "frontdesk",
+    "extensions compile",
+    "extensions inspect",
+    "extensions verify",
+}
 COMMAND_RESULT_STATUSES = {"completed", "failed", "blocked", "unsupported"}
 COMMAND_EXIT_CODE_BY_REASON = {
     "success": 0,
@@ -251,6 +261,12 @@ class MissionCLI:
             return self._command_validate(args)
         if command == "frontdesk":
             return self._command_frontdesk(args)
+        if command == "extensions" and args.extensions_command == "compile":
+            return self._command_extensions_compile(args)
+        if command == "extensions" and args.extensions_command == "inspect":
+            return self._command_extensions_inspect(args)
+        if command == "extensions" and args.extensions_command == "verify":
+            return self._command_extensions_verify(args)
         return _error_result("inspect", "unsupported_operation", f"unsupported command: {command}")
 
     def _command_inspect(self, args: argparse.Namespace) -> MissionCommandResult:
@@ -385,6 +401,119 @@ class MissionCLI:
         except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
             return _error_result("frontdesk", "invalid_input", str(exc))
 
+    def _command_extensions_compile(self, args: argparse.Namespace) -> MissionCommandResult:
+        command_name = "extensions compile"
+        root = Path(args.workspace).resolve()
+        manifest_ref = validate_ref(args.manifest, "extensions_compile.manifest_ref")
+        lock_ref = validate_ref(args.out, "extensions_compile.out_ref")
+        try:
+            from ..extensions import compile_extension_lock, npm_install_extension
+            from ..task_contract import PermissionManifest
+
+            manifest = PermissionManifest.from_dict(_read_json_ref(root, manifest_ref))
+            extension_lock = compile_extension_lock(
+                manifest,
+                source_permission_manifest_ref=manifest_ref,
+                install_root_ref=args.install_root,
+                workspace_root=root,
+                mode=args.mode,
+                installer=npm_install_extension if args.mode == "install" else None,
+            )
+            _write_json_ref(root, lock_ref, extension_lock.to_dict())
+            data = {
+                "source_permission_manifest_ref": manifest_ref,
+                "extension_lock_ref": lock_ref,
+                "extension_count": len(extension_lock.extensions),
+                "install_root_ref": extension_lock.install_root_ref,
+                "lock_hash": extension_lock.lock_hash,
+                "compile_mode": args.mode,
+            }
+            return _success_result(command_name, data=data, refs=[manifest_ref, lock_ref])
+        except FileNotFoundError as exc:
+            return _error_result(command_name, "missing_state", str(exc), refs=[manifest_ref])
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            return _error_result(command_name, "invalid_input", str(exc), refs=[manifest_ref])
+
+    def _command_extensions_inspect(self, args: argparse.Namespace) -> MissionCommandResult:
+        command_name = "extensions inspect"
+        root = Path(args.workspace).resolve()
+        manifest_ref = validate_ref(args.manifest, "extensions_inspect.manifest_ref")
+        refs = [manifest_ref]
+        try:
+            from ..extensions import ExtensionLock
+            from ..task_contract import PermissionManifest
+
+            manifest = PermissionManifest.from_dict(_read_json_ref(root, manifest_ref))
+            lock_summary: dict[str, Any] | None = None
+            if args.lock:
+                lock_ref = validate_ref(args.lock, "extensions_inspect.lock_ref")
+                refs.append(lock_ref)
+                lock = ExtensionLock.from_dict(_read_json_ref(root, lock_ref))
+                lock_summary = {
+                    "extension_lock_ref": lock_ref,
+                    "lock_hash": lock.lock_hash,
+                    "extension_count": len(lock.extensions),
+                    "grant_ids": [entry.grant_id for entry in lock.extensions],
+                }
+            data = {
+                "source_permission_manifest_ref": manifest_ref,
+                "declared_extension_count": len(manifest.extension_grants),
+                "declared_grant_ids": [grant.grant_id for grant in manifest.extension_grants],
+                "declared_capabilities": [grant.capability.value for grant in manifest.extension_grants],
+                "requires_network_grant_ids": [
+                    grant.grant_id for grant in manifest.extension_grants if grant.requires_network
+                ],
+                "lock": lock_summary,
+            }
+            return _success_result(command_name, data=data, refs=refs)
+        except FileNotFoundError as exc:
+            return _error_result(command_name, "missing_state", str(exc), refs=refs)
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            return _error_result(command_name, "invalid_input", str(exc), refs=refs)
+
+    def _command_extensions_verify(self, args: argparse.Namespace) -> MissionCommandResult:
+        command_name = "extensions verify"
+        root = Path(args.workspace).resolve()
+        manifest_ref = validate_ref(args.manifest, "extensions_verify.manifest_ref")
+        lock_ref = validate_ref(args.lock, "extensions_verify.lock_ref")
+        report_ref = validate_ref(args.report_ref, "extensions_verify.report_ref")
+        try:
+            from ..extensions import ExtensionLock, verify_extension_lock
+            from ..task_contract import PermissionManifest
+
+            manifest = PermissionManifest.from_dict(_read_json_ref(root, manifest_ref))
+            extension_lock = ExtensionLock.from_dict(_read_json_ref(root, lock_ref))
+            report = verify_extension_lock(manifest, extension_lock)
+            report = type(report)(
+                call_id="extensions-verify",
+                loaded_extensions=list(report.loaded_extensions),
+                rejected_extensions=list(report.rejected_extensions),
+                extension_lock_ref=lock_ref,
+                permission_manifest_ref=manifest_ref,
+            )
+            _write_json_ref(root, report_ref, report.to_dict())
+            data = {
+                "source_permission_manifest_ref": manifest_ref,
+                "extension_lock_ref": lock_ref,
+                "extension_load_report_ref": report_ref,
+                "loadable_count": len(report.loaded_extensions),
+                "rejected_count": len(report.rejected_extensions),
+            }
+            refs = [manifest_ref, lock_ref, report_ref]
+            if report.rejected_extensions:
+                return _error_result(
+                    command_name,
+                    "validation_failed",
+                    "extension lock does not satisfy permission manifest",
+                    data=data,
+                    refs=refs,
+                )
+            return _success_result(command_name, data=data, refs=refs)
+        except FileNotFoundError as exc:
+            return _error_result(command_name, "missing_state", str(exc), refs=[manifest_ref, lock_ref])
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            return _error_result(command_name, "invalid_input", str(exc), refs=[manifest_ref, lock_ref])
+
     def _run_validation(self, root: Path) -> tuple[int, str]:
         if self._validate_runner is not None:
             return self._validate_runner(root)
@@ -451,6 +580,45 @@ def _command_parser() -> argparse.ArgumentParser:
     validate.add_argument("--workspace", default=".", help="Repository/workspace root.")
     validate.add_argument("--log-ref", default=None, help="Workspace-relative validation log ref.")
     validate.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
+    extensions = subparsers.add_parser("extensions", help="Compile and verify declared runtime extensions.")
+    extensions_subparsers = extensions.add_subparsers(dest="extensions_command", required=True)
+    ext_compile = extensions_subparsers.add_parser(
+        "compile",
+        help="Compile PermissionManifest.extension_grants into an ExtensionLock.",
+    )
+    ext_compile.add_argument("--workspace", default=".", help="Workspace root.")
+    ext_compile.add_argument("--manifest", required=True, help="Workspace-relative PermissionManifest ref.")
+    ext_compile.add_argument("--out", required=True, help="Workspace-relative ExtensionLock output ref.")
+    ext_compile.add_argument(
+        "--install-root",
+        default=".missionforge/extensions",
+        help="Workspace-relative root containing preinstalled extension packages.",
+    )
+    ext_compile.add_argument(
+        "--mode",
+        choices=["verify-installed", "install"],
+        default="verify-installed",
+        help="Verify preinstalled packages or run npm install in the declared root.",
+    )
+    ext_compile.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
+    ext_inspect = extensions_subparsers.add_parser("inspect", help="Inspect extension declarations and optional lock.")
+    ext_inspect.add_argument("--workspace", default=".", help="Workspace root.")
+    ext_inspect.add_argument("--manifest", required=True, help="Workspace-relative PermissionManifest ref.")
+    ext_inspect.add_argument("--lock", default=None, help="Optional workspace-relative ExtensionLock ref.")
+    ext_inspect.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
+    ext_verify = extensions_subparsers.add_parser("verify", help="Verify an ExtensionLock against a PermissionManifest.")
+    ext_verify.add_argument("--workspace", default=".", help="Workspace root.")
+    ext_verify.add_argument("--manifest", required=True, help="Workspace-relative PermissionManifest ref.")
+    ext_verify.add_argument("--lock", required=True, help="Workspace-relative ExtensionLock ref.")
+    ext_verify.add_argument(
+        "--report-ref",
+        default="reports/extension_load_report.json",
+        help="Workspace-relative ExtensionLoadReport output ref.",
+    )
+    ext_verify.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
 
     def add_frontdesk_piworker_flags(command: argparse.ArgumentParser) -> None:
         command.add_argument(

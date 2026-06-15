@@ -85,6 +85,7 @@ export function derivePermissionManifestFromCallSpec(call_spec: PiAgentCallSpec)
     env_allowlist: [],
     secret_ref: null,
     unsupported_hard_policies: [],
+    extension_grants: [],
     schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
   };
 }
@@ -105,6 +106,7 @@ export function deriveDirectPermissionManifest(
     env_allowlist: [],
     secret_ref: null,
     unsupported_hard_policies: [],
+    extension_grants: [],
     schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
   };
 }

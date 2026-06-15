@@ -428,6 +428,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertEqual(input_payload["piworker_call"]["writable_refs"], ["package"])
             self.assertEqual(input_payload["repair"]["mode"], "none")
             self.assertEqual(input_payload["savepoints_ref"], "attempts/WU-000001/pi_agent_savepoints.jsonl")
+            self.assertIsNone(input_payload["extension_lock_ref"])
             self.assertEqual(
                 input_payload["context_observations_ref"],
                 "attempts/WU-000001/context/tool_observations.jsonl",

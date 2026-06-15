@@ -128,6 +128,52 @@ boundaries, permission manifests, evidence, role separation, and ledgers.
 Product meaning stays in your application, product integration, contracts,
 rubrics, artifacts, and tests.
 
+## Thin Product Shell Principle
+
+When building a product on MissionForge, do not turn the product integration
+into a deterministic expert system. Treat PiWorker nodes as capable peer
+agents. Give them a clear manual, task contract, tools, evidence refs, and
+judge rubric, then let them do the semantic work.
+
+Product code should usually be a thin shell around intelligence:
+
+```text
+user need
+  -> LLM-authored intent or plan
+  -> bounded tool execution
+  -> LLM-authored triage, synthesis, repair, or judgment
+  -> refs-first artifacts and ledgers
+```
+
+Use Python for hard boundaries and mechanical work:
+
+- compiling product requests into `TaskContract`, `WorkspacePolicy`, and
+  `PermissionManifest`;
+- writing manuals, prompts, rubrics, and output contracts to refs;
+- invoking role-specific `PiWorkerCall`s;
+- executing bounded tools exactly as authorized by the worker plan;
+- validating schemas, refs, workspace paths, permissions, expected outputs,
+  and role separation;
+- recording ledgers, deltas, repair records, and revision records.
+
+Avoid using Python to replace the agent's judgment:
+
+- no large if/else trees for inferring user intent;
+- no product-specific semantic ranking unless the ranking is itself an
+  LLM-authored artifact or a simple mechanical filter;
+- no hardcoded domain conclusions hidden in collectors or validators;
+- no deterministic acceptance of product-level quality;
+- no workflow that forces a capable LLM to fill code-invented intermediate
+  tables when a clear manual would let it reason directly.
+
+A useful smell test: if a product integration needs many thousands of lines of
+Python before it can express its workflow, it is probably encoding product
+intelligence in code instead of delegating it to PiWorker. Prefer hundreds of
+lines of orchestration plus explicit manuals, rubrics, contracts, and tools.
+Large collectors, UI code, and tests may be longer, but semantic methodology
+should remain visible in documents and artifacts, not buried in runtime
+branches.
+
 ## TaskContract
 
 `TaskContract` is durable task truth. Raw chat is not.

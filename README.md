@@ -16,6 +16,10 @@ MissionForge is not a broad workflow framework, a provider marketplace, or a
 product-specific automation system. It is a thin, inspectable shell for safely
 delegating work to an unreliable but capable model.
 
+Product integrations should stay thin. Use manuals, contracts, rubrics, bounded
+tools, and refs to give PiWorker agents a clear playing field; do not rebuild
+product intelligence as thousands of lines of deterministic Python.
+
 If you are using MissionForge as a programmer, start here:
 
 - [Getting Started](docs/GETTING_STARTED.md)
@@ -24,6 +28,7 @@ If you are using MissionForge as a programmer, start here:
 - [Cookbook](docs/COOKBOOK.md)
 - [Migration Guide](docs/MIGRATION_GUIDE.md)
 - [Live Runtime Guide](docs/LIVE_RUNTIME_GUIDE.md)
+- [Deep Research Roadmap](docs/DEEP_RESEARCH_ROADMAP.md)
 
 ## Current Status
 

@@ -98,6 +98,27 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         directive = _repair_directive()
 
         with TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "policy").mkdir(parents=True, exist_ok=True)
+            Path(tmpdir, "policy/permission_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_id": "runtime-test-permissions",
+                        "schema_version": "permission_manifest.v1",
+                        "readable_refs": ["contract", "policy", "revisions", "ledgers"],
+                        "writable_refs": ["artifacts", "reports", "revisions"],
+                        "denied_refs": [],
+                        "allowed_commands": [],
+                        "network_policy": "disabled",
+                        "env_allowlist": [],
+                        "secret_ref": None,
+                        "unsupported_hard_policies": [],
+                        "extension_grants": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             _write_initial_ledger(Path(tmpdir))
             result = PiWorkerRuntimeFactory(config=config, runner=runner).run_repair_directive(
                 directive,
@@ -126,6 +147,27 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         config = PiAgentRuntimeConfig(command=("pi-agent-runtime",))
 
         with TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "policy").mkdir(parents=True, exist_ok=True)
+            Path(tmpdir, "policy/permission_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_id": "runtime-test-permissions",
+                        "schema_version": "permission_manifest.v1",
+                        "readable_refs": ["contract", "policy", "revisions", "ledgers"],
+                        "writable_refs": ["artifacts", "reports", "revisions"],
+                        "denied_refs": [],
+                        "allowed_commands": [],
+                        "network_policy": "disabled",
+                        "env_allowlist": [],
+                        "secret_ref": None,
+                        "unsupported_hard_policies": [],
+                        "extension_grants": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             result = run_repair_directive_with_default_piworker(
                 _repair_directive(),
                 workspace=tmpdir,
@@ -154,6 +196,27 @@ class PiWorkerRuntimeBoundaryTests(unittest.TestCase):
         expected_ref = "revisions/revision-request-001/revised_task_contract.json"
 
         with TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "policy").mkdir(parents=True, exist_ok=True)
+            Path(tmpdir, "policy/permission_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "manifest_id": "runtime-test-permissions",
+                        "schema_version": "permission_manifest.v1",
+                        "readable_refs": ["contract", "policy", "revisions", "ledgers"],
+                        "writable_refs": ["artifacts", "reports", "revisions"],
+                        "denied_refs": [],
+                        "allowed_commands": [],
+                        "network_policy": "disabled",
+                        "env_allowlist": [],
+                        "secret_ref": None,
+                        "unsupported_hard_policies": [],
+                        "extension_grants": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             _write_initial_ledger(Path(tmpdir))
             result = run_revision_draft_with_default_piworker(
                 _revision_pending_record(),
@@ -245,7 +308,17 @@ class _DirectCallAdapter:
     def __init__(self) -> None:
         self.seen_call: PiWorkerCall | None = None
 
-    def run_call(self, call, *, workspace=".", evidence_store=None, call_spec=None, exit_criteria=None, stop_conditions=None):
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
         self.seen_call = call
         return WorkerAdapterResult(
             execution_report=ExecutionReport(

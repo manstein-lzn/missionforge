@@ -38,6 +38,7 @@ class PiWorkerCallAdapter(Protocol):
         call_spec: Any | None = None,
         exit_criteria: list[str] | None = None,
         stop_conditions: list[str] | None = None,
+        extension_lock_ref: str | None = None,
     ) -> WorkerAdapterResult:
         """Execute one bounded PiWorker call."""
         ...
@@ -177,6 +178,7 @@ def run_piworker_call(
     call_spec: Any | None = None,
     exit_criteria: list[str] | None = None,
     stop_conditions: list[str] | None = None,
+    extension_lock_ref: str | None = None,
     result_id: str | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> PiWorkerCallResult:
@@ -196,6 +198,7 @@ def run_piworker_call(
         call_spec=call_spec,
         exit_criteria=exit_criteria,
         stop_conditions=stop_conditions,
+        extension_lock_ref=extension_lock_ref,
     )
     result = PiWorkerCallResult.from_worker_adapter_result(
         call,

@@ -1,6 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { openSync, writeFileSync } from "node:fs";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
 import type { PermissionManifest } from "./contract.js";
@@ -39,7 +41,7 @@ export function createBubblewrapBashOperations(options: BubblewrapSandboxOptions
     exec: async (command, cwd, { onData, signal, timeout, env }) => {
       await access(workspaceRoot);
       const sandboxCwd = sandboxPathForHostPath(workspaceRoot, cwd);
-      const args = await buildBubblewrapArgs({
+      const plan = await buildBubblewrapPlan({
         workspaceRoot,
         permissionManifest: options.permissionManifest,
         knownFileRefs,
@@ -48,12 +50,15 @@ export function createBubblewrapBashOperations(options: BubblewrapSandboxOptions
         sandboxCwd,
         env: sanitizeSandboxEnv(env ?? {}),
       });
-
+      const stdio: Array<"ignore" | "pipe" | number> = ["ignore", "pipe", "pipe"];
+      if (plan.seccompFd !== null) {
+        stdio.push(plan.seccompFd);
+      }
       return new Promise((resolvePromise, reject) => {
-        const child = spawn(bwrapPath, args, {
+        const child = spawn(bwrapPath, plan.args, {
           cwd: workspaceRoot,
           detached: process.platform !== "win32",
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio,
           env: {
             PATH: "/bin:/usr/bin:/usr/local/bin",
             HOME: "/tmp",
@@ -106,15 +111,23 @@ interface BubblewrapArgsOptions {
   env: NodeJS.ProcessEnv;
 }
 
-async function buildBubblewrapArgs(options: BubblewrapArgsOptions): Promise<string[]> {
+interface BubblewrapPlan {
+  args: string[];
+  seccompFd: number | null;
+}
+
+async function buildBubblewrapPlan(options: BubblewrapArgsOptions): Promise<BubblewrapPlan> {
   const writableRoots = sortedRoots(options.permissionManifest.writable_refs);
   const readonlyRoots = readonlyMountRoots(options.permissionManifest, writableRoots);
   const deniedRoots = sortedRoots(options.permissionManifest.denied_refs);
+  const seccompFd =
+    options.permissionManifest.network_policy === "disabled" ? getNetworkBlockSeccompFd() : null;
   const args = [
-    "--unshare-all",
     "--unshare-user-try",
+    "--unshare-pid",
+    "--unshare-uts",
+    "--unshare-ipc",
     "--die-with-parent",
-    ...(options.permissionManifest.network_policy === "enabled" ? ["--share-net"] : []),
     "--ro-bind",
     "/bin",
     "/bin",
@@ -138,6 +151,9 @@ async function buildBubblewrapArgs(options: BubblewrapArgsOptions): Promise<stri
     "--chdir",
     options.sandboxCwd,
   ];
+  if (seccompFd !== null) {
+    args.push("--seccomp", "3");
+  }
 
   for (const dirRef of collectMountDirs([
     ...readonlyRoots,
@@ -167,7 +183,7 @@ async function buildBubblewrapArgs(options: BubblewrapArgsOptions): Promise<stri
     }
   }
   args.push("--", "/bin/bash", "-lc", options.command);
-  return args;
+  return { args, seccompFd };
 }
 
 function readonlyMountRoots(manifest: PermissionManifest, writableRoots: readonly string[]): string[] {
@@ -335,4 +351,103 @@ function killProcessGroup(pid: number | undefined): void {
       // Process already exited.
     }
   }
+}
+
+function getNetworkBlockSeccompFd(): number {
+  if (networkBlockSeccompFd !== null) return networkBlockSeccompFd;
+  const seccompPath = networkBlockSeccompPath ??= resolve(tmpdir(), "missionforge-bwrap-network-block.bpf");
+  const script = String.raw`
+import ctypes
+import ctypes.util
+
+libname = ctypes.util.find_library("seccomp")
+if not libname:
+    raise SystemExit("libseccomp not found")
+
+lib = ctypes.CDLL(libname, use_errno=True)
+lib.seccomp_init.argtypes = [ctypes.c_uint32]
+lib.seccomp_init.restype = ctypes.c_void_p
+lib.seccomp_rule_add.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint]
+lib.seccomp_rule_add.restype = ctypes.c_int
+lib.seccomp_export_bpf.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lib.seccomp_export_bpf.restype = ctypes.c_int
+lib.seccomp_release.argtypes = [ctypes.c_void_p]
+lib.seccomp_release.restype = None
+lib.seccomp_syscall_resolve_name.argtypes = [ctypes.c_char_p]
+lib.seccomp_syscall_resolve_name.restype = ctypes.c_int
+
+SCMP_ACT_ALLOW = 0x7fff0000
+SCMP_ACT_ERRNO = 0x00050000
+EPERM = 1
+
+network_syscalls = [
+    "socket",
+    "socketpair",
+    "connect",
+    "bind",
+    "listen",
+    "accept",
+    "accept4",
+    "getsockname",
+    "getpeername",
+    "setsockopt",
+    "getsockopt",
+    "shutdown",
+    "sendto",
+    "recvfrom",
+    "sendmsg",
+    "recvmsg",
+    "sendmmsg",
+    "recvmmsg",
+    "socketcall",
+]
+
+ctx = lib.seccomp_init(SCMP_ACT_ALLOW)
+if not ctx:
+    raise SystemExit("seccomp_init failed")
+
+try:
+    for name in network_syscalls:
+        nr = lib.seccomp_syscall_resolve_name(name.encode("utf-8"))
+        if nr < 0:
+            continue
+        rc = lib.seccomp_rule_add(ctx, SCMP_ACT_ERRNO | EPERM, nr, 0)
+        if rc < 0:
+            raise SystemExit(f"seccomp_rule_add failed for {name}: {rc}")
+    rc = lib.seccomp_export_bpf(ctx, 1)
+    if rc < 0:
+        raise SystemExit(f"seccomp_export_bpf failed: {rc}")
+finally:
+    lib.seccomp_release(ctx)
+`;
+  const result = spawnSync("python3", ["-c", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      PYTHONWARNINGS: "ignore",
+    },
+    encoding: "buffer",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString("utf-8").trim() : String(result.stderr ?? "");
+    throw new Error(`failed to build bubblewrap seccomp program: ${stderr || `exit ${result.status}`}`);
+  }
+  const program = Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? []);
+  if (program.length === 0) {
+    throw new Error("bubblewrap seccomp program is empty");
+  }
+  writeFileSync(seccompPath, program);
+  networkBlockSeccompFd = openSync(seccompPath, "r");
+  return networkBlockSeccompFd;
+}
+
+let networkBlockSeccompFd: number | null = null;
+let networkBlockSeccompPath: string | null = null;
+
+function getNetworkBlockSeccompProgram(): Buffer {
+  throw new Error("unreachable");
 }

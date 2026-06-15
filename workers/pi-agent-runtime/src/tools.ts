@@ -12,7 +12,7 @@ import {
   type WriteOperations,
 } from "@earendil-works/pi-coding-agent";
 
-import type { PermissionManifest, SandboxProfile } from "./contract.js";
+import type { ExtensionLock, PermissionManifest, SandboxProfile } from "./contract.js";
 import { createContextSnapshotTool, type ContextSnapshotToolOptions } from "./context-snapshot.js";
 import { resolveWorkspaceRef } from "./paths.js";
 import { assertNoSymlinkSegments, guardWorkspacePath, ToolPermissionEnforcer } from "./permissions.js";
@@ -27,10 +27,13 @@ export interface MissionForgeToolOptions {
   knownFileRefs?: string[];
   knownDirectoryRefs?: string[];
   contextSnapshot?: ContextSnapshotToolOptions;
+  extensionLock?: ExtensionLock | null;
+  extensionTools?: AgentTool<any>[];
+  callId?: string;
   onToolGatewayDecision?: (decision: ToolGatewayDecision) => void;
 }
 
-export function createMissionForgeTools(options: MissionForgeToolOptions): AgentTool<any>[] {
+export async function createMissionForgeTools(options: MissionForgeToolOptions): Promise<AgentTool<any>[]> {
   const cwd = options.workspaceRoot;
   const effectiveManifest = permissionManifestFromSandboxProfile(
     options.permissionManifest,
@@ -41,7 +44,8 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
     permissionManifest: effectiveManifest,
     onDecision: options.onToolGatewayDecision,
   });
-  const tools: AgentTool<any>[] = [
+  const toolsByName = new Map<string, AgentTool<any>>();
+  for (const tool of [
     createReadTool(cwd, {
       operations: createGatewayReadOperations(gateway),
     }),
@@ -51,9 +55,11 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
     createWriteTool(cwd, {
       operations: createGatewayWriteOperations(gateway),
     }),
-  ];
+  ]) {
+    toolsByName.set(tool.name, tool);
+  }
   if (options.contextSnapshot) {
-    tools.push(createContextSnapshotTool({
+    toolsByName.set("context_snapshot", createContextSnapshotTool({
       ...options.contextSnapshot,
       permissionManifest: effectiveManifest,
     }));
@@ -68,7 +74,8 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
       knownFileRefs: options.knownFileRefs,
       knownDirectoryRefs: options.knownDirectoryRefs,
     });
-    tools.push(
+    toolsByName.set(
+      "bash",
       createBashTool(cwd, {
         operations: createGatewayBashOperations(gateway, bashOps, options.toolTimeoutSeconds),
         spawnHook: (context) => ({
@@ -79,7 +86,10 @@ export function createMissionForgeTools(options: MissionForgeToolOptions): Agent
       }),
     );
   }
-  return tools;
+  for (const tool of options.extensionTools ?? []) {
+    toolsByName.set(tool.name, tool);
+  }
+  return [...toolsByName.values()];
 }
 
 export function permissionManifestFromSandboxProfile(
@@ -98,6 +108,7 @@ export function permissionManifestFromSandboxProfile(
     allowed_commands: [...sandboxProfile.command_allowlist],
     network_policy: sandboxProfile.network_enabled ? "enabled" : "disabled",
     env_allowlist: [...sandboxProfile.env_allowlist],
+    extension_grants: [...(permissionManifest.extension_grants ?? [])],
   };
 }
 

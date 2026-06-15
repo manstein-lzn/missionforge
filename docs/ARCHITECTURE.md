@@ -65,6 +65,25 @@ The executor may not accept its own work. Code may reject invalid, unsafe,
 unauthorized, malformed, stale, or unreferenced outputs, but code does not
 pretend to perform product-level semantic judgment.
 
+## Thin Product Integrations
+
+MissionForge should make product integrations smaller, not push programmers
+toward large deterministic workflow engines. A product integration should look
+more like a bounded manual plus tool surface than a second application runtime:
+
+```text
+manuals + contracts + rubrics + bounded tools + refs
+  -> PiWorker semantic work
+  -> hard validation and independent judgment
+```
+
+If product-specific Python grows into thousands of lines of semantic planning,
+ranking, synthesis, or acceptance logic, the design is likely fighting the
+architecture. Move that intelligence into PiWorker-readable manuals, prompts,
+rubrics, and explicit artifacts. Keep code responsible for contracts,
+permissions, refs, tool execution, ledgers, repair, revision, and structural
+validation.
+
 ## Runtime Boundary
 
 The only first-class intelligent invocation boundary is `PiWorkerCall`.

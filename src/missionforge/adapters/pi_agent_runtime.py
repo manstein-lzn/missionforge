@@ -143,6 +143,8 @@ class PiAgentRuntimeInput:
     context_projection_ref: str
     context_raw_dir_ref: str
     context_projection_config: Mapping[str, Any]
+    extension_lock_ref: str | None
+    extension_load_report_ref: str
     attempt_dir_ref: str
     permission_manifest: Mapping[str, Any]
     capability_grant: Mapping[str, Any]
@@ -193,6 +195,13 @@ class PiAgentRuntimeInput:
             ),
             context_raw_dir_ref=validate_ref(refs["context_raw_dir"], "pi_agent_runtime_input.context_raw_dir_ref"),
             context_projection_config=_context_projection_config_payload(config),
+            extension_lock_ref=validate_ref(refs["extension_lock"], "pi_agent_runtime_input.extension_lock_ref")
+            if refs.get("extension_lock")
+            else None,
+            extension_load_report_ref=validate_ref(
+                refs["extension_load_report"],
+                "pi_agent_runtime_input.extension_load_report_ref",
+            ),
             attempt_dir_ref=validate_ref(refs["attempt_dir"], "pi_agent_runtime_input.attempt_dir_ref"),
             permission_manifest=permission_manifest,
             capability_grant=capability_grant,
@@ -219,9 +228,12 @@ class PiAgentRuntimeInput:
             "context_observations_ref",
             "context_projection_ref",
             "context_raw_dir_ref",
+            "extension_load_report_ref",
             "attempt_dir_ref",
         ):
             validate_ref(getattr(self, field_name), f"pi_agent_runtime_input.{field_name}")
+        if self.extension_lock_ref is not None:
+            validate_ref(self.extension_lock_ref, "pi_agent_runtime_input.extension_lock_ref")
         ensure_json_value(
             require_mapping(self.permission_manifest, "pi_agent_runtime_input.permission_manifest"),
             "pi_agent_runtime_input.permission_manifest",
@@ -260,6 +272,8 @@ class PiAgentRuntimeInput:
             "context_observations_ref": self.context_observations_ref,
             "context_projection_ref": self.context_projection_ref,
             "context_raw_dir_ref": self.context_raw_dir_ref,
+            "extension_lock_ref": self.extension_lock_ref,
+            "extension_load_report_ref": self.extension_load_report_ref,
             "context_projection_config": ensure_json_value(
                 dict(self.context_projection_config),
                 "pi_agent_runtime_input.context_projection_config",
@@ -800,6 +814,7 @@ class PiAgentRuntimeAdapter:
         call_spec: PiAgentCallSpec | None = None,
         exit_criteria: list[str] | None = None,
         stop_conditions: list[str] | None = None,
+        extension_lock_ref: str | None = None,
     ) -> WorkerAdapterResult:
         call.validate()
         spec = call_spec or PiAgentCallSpec.from_call(
@@ -817,6 +832,8 @@ class PiAgentRuntimeAdapter:
         root = Path(workspace).resolve()
         root.mkdir(parents=True, exist_ok=True)
         refs = _pi_agent_refs(spec.call_id)
+        if extension_lock_ref is not None:
+            refs["extension_lock"] = validate_ref(extension_lock_ref, "pi_agent_runtime.extension_lock_ref")
         _resolve_workspace_ref(root, refs["attempt_dir"]).mkdir(parents=True, exist_ok=True)
         provider_env = resolve_pi_agent_provider_environment(
             provider_mode=self.config.provider_mode,
@@ -827,7 +844,7 @@ class PiAgentRuntimeAdapter:
             codex_home=self.codex_home,
         )
 
-        input_payload = self._build_input_payload(call, spec, refs)
+        input_payload = self._build_input_payload(call, spec, refs, root)
         _write_json(_resolve_workspace_ref(root, refs["workspace_policy"]), _runtime_workspace_policy_payload(spec, refs))
         _write_json(_resolve_workspace_ref(root, refs["permission_manifest"]), input_payload["permission_manifest"])  # type: ignore[index]
         _write_json(_resolve_workspace_ref(root, refs["sandbox_profile"]), input_payload["sandbox_profile"])  # type: ignore[index]
@@ -1019,11 +1036,15 @@ class PiAgentRuntimeAdapter:
         call: PiWorkerCall,
         call_spec: PiAgentCallSpec,
         refs: Mapping[str, str],
+        workspace_root: Path,
     ) -> dict[str, Any]:
-        permission_manifest = _permission_manifest_payload(call_spec, workspace_policy_ref=refs["workspace_policy"])
+        permission_manifest = _runtime_permission_manifest_for_call(call, refs, workspace_root)
+        effective_refs = dict(refs)
+        if not _permission_manifest_has_extension_grants(permission_manifest):
+            effective_refs.pop("extension_lock", None)
         runtime_input = PiAgentRuntimeInput.from_call(
             call,
-            refs=refs,
+            refs=effective_refs,
             permission_manifest=permission_manifest,
             config=self.config,
             call_spec=call_spec,
@@ -1515,6 +1536,8 @@ def _pi_agent_refs(call_id: str) -> dict[str, str]:
         "context_observations": f"{attempt_dir}/context/tool_observations.jsonl",
         "context_projection": f"{attempt_dir}/context/projection.json",
         "context_raw_dir": f"{attempt_dir}/context/raw",
+        "extension_lock": f"{attempt_dir}/compiled/extension_lock.json",
+        "extension_load_report": f"{attempt_dir}/reports/extension_load_report.json",
         "workspace_policy": f"{attempt_dir}/runtime_workspace_policy.json",
         "permission_manifest": f"{attempt_dir}/runtime_permission_manifest.json",
         "sandbox_profile": f"{attempt_dir}/sandbox_profile.json",
@@ -1555,25 +1578,39 @@ def _reject_outputs_outside_scope(spec: PiAgentCallSpec) -> None:
             raise ContractValidationError(f"PI Agent runtime output outside allowed scope: {output_ref}")
 
 
-def _permission_manifest_payload(spec: PiAgentCallSpec, *, workspace_policy_ref: str | None = None) -> dict[str, Any]:
-    readable_refs = _dedupe_refs([
-        *spec.visible_refs,
-        *spec.allowed_scope,
-        *[_parent_ref(ref) for ref in spec.expected_outputs],
-    ])
+def _runtime_permission_manifest_for_call(
+    call: PiWorkerCall,
+    refs: Mapping[str, str],
+    workspace_root: Path,
+) -> dict[str, Any]:
+    if call.permission_manifest_ref and _resolve_workspace_ref(workspace_root, call.permission_manifest_ref).is_file():
+        return _read_json_ref(workspace_root, call.permission_manifest_ref)
+    readable_refs = _dedupe_refs(
+        [
+            *call.visible_refs,
+            *call.writable_refs,
+            *[_parent_ref(ref) for ref in call.expected_output_refs],
+        ]
+    )
     return {
-        "manifest_id": f"{spec.call_id}-pi-runtime-permissions",
+        "manifest_id": f"{call.call_id}-pi-runtime-permissions",
         "schema_version": "permission_manifest.v1",
-        "workspace_policy_ref": workspace_policy_ref,
+        "workspace_policy_ref": refs["workspace_policy"],
         "readable_refs": readable_refs,
-        "writable_refs": _dedupe_refs(list(spec.allowed_scope)),
+        "writable_refs": _dedupe_refs(list(call.writable_refs)),
         "denied_refs": [],
         "allowed_commands": [],
         "network_policy": "disabled",
         "env_allowlist": [],
         "secret_ref": None,
         "unsupported_hard_policies": [],
+        "extension_grants": [],
     }
+
+
+def _permission_manifest_has_extension_grants(permission_manifest: Mapping[str, Any]) -> bool:
+    grants = permission_manifest.get("extension_grants", [])
+    return isinstance(grants, list) and len(grants) > 0
 
 
 def _runtime_workspace_policy_payload(spec: PiAgentCallSpec, refs: Mapping[str, str]) -> dict[str, Any]:
@@ -1712,6 +1749,13 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     if root not in path.parents and path != root:
         raise ContractValidationError("PI Agent runtime ref escapes workspace")
     return path
+
+
+def _read_json_ref(root: Path, ref: str) -> dict[str, Any]:
+    payload = json.loads(_resolve_workspace_ref(root, ref).read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ContractValidationError(f"{ref} must contain a JSON object")
+    return dict(payload)
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:

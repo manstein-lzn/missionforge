@@ -1,12 +1,16 @@
-import { Agent } from "@earendil-works/pi-agent-core";
+import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, streamSimple } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { access } from "node:fs/promises";
+import type { AgentEvent, AgentMessage, AfterToolCallContext } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 
 import type { RuntimeInput } from "./contract.js";
 import { ToolObservationRecorder } from "./context-observations.js";
 import { ContextProjector } from "./context-projector.js";
 import { EvidenceRecorder } from "./evidence-recorder.js";
+import { assertExtensionLoadReportAccepted, loadExtensionLock, writeExtensionLoadReport } from "./extensions.js";
+import { loadExtensionTools } from "./extensions.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
 import { resolveWorkspaceRef } from "./paths.js";
 import { resolveProviderConfig } from "./provider-config.js";
@@ -34,10 +38,17 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   let permissionBoundaryReady = false;
 
   try {
-    const tools = createMissionForgeTools({
+    const extensionLock = await loadExtensionLock(input, workspaceRoot);
+    const extensionLoadReport = await writeExtensionLoadReport(input, workspaceRoot, extensionLock);
+    assertExtensionLoadReportAccepted(extensionLoadReport);
+    const { tools: extensionTools, report: loadedReport } = await loadExtensionTools(input, workspaceRoot, extensionLock);
+    const tools = await createMissionForgeTools({
       workspaceRoot,
       permissionManifest: input.permission_manifest,
       sandboxProfile: input.sandbox_profile,
+      extensionLock,
+      extensionTools,
+      callId: input.call_id,
       toolTimeoutSeconds: provider.toolTimeoutSeconds,
       knownFileRefs: runtimeKnownFileRefs(input),
       knownDirectoryRefs: runtimeKnownDirectoryRefs(input),
@@ -53,6 +64,11 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       },
       onToolGatewayDecision: (decision) => recorder.recordToolGatewayDecision(decision),
     });
+    if (loadedReport.rejected_extensions.length > 0) {
+      throw new Error(
+        `extension load rejected: ${loadedReport.rejected_extensions.map((record) => `${record.grant_id}:${record.reason}`).join(", ")}`,
+      );
+    }
     permissionBoundaryReady = true;
 
     if (provider.mode === "faux") {
@@ -79,25 +95,30 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       ]);
     }
 
-    const agent = new Agent({
-      initialState: {
-        systemPrompt: buildSystemPrompt(input),
-        model: provider.model,
-        thinkingLevel: provider.reasoning,
-        tools,
-      },
-      streamFn: streamSimple,
+    const systemPrompt = buildSystemPrompt(input);
+    const transcript: AgentMessage[] = [];
+    const loopConfig = {
+      model: provider.model,
+      reasoning: provider.reasoning === "off" ? undefined : provider.reasoning,
+      sessionId: input.call_id,
+      convertToLlm: async (messages: AgentMessage[]): Promise<Message[]> => convertAgentMessagesToLlm(messages),
+      transformContext: async (messages: AgentMessage[]) =>
+        projector.project(await stripUnreplayableResponsesReasoning(messages)),
       getApiKey: () => provider.apiKey,
-      transformContext: async (messages) => projector.project(await stripUnreplayableResponsesReasoning(messages)),
-      afterToolCall: async (context) => {
+      toolExecution: "parallel" as const,
+      afterToolCall: async (context: AfterToolCallContext) => {
         await observations.recordAfterToolCall(context);
         const observation = observations.list().find((item) => item.tool_call_id === context.toolCall.id);
         if (observation) await recorder.recordToolObservation(observation);
         return undefined;
       },
-      toolExecution: "parallel",
-    });
-    agent.subscribe(async (event) => {
+      shouldStopAfterTurn: async () => {
+        if (input.piworker_call.role !== "frontdesk_author_piworker") return false;
+        if (input.call_spec.expected_outputs.length === 0) return false;
+        return (await missingExpectedOutputRefs(input, workspaceRoot)).length === 0;
+      },
+    };
+    const recordEvent = async (event: AgentEvent) => {
       if (event.type === "turn_start") {
         turnStartCount += 1;
         observations.noteTurnStart();
@@ -123,21 +144,37 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
         cancelled = true;
         throw new Error("pi-agent-runtime cancelled at a MissionForge safe point");
       }
+    };
+    const makeUserMessage = (text: string): AgentMessage => ({
+      role: "user",
+      content: [{ type: "text", text }],
+      timestamp: Date.now(),
     });
-    await agent.prompt(buildUserPrompt(input));
+    const runPrompt = async (prompt: string, currentMessages: AgentMessage[]): Promise<AgentMessage[]> =>
+      runAgentLoop(
+        [makeUserMessage(prompt)],
+        { systemPrompt, messages: currentMessages, tools },
+        loopConfig,
+        recordEvent,
+        undefined,
+        streamSimple,
+      );
+
+      transcript.push(...(await runPrompt(buildUserPrompt(input), [])));
+    pushFailures(failures, collectAgentFailures(transcript));
     await promptForMissingExpectedOutputs({
       input,
       workspaceRoot,
       maxTurns: provider.maxTurns,
       maxRetries: DEFAULT_COMPLETION_RETRY_LIMIT,
       currentTurnCount: () => turnStartCount,
-      prompt: (prompt) => agent.prompt(prompt),
+      prompt: async (prompt) => {
+        transcript.push(...(await runPrompt(prompt, transcript)));
+        pushFailures(failures, collectAgentFailures(transcript));
+      },
     });
-    await recorder.writeSession(agent.state.messages);
-    if (agent.state.errorMessage) {
-      failures.push(agent.state.errorMessage);
-    }
-    workerClaims.push(extractFinalText(agent.state.messages) ?? "");
+    await recorder.writeSession(transcript);
+    workerClaims.push(extractFinalText(transcript) ?? "");
   } catch (error) {
     failures.push(error instanceof Error ? error.message : String(error));
     if (provider.mode === "faux" && permissionBoundaryReady) {
@@ -166,6 +203,34 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     recommendedNextSteps: cancelled ? ["Run was cancelled at a MissionForge safe point."] : undefined,
   });
   await writeRuntimeOutput(workspaceRoot, input, output);
+}
+
+function convertAgentMessagesToLlm(messages: AgentMessage[]): Message[] {
+  return messages.filter(
+    (message): message is Message =>
+      message.role === "user" || message.role === "assistant" || message.role === "toolResult",
+  );
+}
+
+function collectAgentFailures(messages: readonly AgentMessage[]): string[] {
+  const failures: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    if (message.stopReason !== "error" && message.stopReason !== "aborted") continue;
+    if (typeof message.errorMessage === "string" && message.errorMessage.trim()) {
+      failures.push(message.errorMessage);
+    } else {
+      failures.push(message.stopReason);
+    }
+  }
+  return failures;
+}
+
+function pushFailures(target: string[], candidates: string[]): void {
+  for (const candidate of candidates) {
+    if (!candidate || target.includes(candidate)) continue;
+    target.push(candidate);
+  }
 }
 
 function runtimeKnownFileRefs(input: RuntimeInput): string[] {
