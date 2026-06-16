@@ -267,6 +267,8 @@ logic.
 Exit criteria:
 
 - `sources/source_packet.json` is a required worker output;
+- `sources/source_packet.json` is written before report artifacts so reports
+  cite an already recorded machine-readable evidence ledger;
 - source records carry stable `S1`, `S2`, ... identifiers plus title, source
   type, and a locator;
 - final reports cite material claims with `[S1]` style ids;
@@ -279,6 +281,8 @@ Current implementation:
 
 - `missionforge_deepresearch.evidence` contains the mechanical source packet
   and citation audits.
+- The compiled contract, manual, and output contract all state the
+  evidence-first write order.
 - The single researcher remains the only semantic executor.
 - Python does not rank sources, expand domain terms, or judge whether a paper
   is important; it only enforces that cited source ids resolve to the evidence

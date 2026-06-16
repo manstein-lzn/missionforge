@@ -507,8 +507,10 @@ def _run_research_revision_round(
         contract_ref=TASK_CONTRACT_REF,
         objective=(
             "Update the DeepResearch evidence packet and report artifacts using the peer review report, "
-            "next research directive, frozen contract, and available tools. Write research_state.json "
-            "to record the belief update, open questions, and remaining gaps."
+            "next research directive, frozen contract, and available tools. First update "
+            "sources/source_packet.json with any added or corrected source_records; then update report artifacts "
+            "so material claims cite those source ids. Write research_state.json to record the belief update, "
+            "open questions, and remaining gaps."
         ),
         visible_refs=visible_refs,
         writable_refs=list(permission_manifest.writable_refs) + ["reviews"],

@@ -399,7 +399,11 @@ def _task_contract(
     return TaskContract(
         contract_id=f"deepresearch-{request.request_id}-task-contract",
         product_id="deepresearch.academic",
-        objective=f"Produce a draft academic deep research report for topic: {request.topic}",
+        objective=(
+            f"Produce a citation-backed academic deep research report for topic: {request.topic}. "
+            "First gather evidence and write sources/source_packet.json with non-empty source_records; "
+            "then write report artifacts whose material claims cite those source ids."
+        ),
         background=[
             "Phase 1 single-agent DeepResearch baseline.",
             "The researcher owns semantic planning, triage, synthesis, delta analysis, and draft writing.",
@@ -412,7 +416,7 @@ def _task_contract(
             ContractClause(
                 clause_id="dr-output-000",
                 text=(
-                    "Write sources/source_packet.json as the structured evidence sink. "
+                    "Write sources/source_packet.json as the first structured evidence sink before report artifacts. "
                     "Every report citation must refer to source ids in this packet."
                 ),
                 refs=[SOURCE_PACKET_REF],
@@ -469,6 +473,14 @@ def _task_contract(
                 clause_id="dr-hard-source-boundary",
                 text="Use the visible source packet and previous-run refs as evidence; record gaps instead of inventing support.",
                 refs=[SEARCH_INTENT_REF, SOURCE_PACKET_REF, PRODUCT_REQUEST_REF],
+            ),
+            ContractClause(
+                clause_id="dr-hard-evidence-first",
+                text=(
+                    "Treat sources/source_packet.json as the first deliverable in the work loop: collect evidence, "
+                    "record source_records, then synthesize reports against those ids."
+                ),
+                refs=[SOURCE_PACKET_REF, OUTPUT_CONTRACT_REF],
             ),
         ],
         non_goals=[
@@ -675,6 +687,8 @@ the judged run result or final package.
 
 Evidence and citation contract:
 
+- Write order matters: produce or update `sources/source_packet.json` before
+  writing report artifacts, then cite that packet consistently.
 - Source ids must use `S1`, `S2`, ... style identifiers.
 - `sources/source_packet.json` must contain non-empty `source_records`.
 - Each source record must contain `source_id`, `title`, `source_type`, and at
@@ -703,10 +717,11 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
         "expected_draft_refs": list(EXPECTED_DRAFT_REFS),
         "expected_worker_output_refs": list(EXPECTED_WORKER_OUTPUT_REFS),
         "source_packet_ref": SOURCE_PACKET_REF,
+        "artifact_write_order": [SOURCE_PACKET_REF, *EXPECTED_DRAFT_REFS],
         "citation_contract": _citation_contract(),
         "notes": [
             "final_report.md is the main user-facing candidate report.",
-            "source_packet.json is the structured evidence sink.",
+            "source_packet.json is the first structured evidence sink and should be written before report artifacts.",
             "evidence_index.md maps source identifiers to source refs.",
             "research_delta.md is required even for baseline runs.",
             "source_gaps.md should make missing evidence explicit.",

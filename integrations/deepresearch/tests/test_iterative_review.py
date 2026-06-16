@@ -54,6 +54,7 @@ class IterativeReviewTests(unittest.TestCase):
             self.assertEqual(reviewer_call["role"], "judge_piworker")
             self.assertEqual(reviewer_call["metadata"]["authority"], "guidance_only")
             self.assertIn("reviews/round_01/next_research_directive.md", revision_call["visible_refs"])
+            self.assertIn("First update sources/source_packet.json", revision_call["objective"])
             self.assertIn("reviews/round_01/research_state.json", revision_call["expected_output_refs"])
             self.assertEqual(state["round_index"], 1)
             self.assertEqual(final_run["status"], "draft_ready")

@@ -49,6 +49,7 @@ class CompilerTests(unittest.TestCase):
             self.assertIn("product_contract/output_contract.json", task_contract.product_contract_refs)
             output_contract = json.loads((root / result.output_contract_ref).read_text(encoding="utf-8"))
             self.assertEqual(output_contract["source_packet_ref"], "sources/source_packet.json")
+            self.assertEqual(output_contract["artifact_write_order"][0], "sources/source_packet.json")
             self.assertEqual(output_contract["research_intensity"], "standard")
             self.assertIn("sources/source_packet.json", output_contract["expected_worker_output_refs"])
             self.assertTrue((root / result.task_contract_ref).exists())
@@ -84,6 +85,8 @@ class CompilerTests(unittest.TestCase):
             self.assertEqual(task_contract.metadata["research_intensity"], "intensive")
             self.assertIn("Research intensity: `intensive`", manual)
             self.assertIn("Do not label the", manual)
+            self.assertIn("Write order matters", manual)
+            self.assertIn("First gather evidence", task_contract.objective)
 
     def test_live_extension_mode_compiles_extension_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

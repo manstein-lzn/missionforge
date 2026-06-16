@@ -184,12 +184,13 @@ The live search intent is written to `sources/search_intent.json`. The
 structured evidence sink is `sources/source_packet.json`, with an extension
 lock at `compiled/extension_lock.json` and acquisition diagnostics at
 `sources/source_collection_report.json`. In live extension mode the researcher
-must overwrite `sources/source_packet.json` with non-empty `source_records`.
+must overwrite `sources/source_packet.json` with non-empty `source_records`
+before writing the report artifacts that cite those source ids.
 
 Evidence and citation contract:
 
 - source ids use `S1`, `S2`, ... style identifiers;
-- `sources/source_packet.json` is the machine-readable evidence ledger;
+- `sources/source_packet.json` is the first machine-readable evidence ledger;
 - `reports/final_report.md` cites material claims with `[S1]` or `[S1, S2]`;
 - `reports/final_report.md` includes `## References`;
 - `reports/evidence_index.md` maps every source id from the source packet;
