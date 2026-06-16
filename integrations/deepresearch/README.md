@@ -93,6 +93,10 @@ step, but it cannot accept the product. The command returns
 `packages/deepresearch_reviewed_run_result.json` with `draft_ready` or
 `failed`.
 
+Each revision round also writes a round-local permission manifest under
+`reviews/round_XX/revision_permission_manifest.json` so the researcher can
+write the review-state artifact without broadening the frozen base manifest.
+
 Reviewer-guided updates followed by the independent judge:
 
 ```bash

@@ -48,6 +48,7 @@ class IterativeReviewTests(unittest.TestCase):
             run_root = root / "runs/npu-compiler-survey"
             reviewer_call = json.loads((run_root / "attempts/reviewer/round_01/piworker_call.json").read_text(encoding="utf-8"))
             revision_call = json.loads((run_root / "attempts/researcher/round_01/piworker_call.json").read_text(encoding="utf-8"))
+            revision_manifest = json.loads((run_root / "reviews/round_01/revision_permission_manifest.json").read_text(encoding="utf-8"))
             state = json.loads((run_root / "reviews/round_01/research_state.json").read_text(encoding="utf-8"))
             final_run = json.loads((root / result.final_run_result_ref).read_text(encoding="utf-8"))
 
@@ -56,6 +57,9 @@ class IterativeReviewTests(unittest.TestCase):
             self.assertIn("reviews/round_01/next_research_directive.md", revision_call["visible_refs"])
             self.assertIn("First update sources/source_packet.json", revision_call["objective"])
             self.assertIn("reviews/round_01/research_state.json", revision_call["expected_output_refs"])
+            self.assertIn("reviews", revision_call["permission_manifest_ref"])
+            self.assertIn("reviews", revision_manifest["readable_refs"])
+            self.assertIn("reviews", revision_manifest["writable_refs"])
             self.assertEqual(state["round_index"], 1)
             self.assertEqual(final_run["status"], "draft_ready")
             self.assertNotIn("\"accepted\"", (root / result.reviewed_run_result_ref).read_text(encoding="utf-8"))

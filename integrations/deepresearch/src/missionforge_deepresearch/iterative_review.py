@@ -162,6 +162,9 @@ def run_deepresearch_academic_reviewed(
     extra_metric_refs: list[str] = []
 
     for round_index in range(1, effective_review_rounds + 1):
+        revision_permission_manifest_ref = _revision_permission_manifest_ref(round_index)
+        revision_permission_manifest = _revision_permission_manifest(permission_manifest)
+        write_json_ref(run_root, revision_permission_manifest_ref, revision_permission_manifest.to_dict())
         review_result = _run_peer_review_round(
             request,
             workspace=run_root,
@@ -184,6 +187,7 @@ def run_deepresearch_academic_reviewed(
                 _outer_ref(current_result.run_workspace_ref, _review_spec_ref(round_index)),
                 _outer_ref(current_result.run_workspace_ref, reviewer_report_ref),
                 _outer_ref(current_result.run_workspace_ref, directive_ref),
+                _outer_ref(current_result.run_workspace_ref, revision_permission_manifest_ref),
                 _outer_ref(current_result.run_workspace_ref, reviewer_call_ref),
                 _outer_ref(current_result.run_workspace_ref, reviewer_call_result_ref),
             ]
@@ -211,6 +215,7 @@ def run_deepresearch_academic_reviewed(
             task_contract_id=task_contract.contract_id,
             contract_hash=current_result.contract_hash,
             permission_manifest=permission_manifest,
+            permission_manifest_ref=revision_permission_manifest_ref,
             round_index=round_index,
             directive_ref=directive_ref,
             reviewer_report_ref=reviewer_report_ref,
@@ -457,6 +462,7 @@ def _run_research_revision_round(
     task_contract_id: str,
     contract_hash: str,
     permission_manifest: PermissionManifest,
+    permission_manifest_ref: str,
     round_index: int,
     directive_ref: str,
     reviewer_report_ref: str,
@@ -475,6 +481,7 @@ def _run_research_revision_round(
             TASK_CONTRACT_REF,
             WORKSPACE_POLICY_REF,
             PERMISSION_MANIFEST_REF,
+            permission_manifest_ref,
             WORKER_BRIEF_REF,
             PRODUCT_REQUEST_REF,
             MANUAL_REF,
@@ -513,9 +520,9 @@ def _run_research_revision_round(
             "open questions, and remaining gaps."
         ),
         visible_refs=visible_refs,
-        writable_refs=list(permission_manifest.writable_refs) + ["reviews"],
+        writable_refs=_dedupe_refs([*permission_manifest.writable_refs, "reviews"]),
         expected_output_refs=expected_refs,
-        permission_manifest_ref=PERMISSION_MANIFEST_REF,
+        permission_manifest_ref=permission_manifest_ref,
         source_packet_ref=SOURCE_PACKET_REF,
         source_packet_hash=stable_json_hash(source_packet),
         evidence_refs=evidence_refs,
@@ -758,6 +765,22 @@ def _reviewer_permission_manifest(request: AcademicResearchRequest) -> Permissio
     )
 
 
+def _revision_permission_manifest(base_manifest: PermissionManifest) -> PermissionManifest:
+    return PermissionManifest(
+        manifest_id=f"{base_manifest.manifest_id}-review-revision",
+        workspace_policy_ref=base_manifest.workspace_policy_ref,
+        readable_refs=_dedupe_refs([*base_manifest.readable_refs, "reviews"]),
+        writable_refs=_dedupe_refs([*base_manifest.writable_refs, "reviews"]),
+        denied_refs=list(base_manifest.denied_refs),
+        allowed_commands=list(base_manifest.allowed_commands),
+        network_policy=base_manifest.network_policy,
+        env_allowlist=list(base_manifest.env_allowlist),
+        secret_ref=base_manifest.secret_ref,
+        unsupported_hard_policies=list(base_manifest.unsupported_hard_policies),
+        extension_grants=list(base_manifest.extension_grants),
+    )
+
+
 def _reviewer_adapter(
     reviewer_mode: str,
     piworker_config: PiAgentRuntimeConfig | None,
@@ -849,6 +872,10 @@ def _next_directive_ref(round_index: int) -> str:
 
 def _research_state_ref(round_index: int) -> str:
     return f"reviews/round_{round_index:02d}/research_state.json"
+
+
+def _revision_permission_manifest_ref(round_index: int) -> str:
+    return f"reviews/round_{round_index:02d}/revision_permission_manifest.json"
 
 
 def _reviewer_call_ref(round_index: int) -> str:
