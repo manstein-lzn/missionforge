@@ -35,6 +35,7 @@ SEARCH_INTENT_CALL_REF = "attempts/search_intent/piworker_call.json"
 SEARCH_INTENT_CALL_RESULT_REF = "attempts/search_intent/piworker_call_result.json"
 SEARCH_INTENT_EXECUTION_REPORT_REF = "attempts/search_intent/execution_report.json"
 SEARCH_INTENT_METRICS_REF = "attempts/search_intent/metrics.json"
+SEARCH_INTENT_VALIDATION_REPORT_REF = "sources/search_intent_validation.json"
 MAX_SEARCH_QUERIES = 12
 
 
@@ -201,14 +202,49 @@ def generate_search_intent_with_piworker(
         stop_conditions=["Stop if the requested topic cannot be turned into general academic search queries."],
     )
     write_json_ref(root, SEARCH_INTENT_CALL_RESULT_REF, call_result.to_dict())
+    intent = _load_valid_search_intent(root, request)
     if call_result.status is not PiWorkerCallResultStatus.COMPLETED:
-        raise ContractValidationError("search-intent PiWorker call did not complete")
-    intent = AcademicSearchIntent.from_dict(read_json_ref(root, SEARCH_INTENT_REF, "academic_search_intent"))
-    intent.validate_for_request(request)
+        write_json_ref(
+            root,
+            SEARCH_INTENT_VALIDATION_REPORT_REF,
+            {
+                "schema_version": "missionforge_deepresearch.search_intent_validation.v1",
+                "status": "accepted_valid_artifact_after_runtime_failure",
+                "request_id": request.request_id,
+                "search_intent_ref": SEARCH_INTENT_REF,
+                "call_result_ref": SEARCH_INTENT_CALL_RESULT_REF,
+                "execution_report_ref": call_result.execution_report_ref,
+                "call_status": call_result.status.value,
+                "notes": [
+                    "The PiWorker call did not report completed, but it wrote a valid search intent artifact.",
+                    "MissionForge keeps the runtime failure evidence and proceeds with the validated artifact.",
+                ],
+            },
+        )
+    else:
+        write_json_ref(
+            root,
+            SEARCH_INTENT_VALIDATION_REPORT_REF,
+            {
+                "schema_version": "missionforge_deepresearch.search_intent_validation.v1",
+                "status": "accepted",
+                "request_id": request.request_id,
+                "search_intent_ref": SEARCH_INTENT_REF,
+                "call_result_ref": SEARCH_INTENT_CALL_RESULT_REF,
+                "execution_report_ref": call_result.execution_report_ref,
+                "call_status": call_result.status.value,
+                "notes": ["The PiWorker call completed and wrote a valid search intent artifact."],
+            },
+        )
     return SearchIntentGenerationResult(
         search_intent=intent,
         call_result=call_result,
-        evidence_refs=[SEARCH_INTENT_CALL_REF, SEARCH_INTENT_CALL_RESULT_REF, SEARCH_INTENT_EXECUTION_REPORT_REF],
+        evidence_refs=[
+            SEARCH_INTENT_CALL_REF,
+            SEARCH_INTENT_CALL_RESULT_REF,
+            call_result.execution_report_ref,
+            SEARCH_INTENT_VALIDATION_REPORT_REF,
+        ],
     )
 
 
@@ -318,6 +354,15 @@ report. The collector will execute your queries mechanically.
 
 def _search_intent_max_turns(request: AcademicResearchRequest) -> int:
     return research_intensity_profile(request.research_intensity).search_intent_max_turns
+
+
+def _load_valid_search_intent(root: Path, request: AcademicResearchRequest) -> AcademicSearchIntent:
+    try:
+        intent = AcademicSearchIntent.from_dict(read_json_ref(root, SEARCH_INTENT_REF, "academic_search_intent"))
+        intent.validate_for_request(request)
+        return intent
+    except Exception as exc:
+        raise ContractValidationError("search-intent PiWorker did not produce a valid search intent artifact") from exc
 
 
 def _queries_from_payload(value: Any) -> list[str]:
