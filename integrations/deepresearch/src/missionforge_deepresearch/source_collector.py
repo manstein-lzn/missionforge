@@ -33,6 +33,10 @@ FetchText = Callable[[str, float], str]
 class SourceCollectionError(RuntimeError):
     """Raised when live source collection cannot produce usable records."""
 
+    def __init__(self, message: str, *, collection_report: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.collection_report = dict(collection_report or {})
+
 
 @dataclass(frozen=True)
 class AcademicSourceCollectionConfig:
@@ -143,7 +147,21 @@ def collect_live_academic_sources(
 
     selected = _dedupe_candidates(candidates)[: cfg.max_records]
     if not selected:
-        raise SourceCollectionError("live academic source collection produced no source records")
+        raise SourceCollectionError(
+            "live academic source collection produced no source records",
+            collection_report=_collection_report_payload(
+                request=request,
+                mode="live",
+                query=request.topic,
+                search_intent=effective_intent,
+                search_intent_supplied=search_intent is not None,
+                config=cfg,
+                retrieved_at=retrieved_at,
+                provider_reports=provider_reports,
+                candidate_count=len(candidates),
+                source_record_refs=[],
+            ),
+        )
 
     source_records: list[dict[str, Any]] = []
     source_payloads: dict[str, dict[str, Any]] = {}
@@ -154,6 +172,7 @@ def collect_live_academic_sources(
             source_id=source_id,
             source_ref=source_ref,
             candidate=candidate,
+            accessed_at=retrieved_at,
         )
         source_records.append(record)
         source_payloads[source_ref] = {
@@ -191,23 +210,18 @@ def collect_live_academic_sources(
             "The researcher must report gaps instead of inventing missing evidence.",
         ],
     }
-    collection_report = {
-        "schema_version": "missionforge_deepresearch.source_collection_report.v1",
-        "request_id": request.request_id,
-        "mode": "live",
-        "query": request.topic,
-        "search_intent_ref": SEARCH_INTENT_REF,
-        "search_intent_created_by": effective_intent.created_by,
-        "search_queries": queries,
-        "search_query_count": len(queries),
-        "search_query_limit": cfg.max_search_queries,
-        "retrieved_at": retrieved_at,
-        "provider_reports": provider_reports,
-        "candidate_count": len(candidates),
-        "selected_count": len(source_records),
-        "source_packet_ref": "sources/source_packet.json",
-        "source_record_refs": [record["source_ref"] for record in source_records],
-    }
+    collection_report = _collection_report_payload(
+        request=request,
+        mode="live",
+        query=request.topic,
+        search_intent=effective_intent,
+        search_intent_supplied=search_intent is not None,
+        config=cfg,
+        retrieved_at=retrieved_at,
+        provider_reports=provider_reports,
+        candidate_count=len(candidates),
+        source_record_refs=[record["source_ref"] for record in source_records],
+    )
     return AcademicSourceCollectionResult(
         source_packet=source_packet,
         source_payloads={SEARCH_INTENT_REF: effective_intent.to_dict(), **source_payloads},
@@ -235,6 +249,46 @@ def fixture_source_collection_report(request: AcademicResearchRequest) -> dict[s
             "sources/fixtures/kernel_generation_seed.json",
             "sources/fixtures/harness_engineering_seed.json",
         ],
+    }
+
+
+def _collection_report_payload(
+    *,
+    request: AcademicResearchRequest,
+    mode: str,
+    query: str,
+    search_intent: AcademicSearchIntent,
+    search_intent_supplied: bool,
+    config: AcademicSourceCollectionConfig,
+    retrieved_at: str,
+    provider_reports: list[dict[str, Any]],
+    candidate_count: int,
+    source_record_refs: list[str],
+) -> dict[str, Any]:
+    queries = list(search_intent.queries[: config.max_search_queries])
+    return {
+        "schema_version": "missionforge_deepresearch.source_collection_report.v1",
+        "request_id": request.request_id,
+        "mode": mode,
+        "query": query,
+        "search_intent_ref": SEARCH_INTENT_REF,
+        "search_intent_created_by": search_intent.created_by,
+        "search_queries": queries,
+        "search_query_count": len(queries),
+        "search_query_limit": config.max_search_queries,
+        "retrieved_at": retrieved_at,
+        "provider_reports": provider_reports,
+        "candidate_count": candidate_count,
+        "selected_count": len(source_record_refs),
+        "source_packet_ref": "sources/source_packet.json",
+        "source_record_refs": list(source_record_refs),
+        "collection_policy": {
+            "providers": list(config.providers),
+            "max_records": config.max_records,
+            "since_year": config.since_year,
+            "max_search_queries": config.max_search_queries,
+            "query_expansion": "search_intent" if search_intent_supplied else "none",
+        },
     }
 
 
@@ -448,7 +502,9 @@ def _source_record_from_candidate(
     source_id: str,
     source_ref: str,
     candidate: Mapping[str, Any],
+    accessed_at: str,
 ) -> dict[str, Any]:
+    publication_year = candidate.get("publication_year")
     return {
         "source_id": source_id,
         "title": require_non_empty_str(candidate.get("title"), "source_candidate.title"),
@@ -458,12 +514,14 @@ def _source_record_from_candidate(
         "query": _first_text(candidate.get("query")),
         "url": _first_text(candidate.get("url")),
         "doi": _first_text(candidate.get("doi")),
-        "publication_year": candidate.get("publication_year"),
+        "year": publication_year,
+        "publication_year": publication_year,
         "published": _first_text(candidate.get("published")),
         "authors": list(candidate.get("authors", []))[:12] if isinstance(candidate.get("authors"), list) else [],
         "venue": _first_text(candidate.get("venue")),
         "citation_count": candidate.get("citation_count"),
         "abstract": _first_text(candidate.get("abstract")),
+        "accessed_at": accessed_at,
     }
 
 

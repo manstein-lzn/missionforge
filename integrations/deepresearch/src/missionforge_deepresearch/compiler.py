@@ -27,7 +27,7 @@ from missionforge.task_contract import (
 )
 from missionforge.task_projection import project_judge_rubric, project_worker_brief
 
-from .product_contract import AcademicResearchRequest
+from .product_contract import AcademicResearchRequest, research_intensity_profile
 from .search_intent import AcademicSearchIntent, SEARCH_INTENT_REF
 from .source_collector import AcademicSourceCollectionResult, SOURCE_COLLECTION_REPORT_REF, fixture_source_collection_report
 from .workspace import read_json_ref, write_json_ref, write_text_ref
@@ -53,6 +53,7 @@ EXPECTED_DRAFT_REFS = [
     "reports/reading_plan.md",
     "reports/source_gaps.md",
 ]
+EXPECTED_WORKER_OUTPUT_REFS = [SOURCE_PACKET_REF, *EXPECTED_DRAFT_REFS]
 
 
 @dataclass(frozen=True)
@@ -299,7 +300,7 @@ def compile_deepresearch_academic_task_contract(
     )
 
     write_json_ref(root, _run_ref(run_workspace_ref, PRODUCT_REQUEST_REF), request.to_dict())
-    write_text_ref(root, _run_ref(run_workspace_ref, MANUAL_REF), _manual_text())
+    write_text_ref(root, _run_ref(run_workspace_ref, MANUAL_REF), _manual_text(request))
     write_json_ref(root, _run_ref(run_workspace_ref, SEARCH_INTENT_REF), effective_search_intent.to_dict())
     write_json_ref(root, _run_ref(run_workspace_ref, SOURCE_PACKET_REF), source_packet)
     write_json_ref(root, _run_ref(run_workspace_ref, SOURCE_COLLECTION_REPORT_REF), source_collection_report)
@@ -353,6 +354,8 @@ def compile_deepresearch_academic_task_contract(
             "expected_draft_refs": list(result.expected_draft_refs),
             "contract_hash": result.contract_hash,
             "source_mode": source_mode,
+            "research_intensity": request.research_intensity.value,
+            "research_intensity_profile": research_intensity_profile(request.research_intensity).to_dict(),
         },
     )
     result.validate()
@@ -381,6 +384,7 @@ def _task_contract(
     *,
     source_mode: str,
 ) -> TaskContract:
+    intensity_profile = research_intensity_profile(request.research_intensity)
     source_refs = [
         PRODUCT_REQUEST_REF,
         MANUAL_REF,
@@ -401,20 +405,34 @@ def _task_contract(
             "The researcher owns semantic planning, triage, synthesis, delta analysis, and draft writing.",
             "Search intent is an LLM- or user-authored query plan; live extension tools execute it mechanically.",
             "MissionForge owns refs, workspace, permissions, schemas, and structural checks.",
+            f"Research intensity is {request.research_intensity.value}: {intensity_profile.guidance}",
         ],
         users_or_audience=[request.audience],
         required_outputs=[
             ContractClause(
-                clause_id=f"dr-output-{index:03d}",
-                text=f"Write the DeepResearch draft artifact at {ref}.",
-                refs=[ref],
-            )
-            for index, ref in enumerate(EXPECTED_DRAFT_REFS, start=1)
+                clause_id="dr-output-000",
+                text=(
+                    "Write sources/source_packet.json as the structured evidence sink. "
+                    "Every report citation must refer to source ids in this packet."
+                ),
+                refs=[SOURCE_PACKET_REF],
+            ),
+            *[
+                ContractClause(
+                    clause_id=f"dr-output-{index:03d}",
+                    text=f"Write the DeepResearch draft artifact at {ref}.",
+                    refs=[ref],
+                )
+                for index, ref in enumerate(EXPECTED_DRAFT_REFS, start=1)
+            ],
         ],
         semantic_acceptance=[
             ContractClause(
                 clause_id="dr-accept-coverage",
-                text="The report should cover major lines of work, key papers, code or benchmark evidence, and open gaps.",
+                text=(
+                    "The report should cover major lines of work, key papers, code or benchmark evidence, "
+                    f"and open gaps at {request.research_intensity.value} intensity."
+                ),
                 refs=[MANUAL_REF, SEARCH_INTENT_REF, SOURCE_PACKET_REF, SOURCE_COLLECTION_REPORT_REF],
             ),
             ContractClause(
@@ -424,7 +442,7 @@ def _task_contract(
             ),
             ContractClause(
                 clause_id="dr-accept-citations",
-                text="Material claims should cite source identifiers from the evidence index.",
+                text="Material claims should use [S1] citation ids from source_packet.json and include a References section.",
                 refs=[MANUAL_REF, SOURCE_PACKET_REF],
             ),
             ContractClause(
@@ -436,12 +454,15 @@ def _task_contract(
         hard_constraints=[
             ContractClause(
                 clause_id="dr-hard-no-self-accept",
-                text="The researcher must not claim final product acceptance; this run can only become draft_ready.",
+                text=(
+                    "The researcher must not claim final product acceptance. Write a candidate report without "
+                    "labeling the title as draft; final acceptance is recorded only by the independent judge/final package."
+                ),
                 refs=[OUTPUT_CONTRACT_REF],
             ),
             ContractClause(
                 clause_id="dr-hard-output-refs",
-                text="Write only the expected draft artifacts under reports.",
+                text="Write only the expected reports artifacts plus sources/source_packet.json.",
                 refs=[OUTPUT_CONTRACT_REF, PERMISSION_MANIFEST_REF],
             ),
             ContractClause(
@@ -458,6 +479,10 @@ def _task_contract(
             ContractClause(
                 clause_id="dr-assumption-source-mode",
                 text=f"This run uses {source_mode} source mode.",
+            ),
+            ContractClause(
+                clause_id="dr-assumption-research-intensity",
+                text=f"This run uses {request.research_intensity.value} research intensity.",
             )
         ],
         risk_notes=[
@@ -477,6 +502,7 @@ def _task_contract(
             "phase": "phase1_single_agent",
             "language": request.language,
             "source_mode": source_mode,
+            "research_intensity": request.research_intensity.value,
             "live_source_strategy": "pi_extensions" if permission_manifest.extension_grants else "fixture_or_collector",
             "workspace_policy_id": workspace_policy.policy_id,
             "permission_manifest_id": permission_manifest.manifest_id,
@@ -501,7 +527,7 @@ def _permission_manifest(request: AcademicResearchRequest, *, source_mode: str) 
         manifest_id=f"deepresearch-{request.request_id}-permissions",
         workspace_policy_ref=WORKSPACE_POLICY_REF,
         readable_refs=["contract", "policy", "projections", "manuals", "sources", "product_contract", "compiled"],
-        writable_refs=["reports", "attempts", "packages", "ledgers", "compiled"],
+        writable_refs=["reports", SOURCE_PACKET_REF, "attempts", "packages", "ledgers", "compiled"],
         denied_refs=["secrets"],
         allowed_commands=[],
         network_policy=NetworkPolicy.ENABLED if source_mode == "live" else NetworkPolicy.DISABLED,
@@ -531,9 +557,11 @@ def _live_extension_source_packet(
             "tool_surface": ["web", "code_search"],
         },
         "source_records": [],
+        "citation_contract": _citation_contract(),
         "limitations": [
             "Python did not precollect sources for this run.",
-            "The researcher should use loaded Pi extensions to gather and cite evidence directly.",
+            "The researcher should use loaded Pi extensions to gather evidence directly.",
+            "Before finishing, the researcher must overwrite this packet with structured source_records.",
         ],
     }
 
@@ -616,38 +644,73 @@ def _live_extension_grants(request: AcademicResearchRequest) -> list[ExtensionGr
     ]
 
 
-def _manual_text() -> str:
-    return """# Academic Deep Research Manual
+def _manual_text(request: AcademicResearchRequest) -> str:
+    profile = research_intensity_profile(request.research_intensity)
+    return f"""# Academic Deep Research Manual
 
 You are the single researcher for this Phase 1 DeepResearch run.
+
+Research intensity: `{request.research_intensity.value}`.
+
+Intensity guidance:
+
+{profile.guidance}
 
 Own the semantic work:
 
 - clarify the research shape from the frozen task contract;
 - inspect the source packet before writing conclusions;
 - inspect the search intent and source collection report before judging coverage;
+- use live tools when available, then write `sources/source_packet.json` with
+  structured `source_records`;
 - separate supported claims from gaps;
 - compare against previous run refs when present;
-- cite source identifiers in material claims;
+- cite source identifiers from `sources/source_packet.json` in material claims;
 - write concise artifacts for an R&D audience.
 
-Do not claim final product acceptance. This worker can only produce a draft
-package for structural checks.
+Do not claim final product acceptance. This worker produces candidate report
+artifacts for structural checks and independent judging. Do not label the
+`reports/final_report.md` title as a draft; acceptance status belongs only in
+the judged run result or final package.
+
+Evidence and citation contract:
+
+- Source ids must use `S1`, `S2`, ... style identifiers.
+- `sources/source_packet.json` must contain non-empty `source_records`.
+- Each source record must contain `source_id`, `title`, `source_type`, and at
+  least one locator such as `url`, `doi`, `source_ref`, `github_repo`, or
+  `arxiv_id`.
+- `reports/final_report.md` must cite material claims as `[S1]` or
+  `[S1, S2]`.
+- `reports/final_report.md` must include a `## References` section listing the
+  cited source ids with title and locator.
+- `reports/evidence_index.md` must map every source id in
+  `sources/source_packet.json` using the same `[S1]` citation marker.
+- If evidence is incomplete, keep the source record factual and explain the gap
+  in `reports/source_gaps.md`; do not invent missing bibliographic data.
 """
 
 
 def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
+    profile = research_intensity_profile(request.research_intensity)
     return {
         "schema_version": "missionforge_deepresearch.output_contract.v1",
         "request_id": request.request_id,
         "status_authority": "draft_ready_after_structural_checks",
         "language": request.language,
+        "research_intensity": request.research_intensity.value,
+        "research_intensity_profile": profile.to_dict(),
         "expected_draft_refs": list(EXPECTED_DRAFT_REFS),
+        "expected_worker_output_refs": list(EXPECTED_WORKER_OUTPUT_REFS),
+        "source_packet_ref": SOURCE_PACKET_REF,
+        "citation_contract": _citation_contract(),
         "notes": [
-            "final_report.md is the main user-facing draft.",
+            "final_report.md is the main user-facing candidate report.",
+            "source_packet.json is the structured evidence sink.",
             "evidence_index.md maps source identifiers to source refs.",
             "research_delta.md is required even for baseline runs.",
             "source_gaps.md should make missing evidence explicit.",
+            "Do not label the final_report.md title as draft; final status is carried by judge/final package artifacts.",
         ],
     }
 
@@ -656,6 +719,8 @@ def _structural_check_policy() -> dict[str, Any]:
     return {
         "schema_version": "missionforge_deepresearch.structural_check_policy.v1",
         "required_non_empty_refs": list(EXPECTED_DRAFT_REFS),
+        "required_source_packet_ref": SOURCE_PACKET_REF,
+        "citation_contract": _citation_contract(),
         "status_on_pass": "draft_ready",
     }
 
@@ -675,6 +740,8 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "title": "Survey seed for compiler autotuning",
                 "source_type": "paper_index_fixture",
                 "source_ref": "sources/fixtures/compiler_autotuning_seed.json",
+                "year": 2024,
+                "url": "https://example.invalid/missionforge/fixture/compiler-autotuning",
                 "notes": "Fixture source used only to validate package shape.",
             },
             {
@@ -682,6 +749,8 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "title": "Survey seed for kernel generation",
                 "source_type": "paper_index_fixture",
                 "source_ref": "sources/fixtures/kernel_generation_seed.json",
+                "year": 2024,
+                "url": "https://example.invalid/missionforge/fixture/kernel-generation",
                 "notes": "Fixture source used only to validate package shape.",
             },
             {
@@ -689,13 +758,25 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "title": "Survey seed for engineering harness practice",
                 "source_type": "repository_fixture",
                 "source_ref": "sources/fixtures/harness_engineering_seed.json",
+                "year": 2024,
+                "url": "https://example.invalid/missionforge/fixture/harness-engineering",
                 "notes": "Fixture source used only to validate package shape.",
             },
         ],
+        "citation_contract": _citation_contract(),
         "limitations": [
             "Fixture mode validates orchestration, not live source coverage.",
             "Live collection is deferred to Phase 2.",
         ],
+    }
+
+
+def _citation_contract() -> dict[str, Any]:
+    return {
+        "source_id_format": "S[0-9]+",
+        "citation_format": "[S1] or [S1, S2]",
+        "required_final_report_section": "## References",
+        "authority": "source_packet.source_records",
     }
 
 

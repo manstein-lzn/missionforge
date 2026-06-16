@@ -31,7 +31,12 @@ from .compiler import (
     TASK_CONTRACT_REF,
     WORKSPACE_POLICY_REF,
 )
-from .product_contract import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
+from .product_contract import (
+    AcademicResearchRequest,
+    DeepResearchRunResult,
+    DeepResearchRunStatus,
+    research_intensity_profile,
+)
 from .runtime import run_deepresearch_academic_single_agent
 from .source_collector import AcademicSourceCollectionConfig
 from .workspace import read_json_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
@@ -447,6 +452,7 @@ def judge_deepresearch_run(
         raise ContractValidationError("deepresearch judge requires a draft_ready run result")
     root = Path(workspace).resolve()
     run_root = root / run_result.run_workspace_ref
+    intensity_profile = research_intensity_profile(request.research_intensity)
     hard_check_status = _hard_check_status(run_root, _inner_ref(run_result.run_workspace_ref, run_result.structural_check_ref))
     task_contract = read_json_ref(run_root, TASK_CONTRACT_REF, "task_contract")
     permission_manifest = PermissionManifest(
@@ -491,6 +497,8 @@ def judge_deepresearch_run(
         "structural_check_ref": _inner_ref(run_result.run_workspace_ref, run_result.structural_check_ref),
         "structural_check_policy_ref": STRUCTURAL_CHECK_POLICY_REF,
         "hard_check_status": hard_check_status.value,
+        "research_intensity": request.research_intensity.value,
+        "research_intensity_profile": intensity_profile.to_dict(),
         "artifact_refs": artifact_refs,
         "evidence_refs": evidence_refs,
         "metric_refs": metric_refs,
@@ -538,8 +546,14 @@ def judge_deepresearch_run(
         evidence_refs=_dedupe_refs([JUDGE_SPEC_REF, source_run_result_ref, *artifact_refs, *evidence_refs]),
         output_schema_ref=JUDGE_SPEC_REF,
         validation_policy_ref=JUDGE_SPEC_REF,
-        runtime_budget={"max_turns": 6},
-        metadata={"phase": "phase4_independent_judge"},
+        runtime_budget={
+            "max_turns": intensity_profile.judge_max_turns,
+            "timeout_seconds": intensity_profile.piworker_timeout_seconds,
+        },
+        metadata={
+            "phase": "phase4_independent_judge",
+            "research_intensity": request.research_intensity.value,
+        },
     )
     write_json_ref(run_root, JUDGE_CALL_REF, call.to_dict())
     worker = adapter or _piworker_adapter(piworker_config, piworker_environ)
@@ -548,7 +562,10 @@ def judge_deepresearch_run(
         workspace=run_root,
         adapter=worker,
         result_id=f"{call.call_id}-result",
-        metadata={"phase": "phase4_independent_judge"},
+        metadata={
+            "phase": "phase4_independent_judge",
+            "research_intensity": request.research_intensity.value,
+        },
     )
     write_json_ref(run_root, JUDGE_CALL_RESULT_REF, call_result.to_dict())
     if call_result.status is not PiWorkerCallResultStatus.COMPLETED:

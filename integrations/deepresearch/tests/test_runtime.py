@@ -10,7 +10,9 @@ from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from missionforge_deepresearch import (
     DeepResearchRunStatus,
+    ResearchIntensity,
     load_deepresearch_run_result,
+    research_intensity_profile,
     run_deepresearch_academic_single_agent,
 )
 from missionforge_deepresearch.runtime import (
@@ -39,6 +41,13 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue((root / result.researcher_call_ref).exists())
             self.assertTrue((root / result.researcher_call_result_ref).exists())
             self.assertTrue((root / result.structural_check_ref).exists())
+            structural = json.loads((root / result.structural_check_ref).read_text(encoding="utf-8"))
+            self.assertEqual(structural["source_packet_audit"]["status"], "passed")
+            self.assertEqual(structural["citation_audit"]["status"], "passed")
+            self.assertIn("sources/source_packet.json", structural["checked_refs"])
+            final_report = (root / "runs/npu-compiler-survey/reports/final_report.md").read_text(encoding="utf-8")
+            self.assertIn("[S1", final_report)
+            self.assertIn("## References", final_report)
             self.assertEqual(
                 result.draft_artifact_refs,
                 [
@@ -116,6 +125,7 @@ class RuntimeTests(unittest.TestCase):
             source_packet = (run_root / "sources/source_packet.json").read_text(encoding="utf-8")
             self.assertIn("\"source_acquisition\": \"pi_extensions\"", source_packet)
             self.assertEqual(json.loads(source_packet)["collection_policy"]["tool_surface"], ["web", "code_search"])
+            self.assertGreater(len(json.loads(source_packet)["source_records"]), 0)
             lock_payload = json.loads((run_root / "compiled/extension_lock.json").read_text(encoding="utf-8"))
             self.assertTrue(lock_payload["extensions"][0]["install_path"].startswith(".missionforge/extensions/"))
 
@@ -144,6 +154,45 @@ class RuntimeTests(unittest.TestCase):
 
             self.assertEqual(result.status, DeepResearchRunStatus.DRAFT_READY)
             self.assertEqual(researcher.captured_extension_lock_ref, "compiled/extension_lock.json")
+            self.assertIn("sources/source_packet.json", researcher.captured_expected_output_refs)
+
+    def test_research_intensity_sets_researcher_runtime_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request = sample_request().__class__(
+                **{
+                    **sample_request().to_dict(),
+                    "research_intensity": ResearchIntensity.INTENSIVE.value,
+                }
+            )
+            researcher = _CaptureResearcherAdapter()
+
+            result = run_deepresearch_academic_single_agent(
+                request,
+                workspace=root,
+                adapter=researcher,
+            )
+
+            profile = research_intensity_profile(ResearchIntensity.INTENSIVE)
+            self.assertEqual(result.status, DeepResearchRunStatus.DRAFT_READY)
+            self.assertEqual(researcher.captured_runtime_budget["max_turns"], profile.researcher_max_turns)
+            self.assertEqual(researcher.captured_runtime_budget["timeout_seconds"], profile.piworker_timeout_seconds)
+            self.assertEqual(researcher.captured_metadata["research_intensity"], "intensive")
+
+    def test_unknown_citation_prevents_draft_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            result = run_deepresearch_academic_single_agent(
+                sample_request(),
+                workspace=root,
+                adapter=_BadCitationResearcherAdapter(),
+            )
+
+            structural = json.loads((root / result.structural_check_ref).read_text(encoding="utf-8"))
+            self.assertEqual(result.status, DeepResearchRunStatus.FAILED)
+            self.assertEqual(structural["citation_audit"]["status"], "failed")
+            self.assertIn("final_report_unknown_source_ids:S999", structural["citation_audit"]["errors"])
 
     def test_result_package_uses_adapter_runtime_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -208,6 +257,9 @@ class _CaptureResearcherAdapter(FixtureAcademicResearcherAdapter):
 
     def __init__(self) -> None:
         self.captured_extension_lock_ref: str | None = None
+        self.captured_expected_output_refs: list[str] = []
+        self.captured_runtime_budget: dict[str, object] = {}
+        self.captured_metadata: dict[str, object] = {}
 
     def run_call(
         self,
@@ -221,6 +273,9 @@ class _CaptureResearcherAdapter(FixtureAcademicResearcherAdapter):
         extension_lock_ref=None,
     ) -> WorkerAdapterResult:
         self.captured_extension_lock_ref = extension_lock_ref
+        self.captured_expected_output_refs = list(call.expected_output_refs)
+        self.captured_runtime_budget = dict(call.runtime_budget)
+        self.captured_metadata = dict(call.metadata)
         return super().run_call(
             call,
             workspace=workspace,
@@ -249,7 +304,29 @@ class _RuntimeRefResearcherAdapter(FixtureAcademicResearcherAdapter):
         if call.role is not PiWorkerCallRole.EXECUTOR:
             raise AssertionError("unexpected role")
         for ref in call.expected_output_refs:
-            write_text_ref(workspace, ref, f"# Artifact\n\n{ref}\n")
+            if ref == "sources/source_packet.json":
+                write_json_ref(
+                    workspace,
+                    ref,
+                    {
+                        "schema_version": "missionforge_deepresearch.source_packet.v1",
+                        "request_id": "npu-compiler-survey",
+                        "source_records": [
+                            {
+                                "source_id": "S1",
+                                "title": "Runtime ref fixture source",
+                                "source_type": "webpage_fixture",
+                                "source_ref": "sources/source_packet.json",
+                            }
+                        ],
+                    },
+                )
+            elif ref == "reports/final_report.md":
+                write_text_ref(workspace, ref, "# Artifact\n\nClaim [S1].\n\n## References\n\n- [S1] Runtime ref fixture source. sources/source_packet.json\n")
+            elif ref == "reports/evidence_index.md":
+                write_text_ref(workspace, ref, "# Evidence Index\n\n- [S1] Runtime ref fixture source. sources/source_packet.json\n")
+            else:
+                write_text_ref(workspace, ref, f"# Artifact\n\n{ref}\n")
         report_ref = "attempts/runtime-researcher/pi_agent_execution_report.json"
         metrics_ref = "attempts/runtime-researcher/pi_agent_metrics.json"
         write_json_ref(workspace, metrics_ref, {"metric_ref": metrics_ref})
@@ -268,6 +345,62 @@ class _RuntimeRefResearcherAdapter(FixtureAcademicResearcherAdapter):
             worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
             event_evidence_refs=[],
             metrics={"metric_ref": metrics_ref},
+        )
+
+
+class _BadCitationResearcherAdapter(FixtureAcademicResearcherAdapter):
+    adapter_family = "fixture_bad_citation_deepresearch_researcher"
+
+    def run_call(
+        self,
+        call: PiWorkerCall,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ) -> WorkerAdapterResult:
+        if call.role is not PiWorkerCallRole.EXECUTOR:
+            raise AssertionError("unexpected role")
+        write_json_ref(
+            workspace,
+            "sources/source_packet.json",
+            {
+                "schema_version": "missionforge_deepresearch.source_packet.v1",
+                "request_id": "npu-compiler-survey",
+                "source_records": [
+                    {
+                        "source_id": "S1",
+                        "title": "Known fixture source",
+                        "source_type": "webpage_fixture",
+                        "source_ref": "sources/source_packet.json",
+                    }
+                ],
+            },
+        )
+        write_text_ref(workspace, "reports/final_report.md", "# Bad Citation\n\nUnsupported claim [S999].\n\n## References\n\n- [S999] Unknown source.\n")
+        write_text_ref(workspace, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Known fixture source.\n")
+        write_text_ref(workspace, "reports/research_delta.md", "# Delta\n\nBaseline.\n")
+        write_text_ref(workspace, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
+        write_text_ref(workspace, "reports/source_gaps.md", "# Source Gaps\n\nUnknown citation.\n")
+        write_json_ref(workspace, RESEARCHER_METRICS_REF, {"metric_ref": RESEARCHER_METRICS_REF})
+        report = ExecutionReport(
+            report_id="bad-citation-researcher-report",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=list(call.expected_output_refs),
+            changed_refs=[*call.expected_output_refs, RESEARCHER_EXECUTION_REPORT_REF, RESEARCHER_METRICS_REF],
+            evidence_refs=["sources/source_packet.json", "reports/evidence_index.md"],
+            metrics={"metric_ref": RESEARCHER_METRICS_REF},
+        )
+        write_json_ref(workspace, RESEARCHER_EXECUTION_REPORT_REF, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(status="completed", execution_report_ref=RESEARCHER_EXECUTION_REPORT_REF),
+            event_evidence_refs=[],
+            metrics={"metric_ref": RESEARCHER_METRICS_REF},
         )
 
 

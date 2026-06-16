@@ -14,6 +14,7 @@ from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, W
 
 from .compiler import (
     EXTENSION_LOCK_REF,
+    EXPECTED_WORKER_OUTPUT_REFS,
     MANUAL_REF,
     OUTPUT_CONTRACT_REF,
     PERMISSION_MANIFEST_REF,
@@ -27,7 +28,9 @@ from .compiler import (
     compile_deepresearch_academic_task_contract,
     load_deepresearch_task_contract,
 )
+from .evidence import audit_report_citations, audit_source_packet
 from .product_contract import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
+from .product_contract import research_intensity_profile
 from .search_intent import (
     AcademicSearchIntent,
     SEARCH_INTENT_REF,
@@ -37,7 +40,7 @@ from .source_collector import (
     AcademicSourceCollectionConfig,
     collect_live_academic_sources,
 )
-from .workspace import read_json_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
+from .workspace import read_json_ref, read_text_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
 
 
 SOURCE_MODES = {"fixture", "live"}
@@ -82,6 +85,11 @@ def run_deepresearch_academic_single_agent(
         raise ContractValidationError("deepresearch search intent is only supported with source_mode=live")
     root = Path(workspace).resolve()
     preflight_root = root / f"runs/{request.request_id}"
+    intensity_profile = research_intensity_profile(request.research_intensity)
+    effective_source_config = source_config or AcademicSourceCollectionConfig(
+        max_records=intensity_profile.max_sources,
+        max_search_queries=intensity_profile.max_search_queries,
+    )
     search_intent, search_intent_evidence_refs = _resolve_search_intent(
         request,
         workspace=preflight_root,
@@ -94,7 +102,11 @@ def run_deepresearch_academic_single_agent(
     )
     source_collection = None
     if source_mode == "live" and not live_extension_mode:
-        source_collection = collect_live_academic_sources(request, config=source_config, search_intent=search_intent)
+        source_collection = collect_live_academic_sources(
+            request,
+            config=effective_source_config,
+            search_intent=search_intent,
+        )
     compile_result = compile_deepresearch_academic_task_contract(
         request,
         workspace=root,
@@ -128,6 +140,7 @@ def run_deepresearch_academic_single_agent(
         worker_visible_refs.append(worker_extension_lock_ref)
     if compile_result.extension_lock_ref is None and source_mode == "live" and not live_extension_mode:
         raise ContractValidationError("deepresearch live source mode requires an extension lock")
+    expected_worker_output_refs = list(EXPECTED_WORKER_OUTPUT_REFS)
     call = PiWorkerCall(
         call_id=f"deepresearch-{request.request_id}-researcher",
         role=PiWorkerCallRole.EXECUTOR,
@@ -137,7 +150,7 @@ def run_deepresearch_academic_single_agent(
         objective=task_contract.objective,
         visible_refs=worker_visible_refs,
         writable_refs=list(permission_manifest.writable_refs),
-        expected_output_refs=list(compile_result.expected_draft_refs),
+        expected_output_refs=expected_worker_output_refs,
         permission_manifest_ref=PERMISSION_MANIFEST_REF,
         source_packet_ref=SOURCE_PACKET_REF,
         source_packet_hash=stable_json_hash(source_packet),
@@ -149,12 +162,16 @@ def run_deepresearch_academic_single_agent(
         ]),
         output_schema_ref=OUTPUT_CONTRACT_REF,
         validation_policy_ref=STRUCTURAL_CHECK_POLICY_REF,
-        runtime_budget={"max_turns": 8},
+        runtime_budget={
+            "max_turns": intensity_profile.researcher_max_turns,
+            "timeout_seconds": intensity_profile.piworker_timeout_seconds,
+        },
         metadata={
             "phase": "phase1_single_agent",
             "source_mode": source_mode,
             "researcher_mode": researcher_mode,
             "search_intent_mode": search_intent_mode,
+            "research_intensity": request.research_intensity.value,
         },
     )
     write_json_ref(run_root, RESEARCHER_CALL_REF, call.to_dict())
@@ -175,7 +192,7 @@ def run_deepresearch_academic_single_agent(
     write_json_ref(run_root, RESEARCHER_CALL_RESULT_REF, call_result.to_dict())
     structural = run_structural_checks(
         workspace=run_root,
-        expected_refs=list(compile_result.expected_draft_refs),
+        expected_refs=expected_worker_output_refs,
         call_result=call_result,
     )
     structural_status = structural["status"]
@@ -305,13 +322,26 @@ def run_structural_checks(
     checked_refs = [validate_ref(ref, "deepresearch_structural_check.expected_refs[]") for ref in expected_refs]
     missing_or_empty = [ref for ref in checked_refs if not ref_is_non_empty_file(workspace, ref)]
     missing_from_worker_result = sorted(set(checked_refs) - set(call_result.output_refs))
-    status = "passed" if not missing_or_empty and not missing_from_worker_result else "failed"
+    source_packet_audit = _audit_source_packet_ref(workspace)
+    citation_audit = _audit_citation_refs(workspace, source_packet_audit.source_ids)
+    status = (
+        "passed"
+        if (
+            not missing_or_empty
+            and not missing_from_worker_result
+            and source_packet_audit.passed
+            and citation_audit.passed
+        )
+        else "failed"
+    )
     report = {
         "schema_version": "missionforge_deepresearch.structural_check_report.v1",
         "status": status,
         "checked_refs": checked_refs,
         "missing_or_empty_refs": missing_or_empty,
         "missing_from_worker_result_refs": missing_from_worker_result,
+        "source_packet_audit": source_packet_audit.to_dict(),
+        "citation_audit": citation_audit.to_dict(),
         "notes": [
             "Structural checks do not judge research quality.",
             "Passing structural checks only permits draft_ready.",
@@ -343,6 +373,7 @@ class FixtureAcademicResearcherAdapter:
         root = Path(workspace).resolve()
         source_packet = read_json_ref(root, SOURCE_PACKET_REF, "source_packet")
         request = read_json_ref(root, PRODUCT_REQUEST_REF, "research_request")
+        source_packet = _ensure_fixture_source_packet(root, request=request, source_packet=source_packet)
         source_ids = [
             str(item.get("source_id"))
             for item in source_packet.get("source_records", [])
@@ -391,8 +422,10 @@ def _write_fixture_reports(
         final_report = (
             f"# {topic} 学术调研草稿\n\n"
             "这是 Phase 1 fixture 研究员生成的结构化草稿，用于验证单 Agent 闭环。\n\n"
-            f"可用 fixture 来源: {', '.join(source_ids) if source_ids else '无'}。\n\n"
-            f"{source_note}\n"
+            f"可用 fixture 来源: {_citation_group(source_ids) if source_ids else '无'}。\n\n"
+            f"{source_note}\n\n"
+            "## References\n\n"
+            f"{_reference_lines(source_packet)}"
         )
         delta = (
             "# Research Delta\n\n"
@@ -414,8 +447,10 @@ def _write_fixture_reports(
         final_report = (
             f"# Academic Research Draft: {topic}\n\n"
             "This Phase 1 fixture draft validates the single-agent loop.\n\n"
-            f"Available fixture sources: {', '.join(source_ids) if source_ids else 'none'}.\n\n"
-            f"{source_note}\n"
+            f"Available fixture sources: {_citation_group(source_ids) if source_ids else 'none'}.\n\n"
+            f"{source_note}\n\n"
+            "## References\n\n"
+            f"{_reference_lines(source_packet)}"
         )
         delta = (
             "# Research Delta\n\n"
@@ -428,7 +463,7 @@ def _write_fixture_reports(
             "- Fixture researcher cannot judge real research quality.\n"
             "- Use researcher-mode=piworker to evaluate coverage, freshness, citations, and delta.\n"
         )
-    evidence = "# Evidence Index\n\n" + "\n".join(f"- {source_id}: fixture source packet entry" for source_id in source_ids) + "\n"
+    evidence = "# Evidence Index\n\n" + _reference_lines(source_packet)
     reading_plan = (
         "# Reading Plan\n\n"
         "1. Replace fixture sources with live academic collectors.\n"
@@ -440,6 +475,88 @@ def _write_fixture_reports(
     write_text_ref(root, "reports/research_delta.md", delta)
     write_text_ref(root, "reports/reading_plan.md", reading_plan)
     write_text_ref(root, "reports/source_gaps.md", gaps)
+
+
+def _audit_source_packet_ref(workspace: str | Path):
+    try:
+        return audit_source_packet(read_json_ref(workspace, SOURCE_PACKET_REF, "source_packet"))
+    except Exception as exc:
+        return audit_source_packet(
+            {
+                "schema_version": "missionforge_deepresearch.source_packet.v1",
+                "source_records": [],
+                "error": type(exc).__name__,
+            }
+        )
+
+
+def _audit_citation_refs(workspace: str | Path, source_ids: list[str]):
+    try:
+        final_report_text = read_text_ref(workspace, "reports/final_report.md")
+        evidence_index_text = read_text_ref(workspace, "reports/evidence_index.md")
+    except Exception as exc:
+        return audit_report_citations(
+            final_report_text=f"[S999]\n\n## References\n\n- [S999] missing: {type(exc).__name__}",
+            evidence_index_text="",
+            source_ids=source_ids,
+        )
+    return audit_report_citations(
+        final_report_text=final_report_text,
+        evidence_index_text=evidence_index_text,
+        source_ids=source_ids,
+    )
+
+
+def _ensure_fixture_source_packet(root: Path, *, request: dict[str, Any], source_packet: dict[str, Any]) -> dict[str, Any]:
+    records = source_packet.get("source_records", [])
+    if isinstance(records, list) and records:
+        return source_packet
+    updated = dict(source_packet)
+    updated["schema_version"] = "missionforge_deepresearch.source_packet.v1"
+    updated["request_id"] = str(request.get("request_id", updated.get("request_id", "fixture-request")))
+    updated["source_records"] = [
+        {
+            "source_id": "S1",
+            "title": "Fixture source for DeepResearch package validation",
+            "source_type": "webpage_fixture",
+            "source_ref": SOURCE_PACKET_REF,
+            "year": 2024,
+            "url": "https://example.invalid/missionforge/fixture/deepresearch",
+            "notes": "Fixture source used only to validate citation and package shape.",
+        }
+    ]
+    write_json_ref(root, SOURCE_PACKET_REF, updated)
+    return updated
+
+
+def _citation_group(source_ids: list[str]) -> str:
+    if not source_ids:
+        return ""
+    return "[" + ", ".join(source_ids) + "]"
+
+
+def _reference_lines(source_packet: Mapping[str, Any]) -> str:
+    records = source_packet.get("source_records", [])
+    if not isinstance(records, list):
+        return ""
+    lines: list[str] = []
+    for item in records:
+        if not isinstance(item, Mapping):
+            continue
+        source_id = str(item.get("source_id", "")).strip()
+        title = str(item.get("title", "")).strip()
+        locator = _source_locator(item)
+        if source_id and title:
+            lines.append(f"- [{source_id}] {title}. {locator}".rstrip() + "\n")
+    return "".join(lines)
+
+
+def _source_locator(record: Mapping[str, Any]) -> str:
+    for field_name in ("url", "doi", "source_ref", "github_repo", "arxiv_id"):
+        value = record.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _outer_ref(run_workspace_ref: str, ref: str) -> str:

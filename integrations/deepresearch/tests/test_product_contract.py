@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 
 from missionforge.contracts import ContractValidationError
-from missionforge_deepresearch import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
+from missionforge_deepresearch import (
+    AcademicResearchRequest,
+    DeepResearchRunResult,
+    DeepResearchRunStatus,
+    ResearchIntensity,
+    research_intensity_profile,
+)
 
 
 def sample_request() -> AcademicResearchRequest:
@@ -23,7 +29,33 @@ class ProductContractTests(unittest.TestCase):
         request = sample_request()
 
         self.assertEqual(AcademicResearchRequest.from_dict(request.to_dict()), request)
+        self.assertEqual(request.research_intensity, ResearchIntensity.STANDARD)
         self.assertEqual(request.previous_run_refs, ["runs/previous/packages/deepresearch_run_result.json"])
+
+    def test_academic_request_accepts_research_intensity(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="intensive-demo",
+            topic="compiler autotuning",
+            research_intensity="intensive",
+        )
+
+        payload = request.to_dict()
+
+        self.assertEqual(request.research_intensity, ResearchIntensity.INTENSIVE)
+        self.assertEqual(payload["research_intensity"], "intensive")
+        self.assertEqual(AcademicResearchRequest.from_dict(payload), request)
+        self.assertGreater(
+            research_intensity_profile(ResearchIntensity.INTENSIVE).max_sources,
+            research_intensity_profile(ResearchIntensity.QUICK).max_sources,
+        )
+
+    def test_request_rejects_unknown_research_intensity(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "research_intensity"):
+            AcademicResearchRequest(
+                request_id="bad-intensity",
+                topic="compiler autotuning",
+                research_intensity="exhaustive",
+            )
 
     def test_request_rejects_nested_request_id(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "one ref segment"):

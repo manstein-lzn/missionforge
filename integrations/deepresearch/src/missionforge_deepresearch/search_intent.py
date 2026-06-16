@@ -22,7 +22,7 @@ from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorke
 from missionforge.piworker_runtime import PiWorkerCallAdapter, run_piworker_call
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 
-from .product_contract import AcademicResearchRequest
+from .product_contract import AcademicResearchRequest, research_intensity_profile
 from .workspace import read_json_ref, write_json_ref, write_text_ref
 
 
@@ -183,8 +183,12 @@ def generate_search_intent_with_piworker(
         source_packet_hash=stable_json_hash(request.to_dict()),
         output_schema_ref=SEARCH_INTENT_SCHEMA_REF,
         validation_policy_ref=SEARCH_INTENT_CONTRACT_REF,
-        runtime_budget={"max_turns": 4},
-        metadata={"phase": "deepresearch_search_intent", "artifact_ref": SEARCH_INTENT_REF},
+        runtime_budget={"max_turns": _search_intent_max_turns(request)},
+        metadata={
+            "phase": "deepresearch_search_intent",
+            "artifact_ref": SEARCH_INTENT_REF,
+            "research_intensity": request.research_intensity.value,
+        },
     )
     write_json_ref(root, SEARCH_INTENT_CALL_REF, call.to_dict())
     call_result = run_piworker_call(
@@ -310,6 +314,10 @@ topics into complementary queries, and avoid overfitting to one provider.
 Do not collect sources, cite papers, summarize the field, or write the final
 report. The collector will execute your queries mechanically.
 """
+
+
+def _search_intent_max_turns(request: AcademicResearchRequest) -> int:
+    return research_intensity_profile(request.research_intensity).search_intent_max_turns
 
 
 def _queries_from_payload(value: Any) -> list[str]:

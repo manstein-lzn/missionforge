@@ -9,8 +9,10 @@ This package intentionally starts small:
 - write a compact research manual, search intent, source packet, source
   collection report, and output contract as refs;
 - call one researcher PiWorker;
-- run structural checks over the expected draft files;
+- run structural checks over the expected draft files, structured source
+  packet, and citation refs;
 - return `draft_ready`, not `accepted`.
+- optionally run paper-review-style update rounds before final judging;
 - run Phase 3 quality comparisons against a direct skill-like baseline when
   requested.
 
@@ -19,8 +21,22 @@ grants, compiles an extension lock, and lets the researcher use mounted Pi
 tools to explore the topic. The system can preserve the original topic,
 execute externally supplied queries, or ask a PiWorker to author
 `sources/search_intent.json` before the live run. It does not contain
-domain-specific fallback terms, multi-agent orchestration, or an independent
-judge yet.
+domain-specific fallback terms or multi-agent orchestration.
+
+Research intensity:
+
+- `--research-intensity quick` runs a concise scan with smaller source/query
+  and PiWorker budgets, with one review round by default.
+- `--research-intensity standard` is the default balanced deep research mode.
+- `--research-intensity intensive` raises source/query and PiWorker budgets
+  and asks the researcher to cross-check more aggressively, with more review
+  rounds available.
+
+Intensity changes budget and rubric guidance only. It does not add
+domain-specific source ranking, query terms, or Python research logic. Advanced
+flags such as `--max-sources`, `--max-search-queries`,
+`--piworker-max-turns`, and `--piworker-timeout-seconds` can still override
+the preset when needed.
 
 Live runs use a thin install step in the declared extension root. By default
 the extension compiler verifies preinstalled packages; live DeepResearch passes
@@ -42,6 +58,61 @@ The run package is written under:
 ```text
 runs/{request_id}/packages/deepresearch_run_result.json
 ```
+
+Reviewer-guided research updates:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic reviewed-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-reviewed \
+  --workspace /tmp/mf-dr-reviewed \
+  --reviewer-mode piworker \
+  --review-rounds 2 \
+  --researcher-mode piworker \
+  --piworker-provider-config-source codex_current
+```
+
+`reviewed-run` adds a process-internal paper reviewer before final judging. In
+each round the reviewer writes:
+
+```text
+reviews/round_XX/reviewer_report.md
+reviews/round_XX/next_research_directive.md
+```
+
+The researcher then updates the evidence packet and report artifacts, and
+records the belief update at:
+
+```text
+reviews/round_XX/research_state.json
+```
+
+The reviewer is a strict academic critique role. It may guide the next research
+step, but it cannot accept the product. The command returns
+`packages/deepresearch_reviewed_run_result.json` with `draft_ready` or
+`failed`.
+
+Reviewer-guided updates followed by the independent judge:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic reviewed-judged-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-reviewed-judged \
+  --workspace /tmp/mf-dr-reviewed-judged \
+  --reviewer-mode piworker \
+  --review-rounds 2 \
+  --source-mode live \
+  --live-extension-mode \
+  --search-intent-mode piworker \
+  --researcher-mode piworker \
+  --judge-mode piworker \
+  --piworker-provider-config-source codex_current
+```
+
+Only `reviewed-judged-run` can produce the final package, and only when the
+separate Judge PiWorker returns `accepted`.
 
 Live source collection with the fixture researcher:
 
@@ -99,6 +170,7 @@ python3 -m missionforge_deepresearch.cli academic single-agent-run \
   --topic "compiler autotuning survey" \
   --request-id demo-live-piworker \
   --workspace /tmp/mf-dr-live-piworker \
+  --research-intensity standard \
   --source-mode live \
   --live-extension-mode \
   --search-intent-mode piworker \
@@ -108,10 +180,50 @@ python3 -m missionforge_deepresearch.cli academic single-agent-run \
   --piworker-reasoning medium
 ```
 
-The live search intent is written to `sources/search_intent.json`. The live
-source packet is written to `sources/source_packet.json`, with an extension
+The live search intent is written to `sources/search_intent.json`. The
+structured evidence sink is `sources/source_packet.json`, with an extension
 lock at `compiled/extension_lock.json` and acquisition diagnostics at
-`sources/source_collection_report.json`.
+`sources/source_collection_report.json`. In live extension mode the researcher
+must overwrite `sources/source_packet.json` with non-empty `source_records`.
+
+Evidence and citation contract:
+
+- source ids use `S1`, `S2`, ... style identifiers;
+- `sources/source_packet.json` is the machine-readable evidence ledger;
+- `reports/final_report.md` cites material claims with `[S1]` or `[S1, S2]`;
+- `reports/final_report.md` includes `## References`;
+- `reports/evidence_index.md` maps every source id from the source packet;
+- structural checks reject unknown citations or empty source records, but do
+  not rank source importance.
+
+Tool healthcheck:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic tool-healthcheck \
+  --topic "compiler autotuning survey" \
+  --request-id demo-tool-health \
+  --workspace /tmp/mf-dr-tool-health \
+  --search-query "compiler autotuning survey" \
+  --search-query "automatic compiler tuning recent survey" \
+  --since-year 2023 \
+  --max-sources 5
+```
+
+The healthcheck writes:
+
+```text
+runs/{request_id}/health/tool_healthcheck.json
+runs/{request_id}/health/tool_healthcheck.md
+```
+
+It probes public academic indexes, GitHub repository search, and the declared
+npm Pi extension packages. Google Scholar is recorded as unsupported instead
+of scraped because it has no stable official API. This command checks whether
+the product's source-acquisition hands can produce structured records; it does
+not judge final research quality. If `--search-query` is omitted, the original
+topic is used as the only query; passing explicit queries is the recommended
+way to test whether the tools are usable independent of prompt-language noise.
 
 Phase 3 quality comparison:
 

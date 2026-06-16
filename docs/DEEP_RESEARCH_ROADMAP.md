@@ -1,9 +1,10 @@
 # Deep Research Roadmap
 
-Last updated: 2026-06-15
+Last updated: 2026-06-16
 
 Status: Phase 1 offline single-agent baseline, Phase 2 live extension-backed
-source acquisition, and a thin Phase 3 quality-comparison harness are
+source acquisition, Phase 3 quality comparison, Phase 4 independent judging,
+Phase 5A evidence/citation hard checks, and tool healthcheck diagnostics are
 implemented under `integrations/deepresearch`. Implementation stays outside
 `src/missionforge` until a primitive is proven to be product-neutral.
 
@@ -66,6 +67,18 @@ feel better because it has:
 - clearer deltas against a previous result;
 - explicit gaps when evidence is missing.
 
+Expose research depth as a user-facing product knob, not as hidden Python
+semantics:
+
+- `quick`: concise scan with lower source/query/model budgets;
+- `standard`: balanced default;
+- `intensive`: higher-recall investigation with broader budgets and stronger
+  cross-check guidance.
+
+The intensity knob may tune budgets, manuals, and judge rubrics. It must not
+add domain-specific keyword branches, source ranking, or semantic acceptance in
+Python.
+
 Commercial research is a later profile after the academic path is useful.
 
 ## MVP Shape
@@ -91,6 +104,7 @@ topic-specific rules.
 
 The single researcher should produce:
 
+- `sources/source_packet.json`;
 - `final_report.md`;
 - `evidence_index.md`;
 - `research_delta.md`;
@@ -118,6 +132,12 @@ Prepare it as a bounded tool surface, not as hidden research intelligence:
 Provider-specific query syntax adaptation is allowed as mechanical glue.
 Domain-specific fallback terms are not allowed. If a topic is hard to collect,
 the agent should report source gaps and propose follow-up searches.
+
+The structured evidence sink is `sources/source_packet.json`. The researcher
+may freely explore with authorized tools, but must settle sources into
+`source_records` and cite them with `[S1]` style identifiers. MissionForge only
+checks schema and citation consistency; it does not decide which sources are
+important.
 
 ## Roadmap
 
@@ -149,6 +169,11 @@ Current implementation:
   compiler, fixture researcher adapter, structural checks, CLI, and tests.
 - The default run produces `draft_ready`, never `accepted`.
 - The default mode is fixture source collection and fixture researcher.
+- `research_intensity` is part of the academic request contract and is exposed
+  in the CLI as `--research-intensity quick|standard|intensive`.
+- Structural checks now require a non-empty `sources/source_packet.json`,
+  source ids in `[S1]` form, a `## References` section, and final-report
+  citations that resolve to source packet records.
 - Live source collection is available through `--source-mode live`, but remains
   a bounded source tool, not a Python research engine.
 - There is no independent judge or multi-agent split in Phase 1.
@@ -177,6 +202,9 @@ Current implementation:
   importance in Python.
 - `--researcher-mode piworker` can hand the frozen contract, live source packet,
   and extension lock to the default MissionForge PiWorker runtime.
+- In live extension mode, the initial source packet is an empty evidence sink;
+  the researcher must overwrite it with structured records before structural
+  checks can pass.
 
 ### Phase 3: Real Quality Evaluation
 
@@ -230,6 +258,95 @@ Current implementation:
 - `packages/deepresearch_final_package.json` is written only for `accepted`.
 - `repair`, `revision_required`, and `rejected` are recorded as decisions; no
   repair loop is run in Phase 4.
+
+### Phase 5A: Evidence Sink And Citation Contract
+
+Strengthen product-visible report quality without adding deterministic research
+logic.
+
+Exit criteria:
+
+- `sources/source_packet.json` is a required worker output;
+- source records carry stable `S1`, `S2`, ... identifiers plus title, source
+  type, and a locator;
+- final reports cite material claims with `[S1]` style ids;
+- final reports include a `## References` section;
+- `reports/evidence_index.md` maps source ids from the packet;
+- structural checks reject empty source packets, unknown citations, or
+  references that do not align with the packet.
+
+Current implementation:
+
+- `missionforge_deepresearch.evidence` contains the mechanical source packet
+  and citation audits.
+- The single researcher remains the only semantic executor.
+- Python does not rank sources, expand domain terms, or judge whether a paper
+  is important; it only enforces that cited source ids resolve to the evidence
+  packet.
+
+### Phase 5B: Tool Healthcheck
+
+Make source-tool bottlenecks visible before blaming the research agent.
+
+Exit criteria:
+
+- probe public academic indexes separately;
+- probe GitHub repository search separately;
+- verify that declared npm Pi extension packages are reachable;
+- record Google Scholar as unsupported unless a stable product-grade provider
+  is configured;
+- write refs-first healthcheck JSON and markdown artifacts.
+
+Current implementation:
+
+- `academic tool-healthcheck` probes Semantic Scholar, Crossref, OpenAlex,
+  arXiv, GitHub public repository search, and the declared npm Pi extension
+  packages.
+- The command writes `health/tool_healthcheck.json` and
+  `health/tool_healthcheck.md` under the run workspace.
+- The command can execute explicit `--search-query` values so tool health can
+  be separated from raw prompt-language/query-quality noise.
+- The healthcheck measures reachability and structured source-record
+  production. It does not rank sources, expand domain terms, or judge final
+  research quality.
+
+### Phase 5C: Reviewer-Guided Iteration
+
+Turn one-shot research into paper-review-guided updates without building a
+Python research engine.
+
+Exit criteria:
+
+- run an initial draft through one or more bounded peer-review rounds;
+- give the reviewer a strict academic critique role, not final acceptance
+  authority;
+- require the reviewer to write `reviewer_report.md` and
+  `next_research_directive.md`;
+- require the researcher to update the evidence packet, report artifacts, and
+  a per-round `research_state.json`;
+- carry reviewer and research-state refs into the final run result so the
+  independent judge can see the update trail.
+
+Current implementation:
+
+- `academic reviewed-run` runs the draft path, then reviewer-guided update
+  rounds, and returns `draft_ready` or `failed`.
+- `academic reviewed-judged-run` runs the same reviewer-guided path and then
+  submits the revised draft to the independent Judge PiWorker.
+- `research_intensity` now carries default and maximum review-round budgets:
+  quick defaults to one round, standard to two, and intensive to three with a
+  four-round cap.
+- Each round writes:
+  - `reviews/round_XX/review_spec.json`;
+  - `reviews/round_XX/reviewer_report.md`;
+  - `reviews/round_XX/next_research_directive.md`;
+  - `reviews/round_XX/research_state.json`.
+- The peer reviewer uses a `judge_piworker` role for critique discipline, but
+  metadata and manuals make its authority guidance-only. Product acceptance
+  still belongs only to Phase 4's independent judge.
+- Python does not decide which critique is semantically correct. It enforces
+  refs, role separation, budgets, required artifacts, citation checks, and
+  final judge visibility.
 
 ### Phase 5: Decompose Only When Needed
 

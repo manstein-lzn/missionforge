@@ -9,8 +9,10 @@ from unittest.mock import patch
 from missionforge.contracts import ContractValidationError
 from missionforge_deepresearch import (
     FixtureDeepResearchJudgeAdapter,
+    ResearchIntensity,
     load_deepresearch_final_package,
     load_deepresearch_judged_run_result,
+    research_intensity_profile,
     run_deepresearch_academic_judged,
 )
 from missionforge_deepresearch.judging import JUDGE_CALL_REF, JUDGE_REPORT_REF, JUDGE_SPEC_REF
@@ -42,8 +44,35 @@ class JudgingTests(unittest.TestCase):
             run_root = root / result.run_workspace_ref
             call_payload = json.loads((run_root / JUDGE_CALL_REF).read_text(encoding="utf-8"))
             self.assertEqual(call_payload["role"], "judge_piworker")
+            self.assertEqual(call_payload["metadata"]["research_intensity"], "standard")
             run_payload = (root / result.source_run_result_ref).read_text(encoding="utf-8")
             self.assertNotIn("\"accepted\"", run_payload)
+
+    def test_research_intensity_sets_judge_budget_and_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request = sample_request().__class__(
+                **{
+                    **sample_request().to_dict(),
+                    "research_intensity": ResearchIntensity.QUICK.value,
+                }
+            )
+
+            result = run_deepresearch_academic_judged(
+                request,
+                workspace=root,
+                researcher_adapter=FixtureAcademicResearcherAdapter(),
+                judge_adapter=FixtureDeepResearchJudgeAdapter("accepted"),
+            )
+
+            profile = research_intensity_profile(ResearchIntensity.QUICK)
+            run_root = root / result.run_workspace_ref
+            call_payload = json.loads((run_root / JUDGE_CALL_REF).read_text(encoding="utf-8"))
+            spec = json.loads((run_root / JUDGE_SPEC_REF).read_text(encoding="utf-8"))
+            self.assertEqual(spec["research_intensity"], "quick")
+            self.assertEqual(spec["research_intensity_profile"]["max_sources"], profile.max_sources)
+            self.assertEqual(call_payload["runtime_budget"]["max_turns"], profile.judge_max_turns)
+            self.assertEqual(call_payload["runtime_budget"]["timeout_seconds"], profile.piworker_timeout_seconds)
 
     def test_repair_judge_does_not_write_final_package(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

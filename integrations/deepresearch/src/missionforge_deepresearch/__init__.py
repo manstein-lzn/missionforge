@@ -15,7 +15,23 @@ from .judging import (
     load_deepresearch_judged_run_result,
     run_deepresearch_academic_judged,
 )
-from .product_contract import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
+from .iterative_review import (
+    DeepResearchReviewedRunResult,
+    FixturePeerReviewerAdapter,
+    FixtureReviewedResearcherAdapter,
+    load_deepresearch_reviewed_run_result,
+    run_deepresearch_academic_reviewed,
+    run_deepresearch_academic_reviewed_judged,
+)
+from .product_contract import (
+    AcademicResearchRequest,
+    DeepResearchReviewedRunStatus,
+    DeepResearchRunResult,
+    DeepResearchRunStatus,
+    ResearchIntensity,
+    ResearchIntensityProfile,
+    research_intensity_profile,
+)
 from .quality_evaluation import (
     DeepResearchQualityEvaluationResult,
     FixtureDirectBaselineAdapter,
@@ -28,17 +44,24 @@ from .runtime import (
     load_deepresearch_run_result,
     run_deepresearch_academic_single_agent,
 )
+from .tool_healthcheck import run_deepresearch_tool_healthcheck
 
 __all__ = [
     "AcademicResearchRequest",
     "DeepResearchRunResult",
     "DeepResearchRunStatus",
+    "DeepResearchReviewedRunResult",
+    "DeepResearchReviewedRunStatus",
     "DeepResearchTaskContractCompileResult",
     "DeepResearchQualityEvaluationResult",
+    "ResearchIntensity",
+    "ResearchIntensityProfile",
     "DeepResearchFinalPackage",
     "DeepResearchJudgeReport",
     "DeepResearchJudgedRunResult",
     "FixtureAcademicResearcherAdapter",
+    "FixturePeerReviewerAdapter",
+    "FixtureReviewedResearcherAdapter",
     "FixtureDirectBaselineAdapter",
     "FixtureDeepResearchJudgeAdapter",
     "FixtureQualityEvaluatorAdapter",
@@ -47,9 +70,14 @@ __all__ = [
     "load_deepresearch_final_package",
     "load_deepresearch_judged_run_result",
     "load_deepresearch_quality_evaluation_result",
+    "load_deepresearch_reviewed_run_result",
     "load_deepresearch_run_result",
     "load_deepresearch_task_contract",
     "run_deepresearch_academic_judged",
+    "run_deepresearch_academic_reviewed",
+    "run_deepresearch_academic_reviewed_judged",
     "run_deepresearch_quality_evaluation",
     "run_deepresearch_academic_single_agent",
+    "run_deepresearch_tool_healthcheck",
+    "research_intensity_profile",
 ]

@@ -7,8 +7,10 @@ import unittest
 
 from missionforge_deepresearch import (
     DeepResearchTaskContractCompileResult,
+    ResearchIntensity,
     compile_deepresearch_academic_task_contract,
     load_deepresearch_task_contract,
+    research_intensity_profile,
 )
 
 from test_product_contract import sample_request
@@ -28,10 +30,12 @@ class CompilerTests(unittest.TestCase):
             self.assertEqual(workspace_policy.workspace_root_ref, result.run_workspace_ref)
             self.assertEqual(workspace_policy.artifact_root_refs, ["reports", "packages", "compiled"])
             self.assertIn("reports", permission_manifest.writable_refs)
+            self.assertIn("sources/source_packet.json", permission_manifest.writable_refs)
             self.assertIn("attempts", permission_manifest.writable_refs)
             self.assertEqual(
                 [ref for clause in task_contract.required_outputs for ref in clause.refs],
                 [
+                    "sources/source_packet.json",
                     "reports/final_report.md",
                     "reports/evidence_index.md",
                     "reports/research_delta.md",
@@ -43,6 +47,10 @@ class CompilerTests(unittest.TestCase):
             self.assertIn("sources/search_intent.json", task_contract.source_refs)
             self.assertIn("sources/source_collection_report.json", task_contract.source_refs)
             self.assertIn("product_contract/output_contract.json", task_contract.product_contract_refs)
+            output_contract = json.loads((root / result.output_contract_ref).read_text(encoding="utf-8"))
+            self.assertEqual(output_contract["source_packet_ref"], "sources/source_packet.json")
+            self.assertEqual(output_contract["research_intensity"], "standard")
+            self.assertIn("sources/source_packet.json", output_contract["expected_worker_output_refs"])
             self.assertTrue((root / result.task_contract_ref).exists())
             self.assertTrue((root / result.worker_brief_ref).exists())
             self.assertTrue((root / result.judge_rubric_ref).exists())
@@ -50,6 +58,32 @@ class CompilerTests(unittest.TestCase):
             self.assertTrue((root / "runs/npu-compiler-survey/sources/search_intent.json").exists())
             self.assertTrue((root / result.source_packet_ref).exists())
             self.assertTrue((root / result.source_collection_report_ref).exists())
+
+    def test_compile_records_research_intensity_in_contract_and_manual(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request = sample_request().__class__(
+                **{
+                    **sample_request().to_dict(),
+                    "research_intensity": ResearchIntensity.INTENSIVE.value,
+                }
+            )
+
+            result = compile_deepresearch_academic_task_contract(request, workspace=root)
+            task_contract, _workspace_policy, _permission_manifest = load_deepresearch_task_contract(root, result)
+            output_contract = json.loads((root / result.output_contract_ref).read_text(encoding="utf-8"))
+            compile_report = json.loads((root / result.compile_report_ref).read_text(encoding="utf-8"))
+            manual = (root / result.manual_ref).read_text(encoding="utf-8")
+
+            self.assertEqual(output_contract["research_intensity"], "intensive")
+            self.assertEqual(
+                output_contract["research_intensity_profile"]["max_sources"],
+                research_intensity_profile(ResearchIntensity.INTENSIVE).max_sources,
+            )
+            self.assertEqual(compile_report["research_intensity"], "intensive")
+            self.assertEqual(task_contract.metadata["research_intensity"], "intensive")
+            self.assertIn("Research intensity: `intensive`", manual)
+            self.assertIn("Do not label the", manual)
 
     def test_live_extension_mode_compiles_extension_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
