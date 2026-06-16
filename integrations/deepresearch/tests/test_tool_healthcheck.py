@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from missionforge_deepresearch import run_deepresearch_tool_healthcheck
+from missionforge_deepresearch.experimental import run_deepresearch_tool_healthcheck
 from missionforge_deepresearch.source_collector import AcademicSourceCollectionConfig
 
 from test_product_contract import sample_request
@@ -42,6 +42,11 @@ class ToolHealthcheckTests(unittest.TestCase):
                 [record["status"] for record in result["npm_extension_package_checks"]],
                 ["passed", "passed"],
             )
+            self.assertEqual(
+                [record["status"] for record in result["extension_package_checks"]],
+                ["passed", "passed", "passed"],
+            )
+            self.assertEqual(result["extension_package_checks"][0]["surface"], "local_extension_package")
             self.assertTrue((root / result["result_ref"]).is_file())
             self.assertTrue((root / result["report_ref"]).is_file())
             self.assertTrue((root / result["search_intent_ref"]).is_file())

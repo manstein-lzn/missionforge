@@ -52,6 +52,12 @@ class CompilerTests(unittest.TestCase):
             self.assertEqual(output_contract["artifact_write_order"][0], "sources/source_packet.json")
             self.assertEqual(output_contract["research_intensity"], "standard")
             self.assertIn("sources/source_packet.json", output_contract["expected_worker_output_refs"])
+            self.assertIn("quality_contract", output_contract)
+            self.assertIn("Comparison Matrix", output_contract["quality_contract"]["required_report_sections"])
+            self.assertEqual(
+                output_contract["quality_contract"]["source_packet_minimums"]["min_source_records"],
+                research_intensity_profile(ResearchIntensity.STANDARD).min_source_records,
+            )
             self.assertTrue((root / result.task_contract_ref).exists())
             self.assertTrue((root / result.worker_brief_ref).exists())
             self.assertTrue((root / result.judge_rubric_ref).exists())
@@ -81,12 +87,21 @@ class CompilerTests(unittest.TestCase):
                 output_contract["research_intensity_profile"]["max_sources"],
                 research_intensity_profile(ResearchIntensity.INTENSIVE).max_sources,
             )
+            self.assertEqual(
+                output_contract["quality_contract"]["source_packet_minimums"]["min_source_records"],
+                research_intensity_profile(ResearchIntensity.INTENSIVE).min_source_records,
+            )
             self.assertEqual(compile_report["research_intensity"], "intensive")
             self.assertEqual(task_contract.metadata["research_intensity"], "intensive")
             self.assertIn("Research intensity: `intensive`", manual)
+            self.assertIn("High-quality contract bar", manual)
+            self.assertIn("## 对比矩阵", manual)
+            self.assertIn("`section_id`: `comparison_matrix`", manual)
             self.assertIn("Do not label the", manual)
             self.assertIn("Write order matters", manual)
             self.assertIn("First gather evidence", task_contract.objective)
+            self.assertTrue(any(clause.clause_id == "dr-accept-methodology" for clause in task_contract.semantic_acceptance))
+            self.assertTrue(any(clause.clause_id == "dr-accept-counterevidence" for clause in task_contract.semantic_acceptance))
 
     def test_live_extension_mode_compiles_extension_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -112,6 +127,11 @@ class CompilerTests(unittest.TestCase):
             self.assertEqual(report["extension_lock_ref"], result.extension_lock_ref)
             self.assertIn("web", report["tool_surface"])
             self.assertIn("code_search", report["tool_surface"])
+            lock_payload = json.loads((root / result.extension_lock_ref).read_text(encoding="utf-8"))
+            self.assertIn(
+                "local:extensions/pi-academic-sources",
+                [entry["package"] for entry in lock_payload["extensions"]],
+            )
 
     def test_compile_result_does_not_embed_topic_text(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -124,6 +144,16 @@ class CompilerTests(unittest.TestCase):
 
 
 def _fake_extension_installer(grant, install_root):
+    if grant.package.startswith("local:"):
+        package_name = Path(grant.package.split(":", 1)[1]).name
+        install_path = install_root / package_name
+        install_path.mkdir(parents=True, exist_ok=True)
+        (install_path / "package.json").write_text(
+            f'{{"name":"@missionforge/{package_name}","version":"{grant.version_spec}"}}\n',
+            encoding="utf-8",
+        )
+        (install_path / "index.js").write_text("export default function () {}\n", encoding="utf-8")
+        return {}
     package_name = grant.package.split(":", 1)[1]
     install_path = install_root / "node_modules" / package_name
     install_path.mkdir(parents=True, exist_ok=True)

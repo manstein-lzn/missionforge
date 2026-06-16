@@ -48,7 +48,8 @@ class RuntimeTests(unittest.TestCase):
             self.assertIn("sources/source_packet.json", structural["checked_refs"])
             final_report = (root / "runs/npu-compiler-survey/reports/final_report.md").read_text(encoding="utf-8")
             self.assertIn("[S1", final_report)
-            self.assertIn("## References", final_report)
+            self.assertIn("## 参考文献", final_report)
+            self.assertIn("## 对比矩阵", final_report)
             self.assertEqual(
                 result.draft_artifact_refs,
                 [
@@ -125,10 +126,14 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue((run_root / "compiled/extension_lock.json").exists())
             source_packet = (run_root / "sources/source_packet.json").read_text(encoding="utf-8")
             self.assertIn("\"source_acquisition\": \"pi_extensions\"", source_packet)
-            self.assertEqual(json.loads(source_packet)["collection_policy"]["tool_surface"], ["web", "code_search"])
+            self.assertEqual(json.loads(source_packet)["collection_policy"]["tool_surface"], ["code_search", "web"])
             self.assertGreater(len(json.loads(source_packet)["source_records"]), 0)
             lock_payload = json.loads((run_root / "compiled/extension_lock.json").read_text(encoding="utf-8"))
             self.assertTrue(lock_payload["extensions"][0]["install_path"].startswith(".missionforge/extensions/"))
+            self.assertIn(
+                "local:extensions/pi-academic-sources",
+                [entry["package"] for entry in lock_payload["extensions"]],
+            )
 
     def test_live_researcher_receives_run_relative_extension_lock_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -195,6 +200,26 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(structural["citation_audit"]["status"], "failed")
             self.assertIn("final_report_unknown_source_ids:S999", structural["citation_audit"]["errors"])
 
+    def test_missing_quality_sections_prevents_draft_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            result = run_deepresearch_academic_single_agent(
+                sample_request(),
+                workspace=root,
+                adapter=_ThinReportResearcherAdapter(),
+            )
+
+            structural = json.loads((root / result.structural_check_ref).read_text(encoding="utf-8"))
+            self.assertEqual(result.status, DeepResearchRunStatus.FAILED)
+            self.assertEqual(structural["quality_contract_audit"]["status"], "failed")
+            self.assertTrue(
+                any(
+                    error.startswith("final_report_missing_quality_sections:")
+                    for error in structural["quality_contract_audit"]["errors"]
+                )
+            )
+
     def test_source_packet_accepts_nested_locator_object(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -227,12 +252,13 @@ class RuntimeTests(unittest.TestCase):
             write_text_ref(
                 root,
                 "reports/final_report.md",
-                (
-                    "# Report\n\n"
-                    "Claim [S1, S2].\n\n"
-                    "## References\n\n"
-                    "- [S1] Nested locator source. https://arxiv.org/abs/2401.00001\n"
-                    "- [S2] External source ref source. https://tvm.apache.org/docs/v0.16.0/how_to/tune_with_autoscheduler/tune_network_cuda.html\n"
+                _quality_report_text(
+                    title="Report",
+                    claim="Claim [S1, S2].",
+                    references=(
+                        "- [S1] Nested locator source. https://arxiv.org/abs/2401.00001\n"
+                        "- [S2] External source ref source. https://tvm.apache.org/docs/v0.16.0/how_to/tune_with_autoscheduler/tune_network_cuda.html\n"
+                    ),
                 ),
             )
             write_text_ref(root, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Nested locator source.\n- [S2] External source ref source.\n")
@@ -279,6 +305,7 @@ class RuntimeTests(unittest.TestCase):
 
             self.assertEqual(structural["status"], "passed")
             self.assertEqual(structural["source_packet_audit"]["status"], "passed")
+            self.assertEqual(structural["quality_contract_audit"]["status"], "skipped")
 
     def test_result_package_uses_adapter_runtime_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -403,12 +430,24 @@ class _RuntimeRefResearcherAdapter(FixtureAcademicResearcherAdapter):
                                 "title": "Runtime ref fixture source",
                                 "source_type": "webpage_fixture",
                                 "source_ref": "sources/source_packet.json",
+                                "year": 2024,
+                                "accessed_at": "fixture",
+                                "evidence_note": "Runtime ref fixture source for package validation.",
+                                "evidence_strength": "fixture",
                             }
                         ],
                     },
                 )
             elif ref == "reports/final_report.md":
-                write_text_ref(workspace, ref, "# Artifact\n\nClaim [S1].\n\n## References\n\n- [S1] Runtime ref fixture source. sources/source_packet.json\n")
+                write_text_ref(
+                    workspace,
+                    ref,
+                    _quality_report_text(
+                        title="Artifact",
+                        claim="Claim [S1].",
+                        references="- [S1] Runtime ref fixture source. sources/source_packet.json\n",
+                    ),
+                )
             elif ref == "reports/evidence_index.md":
                 write_text_ref(workspace, ref, "# Evidence Index\n\n- [S1] Runtime ref fixture source. sources/source_packet.json\n")
             else:
@@ -431,6 +470,70 @@ class _RuntimeRefResearcherAdapter(FixtureAcademicResearcherAdapter):
             worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
             event_evidence_refs=[],
             metrics={"metric_ref": metrics_ref},
+        )
+
+
+class _ThinReportResearcherAdapter(FixtureAcademicResearcherAdapter):
+    adapter_family = "fixture_thin_report_deepresearch_researcher"
+
+    def run_call(
+        self,
+        call: PiWorkerCall,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ) -> WorkerAdapterResult:
+        if call.role is not PiWorkerCallRole.EXECUTOR:
+            raise AssertionError("unexpected role")
+        write_json_ref(
+            workspace,
+            "sources/source_packet.json",
+            {
+                "schema_version": "missionforge_deepresearch.source_packet.v1",
+                "request_id": "npu-compiler-survey",
+                "source_records": [
+                    {
+                        "source_id": "S1",
+                        "title": "Thin report fixture source",
+                        "source_type": "webpage_fixture",
+                        "source_ref": "sources/source_packet.json",
+                        "year": 2024,
+                        "accessed_at": "fixture",
+                        "evidence_note": "Fixture source for thin report rejection.",
+                        "evidence_strength": "fixture",
+                    }
+                ],
+            },
+        )
+        write_text_ref(
+            workspace,
+            "reports/final_report.md",
+            "# Thin Report\n\nClaim [S1].\n\n## References\n\n- [S1] Thin report fixture source. sources/source_packet.json\n",
+        )
+        write_text_ref(workspace, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Thin report fixture source.\n")
+        write_text_ref(workspace, "reports/research_delta.md", "# Research Delta\n\nBaseline.\n")
+        write_text_ref(workspace, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
+        write_text_ref(workspace, "reports/source_gaps.md", "# Source Gaps\n\nFixture source only.\n")
+        write_json_ref(workspace, RESEARCHER_METRICS_REF, {"metric_ref": RESEARCHER_METRICS_REF})
+        report = ExecutionReport(
+            report_id="thin-report-researcher-report",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=list(call.expected_output_refs),
+            changed_refs=[*call.expected_output_refs, RESEARCHER_EXECUTION_REPORT_REF, RESEARCHER_METRICS_REF],
+            evidence_refs=["sources/source_packet.json", "reports/evidence_index.md"],
+            metrics={"metric_ref": RESEARCHER_METRICS_REF},
+        )
+        write_json_ref(workspace, RESEARCHER_EXECUTION_REPORT_REF, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(status="completed", execution_report_ref=RESEARCHER_EXECUTION_REPORT_REF),
+            event_evidence_refs=[],
+            metrics={"metric_ref": RESEARCHER_METRICS_REF},
         )
 
 
@@ -462,11 +565,23 @@ class _BadCitationResearcherAdapter(FixtureAcademicResearcherAdapter):
                         "title": "Known fixture source",
                         "source_type": "webpage_fixture",
                         "source_ref": "sources/source_packet.json",
+                        "year": 2024,
+                        "accessed_at": "fixture",
+                        "evidence_note": "Known fixture source for citation validation.",
+                        "evidence_strength": "fixture",
                     }
                 ],
             },
         )
-        write_text_ref(workspace, "reports/final_report.md", "# Bad Citation\n\nUnsupported claim [S999].\n\n## References\n\n- [S999] Unknown source.\n")
+        write_text_ref(
+            workspace,
+            "reports/final_report.md",
+            _quality_report_text(
+                title="Bad Citation",
+                claim="Unsupported claim [S999].",
+                references="- [S999] Unknown source.\n",
+            ),
+        )
         write_text_ref(workspace, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Known fixture source.\n")
         write_text_ref(workspace, "reports/research_delta.md", "# Delta\n\nBaseline.\n")
         write_text_ref(workspace, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
@@ -488,6 +603,29 @@ class _BadCitationResearcherAdapter(FixtureAcademicResearcherAdapter):
             event_evidence_refs=[],
             metrics={"metric_ref": RESEARCHER_METRICS_REF},
         )
+
+
+def _quality_report_text(*, title: str, claim: str, references: str) -> str:
+    return (
+        f"# {title}\n\n"
+        "## Scope And Method\n\n"
+        "Minimal test report for structural validation.\n\n"
+        "## Evidence Base\n\n"
+        f"{claim}\n\n"
+        "## Major Lines Of Work\n\n"
+        "The test fixture covers one validation line.\n\n"
+        "## Comparison Matrix\n\n"
+        "| Item | Evidence | Limitation |\n|---|---|---|\n"
+        "| fixture | cited source | test-only evidence |\n\n"
+        "## Counterevidence And Failure Modes\n\n"
+        "The fixture does not claim real research coverage.\n\n"
+        "## Research Delta\n\n"
+        "Baseline fixture report.\n\n"
+        "## Source Gaps\n\n"
+        "Real source coverage is outside this test.\n\n"
+        "## References\n\n"
+        f"{references}"
+    )
 
 
 def patch_runtime_collector():
@@ -512,6 +650,10 @@ def _fake_collect_live_sources(request, *, config=None, search_intent=None):
         "venue": "Fixture Venue",
         "citation_count": 1,
         "abstract": "Fixture live source.",
+        "year": 2025,
+        "accessed_at": "fixture",
+        "evidence_note": "Fixture live source for source collection tests.",
+        "evidence_strength": "fixture",
     }
     return AcademicSourceCollectionResult(
         source_packet={
@@ -556,6 +698,16 @@ def _fake_collect_live_sources(request, *, config=None, search_intent=None):
 
 
 def _fake_extension_installer(grant, install_root):
+    if grant.package.startswith("local:"):
+        package_name = Path(grant.package.split(":", 1)[1]).name
+        install_path = install_root / package_name
+        install_path.mkdir(parents=True, exist_ok=True)
+        (install_path / "package.json").write_text(
+            f'{{"name":"@missionforge/{package_name}","version":"{grant.version_spec}"}}\n',
+            encoding="utf-8",
+        )
+        (install_path / "index.js").write_text("export default function () {}\n", encoding="utf-8")
+        return {}
     package_name = grant.package.split(":", 1)[1]
     install_path = install_root / "node_modules" / package_name
     install_path.mkdir(parents=True, exist_ok=True)

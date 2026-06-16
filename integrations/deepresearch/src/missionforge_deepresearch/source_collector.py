@@ -522,6 +522,8 @@ def _source_record_from_candidate(
         "citation_count": candidate.get("citation_count"),
         "abstract": _first_text(candidate.get("abstract")),
         "accessed_at": accessed_at,
+        "evidence_note": _source_evidence_note(candidate),
+        "evidence_strength": _source_evidence_strength(candidate),
     }
 
 
@@ -691,3 +693,20 @@ def _clean_space(value: str) -> str:
 def _truncate(value: str, limit: int) -> str:
     text = _clean_space(value)
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "..."
+
+
+def _source_evidence_note(candidate: Mapping[str, Any]) -> str:
+    provider = _first_text(candidate.get("provider")) or "unknown provider"
+    source_type = _first_text(candidate.get("source_type")) or "source"
+    title = _first_text(candidate.get("title")) or "untitled source"
+    return f"{source_type} discovered through {provider}: {title}"
+
+
+def _source_evidence_strength(candidate: Mapping[str, Any]) -> str:
+    source_type = _first_text(candidate.get("source_type")).lower()
+    provider = _first_text(candidate.get("provider")).lower()
+    if "official" in source_type or provider in {"openalex", "semantic_scholar", "crossref"}:
+        return "index_record"
+    if "preprint" in source_type or provider == "arxiv":
+        return "preprint_index_record"
+    return "source_record"

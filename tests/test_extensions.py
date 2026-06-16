@@ -10,6 +10,7 @@ from missionforge.extensions import (
     ExtensionLock,
     compile_extension_lock,
     extension_load_report_from_lock,
+    npm_install_extension,
     verify_extension_lock,
 )
 
@@ -105,6 +106,38 @@ class ExtensionTests(unittest.TestCase):
             self.assertTrue((root / ".missionforge/extensions/node_modules/@juicesharp/rpiv-web-tools/package.json").is_file())
             self.assertEqual(len(lock.extensions), 2)
 
+    def test_compile_extension_lock_install_mode_copies_local_package(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest = sample_manifest(
+                extension_grants=[
+                    {
+                        "grant_id": "academic-sources",
+                        "package": "local:extensions/pi-academic-sources",
+                        "version_spec": "0.1.0",
+                        "capability": "web",
+                        "requires_network": True,
+                    }
+                ],
+                env_allowlist=["PATH"],
+            )
+
+            lock = compile_extension_lock(
+                manifest,
+                source_permission_manifest_ref="policy/permission_manifest.json",
+                workspace_root=root,
+                mode="install",
+                installer=npm_install_extension,
+                compiled_at="2026-06-15T00:00:00Z",
+            )
+
+            installed = root / ".missionforge/extensions/pi-academic-sources"
+            self.assertTrue((installed / "package.json").is_file())
+            self.assertTrue((installed / "index.js").is_file())
+            self.assertEqual(lock.extensions[0].install_path, ".missionforge/extensions/pi-academic-sources")
+            self.assertEqual(lock.extensions[0].name, "@missionforge/pi-academic-sources")
+            self.assertEqual(lock.extensions[0].version, "0.1.0")
+
     def test_compile_rejects_network_extension_when_network_disabled(self) -> None:
         with TemporaryDirectory() as tmpdir:
             with self.assertRaisesRegex(ContractValidationError, "network_policy is disabled"):
@@ -160,6 +193,16 @@ class ExtensionTests(unittest.TestCase):
 
 
 def _fake_npm_install(grant, install_root):
+    if grant.package.startswith("local:"):
+        package_name = Path(grant.package.split(":", 1)[1]).name
+        install_path = install_root / package_name
+        install_path.mkdir(parents=True, exist_ok=True)
+        (install_path / "package.json").write_text(
+            f'{{"name":"@missionforge/{package_name}","version":"{grant.version_spec}"}}\n',
+            encoding="utf-8",
+        )
+        (install_path / "index.js").write_text("export default function () {}\n", encoding="utf-8")
+        return {}
     package_name = grant.package.split(":", 1)[1]
     install_path = install_root / "node_modules" / package_name
     install_path.mkdir(parents=True, exist_ok=True)

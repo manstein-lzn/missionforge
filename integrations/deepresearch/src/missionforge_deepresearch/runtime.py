@@ -28,9 +28,9 @@ from .compiler import (
     compile_deepresearch_academic_task_contract,
     load_deepresearch_task_contract,
 )
-from .evidence import audit_report_citations, audit_source_packet
+from .evidence import audit_quality_contract, audit_report_citations, audit_source_packet
 from .product_contract import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
-from .product_contract import research_intensity_profile
+from .product_contract import research_intensity_profile, research_report_section_specs
 from .search_intent import (
     AcademicSearchIntent,
     SEARCH_INTENT_REF,
@@ -324,6 +324,7 @@ def run_structural_checks(
     missing_from_worker_result = sorted(set(checked_refs) - set(call_result.output_refs))
     source_packet_audit = _audit_source_packet_ref(workspace)
     citation_audit = _audit_citation_refs(workspace, source_packet_audit.source_ids)
+    quality_audit = _audit_quality_contract_ref(workspace)
     status = (
         "passed"
         if (
@@ -331,6 +332,7 @@ def run_structural_checks(
             and not missing_from_worker_result
             and source_packet_audit.passed
             and citation_audit.passed
+            and quality_audit.passed
         )
         else "failed"
     )
@@ -342,8 +344,10 @@ def run_structural_checks(
         "missing_from_worker_result_refs": missing_from_worker_result,
         "source_packet_audit": source_packet_audit.to_dict(),
         "citation_audit": citation_audit.to_dict(),
+        "quality_contract_audit": quality_audit.to_dict(),
         "notes": [
-            "Structural checks do not judge research quality.",
+            "Structural checks enforce package shape, citation consistency, and the mechanical high-quality contract.",
+            "Structural checks do not rank source importance or judge semantic synthesis quality.",
             "Passing structural checks only permits draft_ready.",
         ],
     }
@@ -413,6 +417,7 @@ def _write_fixture_reports(
     source_mode = str(source_packet.get("mode", "fixture"))
     previous_run_refs = request.get("previous_run_refs", [])
     previous_count = len(previous_run_refs) if isinstance(previous_run_refs, list) else 0
+    headings = _section_headings(str(request.get("language", "zh")))
     if language == "zh":
         source_note = (
             "已接入 live source packet；当前 fixture 研究员只验证包结构，不进行真实语义研究。"
@@ -422,9 +427,22 @@ def _write_fixture_reports(
         final_report = (
             f"# {topic} 学术调研草稿\n\n"
             "这是 Phase 1 fixture 研究员生成的结构化草稿，用于验证单 Agent 闭环。\n\n"
+            f"## {headings['scope_and_method']}\n\n"
+            f"本轮以固定合同和 fixture source packet 验证流程。{source_note}\n\n"
+            f"## {headings['evidence_base']}\n\n"
             f"可用 fixture 来源: {_citation_group(source_ids) if source_ids else '无'}。\n\n"
-            f"{source_note}\n\n"
-            "## References\n\n"
+            f"## {headings['major_lines_of_work']}\n\n"
+            "Fixture 模式不声称覆盖真实研究线，只保留引用链路验证。\n\n"
+            f"## {headings['comparison_matrix']}\n\n"
+            "| 主题 | 证据 | 局限 |\n|---|---|---|\n"
+            f"| fixture 验证 | {_citation_group(source_ids) if source_ids else '无'} | 不代表真实研究质量 |\n\n"
+            f"## {headings['counterevidence_and_failure_modes']}\n\n"
+            "主要失败模式是把 fixture 包误读为真实调研结果；本报告明确不作该声明。\n\n"
+            f"## {headings['research_delta']}\n\n"
+            f"previous_run_refs 数量: {previous_count}。Fixture 模式只验证 delta artifact 必然产出。\n\n"
+            f"## {headings['source_gaps']}\n\n"
+            "需要 researcher-mode=piworker 和 live tools 才能评估真实覆盖、实时性、引用和 delta。\n\n"
+            f"## {headings['references']}\n\n"
             f"{_reference_lines(source_packet)}"
         )
         delta = (
@@ -447,9 +465,22 @@ def _write_fixture_reports(
         final_report = (
             f"# Academic Research Draft: {topic}\n\n"
             "This Phase 1 fixture draft validates the single-agent loop.\n\n"
+            f"## {headings['scope_and_method']}\n\n"
+            f"This run validates the contract and fixture source packet. {source_note}\n\n"
+            f"## {headings['evidence_base']}\n\n"
             f"Available fixture sources: {_citation_group(source_ids) if source_ids else 'none'}.\n\n"
-            f"{source_note}\n\n"
-            "## References\n\n"
+            f"## {headings['major_lines_of_work']}\n\n"
+            "Fixture mode does not claim real topic coverage; it only preserves the citation path.\n\n"
+            f"## {headings['comparison_matrix']}\n\n"
+            "| Topic | Evidence | Limitation |\n|---|---|---|\n"
+            f"| fixture validation | {_citation_group(source_ids) if source_ids else 'none'} | not a real research-quality claim |\n\n"
+            f"## {headings['counterevidence_and_failure_modes']}\n\n"
+            "The main failure mode is treating fixture evidence as a real research result; this report does not do that.\n\n"
+            f"## {headings['research_delta']}\n\n"
+            f"previous_run_refs count: {previous_count}. Fixture mode only verifies delta artifact production.\n\n"
+            f"## {headings['source_gaps']}\n\n"
+            "Use researcher-mode=piworker with live tools to evaluate real coverage, freshness, citations, and delta.\n\n"
+            f"## {headings['references']}\n\n"
             f"{_reference_lines(source_packet)}"
         )
         delta = (
@@ -475,6 +506,10 @@ def _write_fixture_reports(
     write_text_ref(root, "reports/research_delta.md", delta)
     write_text_ref(root, "reports/reading_plan.md", reading_plan)
     write_text_ref(root, "reports/source_gaps.md", gaps)
+
+
+def _section_headings(language: str) -> dict[str, str]:
+    return {section["section_id"]: section["title"] for section in research_report_section_specs(language)}
 
 
 def _audit_source_packet_ref(workspace: str | Path):
@@ -507,6 +542,26 @@ def _audit_citation_refs(workspace: str | Path, source_ids: list[str]):
     )
 
 
+def _audit_quality_contract_ref(workspace: str | Path):
+    try:
+        output_contract = read_json_ref(workspace, OUTPUT_CONTRACT_REF, "output_contract")
+    except Exception:
+        output_contract = None
+    try:
+        source_packet = read_json_ref(workspace, SOURCE_PACKET_REF, "source_packet")
+    except Exception:
+        source_packet = {}
+    try:
+        final_report_text = read_text_ref(workspace, "reports/final_report.md")
+    except Exception:
+        final_report_text = ""
+    return audit_quality_contract(
+        output_contract=output_contract,
+        source_packet=source_packet,
+        final_report_text=final_report_text,
+    )
+
+
 def _ensure_fixture_source_packet(root: Path, *, request: dict[str, Any], source_packet: dict[str, Any]) -> dict[str, Any]:
     records = source_packet.get("source_records", [])
     if isinstance(records, list) and records:
@@ -522,6 +577,9 @@ def _ensure_fixture_source_packet(root: Path, *, request: dict[str, Any], source
             "source_ref": SOURCE_PACKET_REF,
             "year": 2024,
             "url": "https://example.invalid/missionforge/fixture/deepresearch",
+            "accessed_at": "fixture",
+            "evidence_note": "Fixture source used only to validate citation and package shape.",
+            "evidence_strength": "fixture",
             "notes": "Fixture source used only to validate citation and package shape.",
         }
     ]

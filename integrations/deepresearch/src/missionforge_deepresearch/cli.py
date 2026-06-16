@@ -10,22 +10,21 @@ from typing import Sequence
 
 from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeConfig
 
-from .judging import FixtureDeepResearchJudgeAdapter, run_deepresearch_academic_judged
-from .iterative_review import (
+from .experimental import (
+    FixtureDirectBaselineAdapter,
     FixturePeerReviewerAdapter,
+    FixtureQualityEvaluatorAdapter,
     run_deepresearch_academic_reviewed,
     run_deepresearch_academic_reviewed_judged,
-)
-from .product_contract import AcademicResearchRequest, ResearchIntensity, research_intensity_profile
-from .quality_evaluation import (
-    FixtureDirectBaselineAdapter,
-    FixtureQualityEvaluatorAdapter,
     run_deepresearch_quality_evaluation,
+    run_deepresearch_tool_healthcheck,
 )
+from .judging import FixtureDeepResearchJudgeAdapter, run_deepresearch_academic_judged
+from .minimal import run_deepresearch_minimal, run_deepresearch_minimal_loop
+from .product_contract import AcademicResearchRequest, ResearchIntensity, research_intensity_profile
 from .runtime import run_deepresearch_academic_single_agent
 from .search_intent import AcademicSearchIntent
 from .source_collector import AcademicSourceCollectionConfig
-from .tool_healthcheck import run_deepresearch_tool_healthcheck
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,6 +32,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="profile", required=True)
     academic = subparsers.add_parser("academic")
     academic_sub = academic.add_subparsers(dest="command", required=True)
+    minimal_parser = academic_sub.add_parser("minimal-run")
+    _add_run_arguments(minimal_parser)
+    minimal_loop_parser = academic_sub.add_parser("minimal-loop-run")
+    _add_run_arguments(minimal_loop_parser)
+    minimal_loop_parser.add_argument("--reviewer-mode", choices=["fixture", "piworker"], default="piworker")
+    minimal_loop_parser.add_argument("--review-rounds", type=int, default=None)
     run_parser = academic_sub.add_parser("single-agent-run")
     _add_run_arguments(run_parser)
     reviewed_parser = academic_sub.add_parser("reviewed-run")
@@ -65,6 +70,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_healthcheck_arguments(health_parser)
     args = parser.parse_args(argv)
 
+    if args.profile == "academic" and args.command == "minimal-run":
+        request, _source_config, piworker_config, piworker_env = _run_inputs(args)
+        result = run_deepresearch_minimal(
+            request,
+            workspace=Path(args.workspace),
+            researcher_mode=args.researcher_mode,
+            piworker_config=piworker_config,
+            piworker_environ=piworker_env,
+            live_extension_mode=args.live_extension_mode,
+        )
+        print(json.dumps(result.to_dict(), sort_keys=True, ensure_ascii=False))
+        return 0
+    if args.profile == "academic" and args.command == "minimal-loop-run":
+        request, _source_config, piworker_config, piworker_env = _run_inputs(args)
+        result = run_deepresearch_minimal_loop(
+            request,
+            workspace=Path(args.workspace),
+            researcher_mode=args.researcher_mode,
+            reviewer_mode=args.reviewer_mode,
+            piworker_config=piworker_config,
+            piworker_environ=piworker_env,
+            live_extension_mode=args.live_extension_mode,
+            review_rounds=args.review_rounds,
+        )
+        print(json.dumps(result.to_dict(), sort_keys=True, ensure_ascii=False))
+        return 0
     if args.profile == "academic" and args.command == "single-agent-run":
         request, source_config, piworker_config, piworker_env = _run_inputs(args)
         result = run_deepresearch_academic_single_agent(

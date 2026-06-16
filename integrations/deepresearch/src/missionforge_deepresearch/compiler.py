@@ -17,8 +17,6 @@ from missionforge.contracts import (
 from missionforge.extensions import ExtensionLock, compile_extension_lock, npm_install_extension, write_extension_lock
 from missionforge.task_contract import (
     ContractClause,
-    ExtensionAdapterMode,
-    ExtensionCapability,
     ExtensionGrant,
     NetworkPolicy,
     PermissionManifest,
@@ -27,7 +25,13 @@ from missionforge.task_contract import (
 )
 from missionforge.task_projection import project_judge_rubric, project_worker_brief
 
-from .product_contract import AcademicResearchRequest, research_intensity_profile
+from .extension_grants import academic_deepresearch_extension_grants
+from .product_contract import (
+    AcademicResearchRequest,
+    deepresearch_quality_dimensions,
+    research_intensity_profile,
+    research_report_section_specs,
+)
 from .search_intent import AcademicSearchIntent, SEARCH_INTENT_REF
 from .source_collector import AcademicSourceCollectionResult, SOURCE_COLLECTION_REPORT_REF, fixture_source_collection_report
 from .workspace import read_json_ref, write_json_ref, write_text_ref
@@ -410,6 +414,11 @@ def _task_contract(
             "Search intent is an LLM- or user-authored query plan; live extension tools execute it mechanically.",
             "MissionForge owns refs, workspace, permissions, schemas, and structural checks.",
             f"Research intensity is {request.research_intensity.value}: {intensity_profile.guidance}",
+            (
+                "High-quality contract bar: satisfy the required report sections, source-record provenance fields, "
+                "minimum source coverage, counterevidence, comparison matrix, and delta/gap artifacts declared in "
+                "product_contract/output_contract.json."
+            ),
         ],
         users_or_audience=[request.audience],
         required_outputs=[
@@ -453,6 +462,30 @@ def _task_contract(
                 clause_id="dr-accept-delta",
                 text="The delta artifact should compare against previous run refs when supplied, or state that this is a baseline.",
                 refs=[MANUAL_REF, PRODUCT_REQUEST_REF],
+            ),
+            ContractClause(
+                clause_id="dr-accept-methodology",
+                text=(
+                    "The final report should expose scope, method, evidence base, major research lines, a comparison matrix, "
+                    "counterevidence/failure modes, research delta, source gaps, and references as first-class sections."
+                ),
+                refs=[MANUAL_REF, OUTPUT_CONTRACT_REF],
+            ),
+            ContractClause(
+                clause_id="dr-accept-evidence-provenance",
+                text=(
+                    "Source records should carry enough provenance for audit: title, type, year, accessed_at, "
+                    "evidence_note, evidence_strength, and a stable locator where available."
+                ),
+                refs=[SOURCE_PACKET_REF, OUTPUT_CONTRACT_REF],
+            ),
+            ContractClause(
+                clause_id="dr-accept-counterevidence",
+                text=(
+                    "The report should identify competing schools, negative evidence, weak claims, failure modes, "
+                    "or missing artifact evidence instead of only listing positive results."
+                ),
+                refs=[MANUAL_REF, SOURCE_PACKET_REF, SOURCE_COLLECTION_REPORT_REF],
             ),
         ],
         hard_constraints=[
@@ -566,7 +599,7 @@ def _live_extension_source_packet(
             "source_acquisition": "pi_extensions",
             "query_expansion": "search_intent",
             "ranking_authority": "researcher_piworker",
-            "tool_surface": ["web", "code_search"],
+            "tool_surface": _extension_tool_surface(_live_extension_grants(request)),
         },
         "source_records": [],
         "citation_contract": _citation_contract(),
@@ -604,7 +637,7 @@ def _live_extension_source_collection_report(
         "source_record_refs": [],
         "extension_lock_ref": extension_lock_ref,
         "extension_grant_ids": [grant.grant_id for grant in extension_grants],
-        "tool_surface": [grant.capability.value for grant in extension_grants],
+        "tool_surface": _extension_tool_surface(extension_grants),
         "limitations": [
             "No Python collector was used in the live extension path.",
             "Evidence gathering is delegated to loaded Pi extensions and the researcher worker.",
@@ -633,31 +666,28 @@ def _extension_lock_for_source_mode(
     )
 
 
+def _extension_tool_surface(extension_grants: list[ExtensionGrant]) -> list[str]:
+    return sorted({grant.capability.value for grant in extension_grants})
+
+
 def _live_extension_grants(request: AcademicResearchRequest) -> list[ExtensionGrant]:
-    return [
-        ExtensionGrant(
-            grant_id=f"deepresearch-{request.request_id}-web",
-            package="npm:pi-web-access",
-            version_spec="0.10.7",
-            capability=ExtensionCapability.WEB,
-            requires_network=True,
-            adapter_mode=ExtensionAdapterMode.UNTRUSTED_PI_EXTENSION,
-            metadata={"purpose": "web_search_and_fetch"},
-        ),
-        ExtensionGrant(
-            grant_id=f"deepresearch-{request.request_id}-code-search",
-            package="npm:@juicesharp/rpiv-web-tools",
-            version_spec="0.1.0",
-            capability=ExtensionCapability.CODE_SEARCH,
-            requires_network=True,
-            adapter_mode=ExtensionAdapterMode.UNTRUSTED_PI_EXTENSION,
-            metadata={"purpose": "github_and_repository_search"},
-        ),
-    ]
+    return academic_deepresearch_extension_grants(request)
 
 
 def _manual_text(request: AcademicResearchRequest) -> str:
     profile = research_intensity_profile(request.research_intensity)
+    section_specs = research_report_section_specs(request.language)
+    references_heading = next(
+        section["title"] for section in section_specs if section["section_id"] == "references"
+    )
+    required_sections = "\n".join(
+        f"- `## {section['title']}` (`section_id`: `{section['section_id']}`): {section['purpose']}"
+        for section in section_specs
+    )
+    quality_dimensions = "\n".join(
+        f"- `{item['dimension_id']}`: {item['standard']}" for item in deepresearch_quality_dimensions()
+    )
+    required_source_fields = "\n".join(f"- `{field_name}`" for field_name in profile.required_source_record_fields)
     return f"""# Academic Deep Research Manual
 
 You are the single researcher for this Phase 1 DeepResearch run.
@@ -680,6 +710,29 @@ Own the semantic work:
 - cite source identifiers from `sources/source_packet.json` in material claims;
 - write concise artifacts for an R&D audience.
 
+High-quality contract bar:
+
+- Minimum source records: `{profile.min_source_records}`.
+- Minimum distinct source types: `{profile.min_distinct_source_types}`.
+- Minimum recent source records from 2023 or later: `{profile.min_recent_source_records}`.
+- Judge-facing quality dimensions:
+
+{quality_dimensions}
+
+- Include a comparison matrix that lets the reader compare methods, tasks,
+  benchmarks, evidence strength, reproducibility, and limitations.
+- Include counterevidence, weak evidence, failure modes, and competing approaches
+  when the topic has them. If none are found, say what you searched and why the
+  gap remains.
+- Treat source provenance as part of the evidence, not decoration.
+
+Required `reports/final_report.md` sections:
+
+{required_sections}
+
+Use the localized titles above when writing the report. The stable
+`section_id` values are contract identifiers, not user-facing headings.
+
 Do not claim final product acceptance. This worker produces candidate report
 artifacts for structural checks and independent judging. Do not label the
 `reports/final_report.md` title as a draft; acceptance status belongs only in
@@ -694,10 +747,14 @@ Evidence and citation contract:
 - Each source record must contain `source_id`, `title`, `source_type`, and at
   least one locator such as `url`, `doi`, `source_ref`, `github_repo`, or
   `arxiv_id`.
+- Source records should include these provenance fields when available:
+
+{required_source_fields}
+
 - `reports/final_report.md` must cite material claims as `[S1]` or
   `[S1, S2]`.
-- `reports/final_report.md` must include a `## References` section listing the
-  cited source ids with title and locator.
+- `reports/final_report.md` must include a `## {references_heading}` section
+  listing the cited source ids with title and locator.
 - `reports/evidence_index.md` must map every source id in
   `sources/source_packet.json` using the same `[S1]` citation marker.
 - If evidence is incomplete, keep the source record factual and explain the gap
@@ -714,6 +771,7 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
         "language": request.language,
         "research_intensity": request.research_intensity.value,
         "research_intensity_profile": profile.to_dict(),
+        "quality_contract": _quality_contract(profile, request.language),
         "expected_draft_refs": list(EXPECTED_DRAFT_REFS),
         "expected_worker_output_refs": list(EXPECTED_WORKER_OUTPUT_REFS),
         "source_packet_ref": SOURCE_PACKET_REF,
@@ -725,6 +783,8 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
             "evidence_index.md maps source identifiers to source refs.",
             "research_delta.md is required even for baseline runs.",
             "source_gaps.md should make missing evidence explicit.",
+            "final_report.md should include the required report sections in quality_contract.report_sections.",
+            "source_packet.json should meet the provenance and coverage thresholds in quality_contract.source_packet_minimums.",
             "Do not label the final_report.md title as draft; final status is carried by judge/final package artifacts.",
         ],
     }
@@ -736,6 +796,7 @@ def _structural_check_policy() -> dict[str, Any]:
         "required_non_empty_refs": list(EXPECTED_DRAFT_REFS),
         "required_source_packet_ref": SOURCE_PACKET_REF,
         "citation_contract": _citation_contract(),
+        "quality_contract_ref": OUTPUT_CONTRACT_REF,
         "status_on_pass": "draft_ready",
     }
 
@@ -757,6 +818,9 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "source_ref": "sources/fixtures/compiler_autotuning_seed.json",
                 "year": 2024,
                 "url": "https://example.invalid/missionforge/fixture/compiler-autotuning",
+                "accessed_at": "fixture",
+                "evidence_note": "Fixture source used only to validate package shape.",
+                "evidence_strength": "fixture",
                 "notes": "Fixture source used only to validate package shape.",
             },
             {
@@ -766,6 +830,9 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "source_ref": "sources/fixtures/kernel_generation_seed.json",
                 "year": 2024,
                 "url": "https://example.invalid/missionforge/fixture/kernel-generation",
+                "accessed_at": "fixture",
+                "evidence_note": "Fixture source used only to validate package shape.",
+                "evidence_strength": "fixture",
                 "notes": "Fixture source used only to validate package shape.",
             },
             {
@@ -775,6 +842,9 @@ def _fixture_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
                 "source_ref": "sources/fixtures/harness_engineering_seed.json",
                 "year": 2024,
                 "url": "https://example.invalid/missionforge/fixture/harness-engineering",
+                "accessed_at": "fixture",
+                "evidence_note": "Fixture source used only to validate package shape.",
+                "evidence_strength": "fixture",
                 "notes": "Fixture source used only to validate package shape.",
             },
         ],
@@ -791,7 +861,34 @@ def _citation_contract() -> dict[str, Any]:
         "source_id_format": "S[0-9]+",
         "citation_format": "[S1] or [S1, S2]",
         "required_final_report_section": "## References",
+        "allowed_final_report_sections": ["## References", "## 参考文献"],
         "authority": "source_packet.source_records",
+    }
+
+
+def _quality_contract(profile, language: str) -> dict[str, Any]:
+    section_specs = research_report_section_specs(language)
+    return {
+        "schema_version": "missionforge_deepresearch.quality_contract.v1",
+        "authority": "product_contract/output_contract.json",
+        "display_language": language,
+        "required_report_sections": list(profile.required_report_sections),
+        "report_sections": section_specs,
+        "source_packet_minimums": {
+            "min_source_records": profile.min_source_records,
+            "min_distinct_source_types": profile.min_distinct_source_types,
+            "min_recent_source_records": profile.min_recent_source_records,
+            "recent_year_min": 2023,
+            "required_source_record_fields": list(profile.required_source_record_fields),
+        },
+        "required_report_elements": [item["section_id"] for item in section_specs],
+        "quality_dimensions": deepresearch_quality_dimensions(),
+        "judge_guidance": [
+            "Reject or request repair if the draft only lists sources without synthesis.",
+            "Reject or request repair if weak evidence is promoted to strong conclusions.",
+            "Reject or request repair if current findings are not separated from historical background.",
+            "Reject or request repair if source gaps are hidden instead of explicitly recorded.",
+        ],
     }
 
 

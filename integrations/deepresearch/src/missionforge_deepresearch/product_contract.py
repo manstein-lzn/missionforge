@@ -23,6 +23,99 @@ RUN_RESULT_SCHEMA_VERSION = "missionforge_deepresearch.run_result.v1"
 REVIEWED_RUN_RESULT_SCHEMA_VERSION = "missionforge_deepresearch.reviewed_run_result.v1"
 
 
+_REPORT_SECTION_DEFINITIONS = [
+    {
+        "section_id": "scope_and_method",
+        "canonical_title": "Scope And Method",
+        "localized_titles": {"zh": "范围与方法"},
+        "aliases": ["Scope & Method", "方法与范围"],
+        "purpose": "Define the research question, time window, method, source strategy, and limits of the run.",
+    },
+    {
+        "section_id": "evidence_base",
+        "canonical_title": "Evidence Base",
+        "localized_titles": {"zh": "证据基础"},
+        "aliases": ["Evidence"],
+        "purpose": "Summarize source coverage, source types, recentness, and evidence strength before drawing conclusions.",
+    },
+    {
+        "section_id": "major_lines_of_work",
+        "canonical_title": "Major Lines Of Work",
+        "localized_titles": {"zh": "主要研究路线"},
+        "aliases": ["Research Lines", "主要路线"],
+        "purpose": "Organize the field into major technical schools, systems, papers, repositories, or benchmarks.",
+    },
+    {
+        "section_id": "comparison_matrix",
+        "canonical_title": "Comparison Matrix",
+        "localized_titles": {"zh": "对比矩阵"},
+        "aliases": ["Comparison Table", "对比表"],
+        "purpose": "Compare methods by task, assumptions, benchmarks, reproducibility, evidence strength, and limitations.",
+    },
+    {
+        "section_id": "counterevidence_and_failure_modes",
+        "canonical_title": "Counterevidence And Failure Modes",
+        "localized_titles": {"zh": "反证与失败模式"},
+        "aliases": ["Counterevidence", "Failure Modes", "反证", "失败模式"],
+        "purpose": "Surface negative evidence, weak claims, failed assumptions, competing interpretations, and risks.",
+    },
+    {
+        "section_id": "research_delta",
+        "canonical_title": "Research Delta",
+        "localized_titles": {"zh": "研究变化"},
+        "aliases": ["Delta", "变化分析"],
+        "purpose": "Compare with previous run refs when present, or clearly mark the run as a baseline.",
+    },
+    {
+        "section_id": "source_gaps",
+        "canonical_title": "Source Gaps",
+        "localized_titles": {"zh": "证据缺口"},
+        "aliases": ["Evidence Gaps", "信息缺口"],
+        "purpose": "Record missing sources, unresolved questions, inaccessible evidence, and follow-up searches.",
+    },
+    {
+        "section_id": "references",
+        "canonical_title": "References",
+        "localized_titles": {"zh": "参考文献"},
+        "aliases": ["Bibliography"],
+        "purpose": "List every cited source id with title and a stable locator.",
+    },
+]
+
+_QUALITY_DIMENSIONS = [
+    {
+        "dimension_id": "coverage",
+        "standard": "Cover the major schools of work, not only the first sources found.",
+        "user_visible_value": "broader source coverage",
+    },
+    {
+        "dimension_id": "freshness",
+        "standard": "Separate recent findings from historical background and stale claims.",
+        "user_visible_value": "fewer outdated conclusions",
+    },
+    {
+        "dimension_id": "citation_integrity",
+        "standard": "Tie material claims to source ids and expose source provenance.",
+        "user_visible_value": "stronger citations",
+    },
+    {
+        "dimension_id": "synthesis",
+        "standard": "Explain relationships, tradeoffs, and disagreement instead of listing papers.",
+        "user_visible_value": "clearer field understanding",
+    },
+    {
+        "dimension_id": "delta",
+        "standard": "Compare with previous run refs or explicitly state that the run is a baseline.",
+        "user_visible_value": "clearer changes over time",
+    },
+    {
+        "dimension_id": "gaps_and_counterevidence",
+        "standard": "Expose source gaps, weak evidence, counterevidence, and failure modes.",
+        "user_visible_value": "less overclaiming",
+    },
+]
+
+
 class ResearchIntensity(StrEnum):
     """User-facing research depth budget for DeepResearch runs."""
 
@@ -54,6 +147,11 @@ class ResearchIntensityProfile:
     intensity: ResearchIntensity
     max_sources: int
     max_search_queries: int
+    min_source_records: int
+    min_distinct_source_types: int
+    min_recent_source_records: int
+    required_report_sections: list[str]
+    required_source_record_fields: list[str]
     default_review_rounds: int
     max_review_rounds: int
     search_intent_max_turns: int
@@ -69,6 +167,11 @@ class ResearchIntensityProfile:
             "intensity": self.intensity.value,
             "max_sources": self.max_sources,
             "max_search_queries": self.max_search_queries,
+            "min_source_records": self.min_source_records,
+            "min_distinct_source_types": self.min_distinct_source_types,
+            "min_recent_source_records": self.min_recent_source_records,
+            "required_report_sections": list(self.required_report_sections),
+            "required_source_record_fields": list(self.required_source_record_fields),
             "default_review_rounds": self.default_review_rounds,
             "max_review_rounds": self.max_review_rounds,
             "search_intent_max_turns": self.search_intent_max_turns,
@@ -85,11 +188,26 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
     """Return the product-layer budget preset for a research intensity."""
 
     intensity = require_enum(value, ResearchIntensity, "research_intensity")
+    required_report_sections = [item["canonical_title"] for item in _REPORT_SECTION_DEFINITIONS]
+    required_source_record_fields = [
+        "source_id",
+        "title",
+        "source_type",
+        "year",
+        "accessed_at",
+        "evidence_note",
+        "evidence_strength",
+    ]
     profiles = {
         ResearchIntensity.QUICK: ResearchIntensityProfile(
             intensity=ResearchIntensity.QUICK,
             max_sources=10,
             max_search_queries=3,
+            min_source_records=3,
+            min_distinct_source_types=1,
+            min_recent_source_records=1,
+            required_report_sections=required_report_sections,
+            required_source_record_fields=required_source_record_fields,
             default_review_rounds=1,
             max_review_rounds=1,
             search_intent_max_turns=3,
@@ -107,6 +225,11 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
             intensity=ResearchIntensity.STANDARD,
             max_sources=24,
             max_search_queries=6,
+            min_source_records=8,
+            min_distinct_source_types=2,
+            min_recent_source_records=3,
+            required_report_sections=required_report_sections,
+            required_source_record_fields=required_source_record_fields,
             default_review_rounds=2,
             max_review_rounds=2,
             search_intent_max_turns=4,
@@ -124,6 +247,11 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
             intensity=ResearchIntensity.INTENSIVE,
             max_sources=48,
             max_search_queries=12,
+            min_source_records=16,
+            min_distinct_source_types=3,
+            min_recent_source_records=6,
+            required_report_sections=required_report_sections,
+            required_source_record_fields=required_source_record_fields,
             default_review_rounds=3,
             max_review_rounds=4,
             search_intent_max_turns=6,
@@ -140,6 +268,46 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
         ),
     }
     return profiles[intensity]
+
+
+def research_report_section_specs(language: str = "en") -> list[dict[str, Any]]:
+    """Return stable section ids with language-specific display titles."""
+
+    language_key = _language_key(language)
+    specs: list[dict[str, Any]] = []
+    for item in _REPORT_SECTION_DEFINITIONS:
+        localized_titles = item["localized_titles"]
+        title = localized_titles.get(language_key, item["canonical_title"])
+        aliases = _dedupe_strings(
+            [
+                item["canonical_title"],
+                *localized_titles.values(),
+                *item["aliases"],
+            ]
+        )
+        specs.append(
+            {
+                "section_id": item["section_id"],
+                "title": title,
+                "canonical_title": item["canonical_title"],
+                "aliases": aliases,
+                "required": True,
+                "purpose": item["purpose"],
+            }
+        )
+    return specs
+
+
+def research_report_section_titles(language: str = "en") -> list[str]:
+    """Return the expected report headings for a language."""
+
+    return [item["title"] for item in research_report_section_specs(language)]
+
+
+def deepresearch_quality_dimensions() -> list[dict[str, str]]:
+    """Return product-level DeepResearch quality dimensions for worker and judge prompts."""
+
+    return [dict(item) for item in _QUALITY_DIMENSIONS]
 
 
 @dataclass(frozen=True)
@@ -510,3 +678,19 @@ def _validate_unique_refs(values: list[str], field_name: str) -> None:
     refs = _ref_list(values, field_name)
     if len(refs) != len(set(refs)):
         raise ContractValidationError(f"{field_name} must not contain duplicate refs")
+
+
+def _language_key(language: str) -> str:
+    value = str(language).strip().lower()
+    return "zh" if value.startswith("zh") else "en"
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if text and text not in seen:
+            result.append(text)
+            seen.add(text)
+    return result

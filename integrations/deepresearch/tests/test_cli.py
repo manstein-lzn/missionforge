@@ -10,6 +10,30 @@ from missionforge_deepresearch.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_academic_minimal_run_prints_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            with patch("builtins.print") as print_mock:
+                exit_code = main(
+                    [
+                        "academic",
+                        "minimal-run",
+                        "--topic",
+                        "compiler autotuning survey",
+                        "--request-id",
+                        "minimal-cli-demo",
+                        "--workspace",
+                        str(root),
+                    ]
+                )
+
+            payload = json.loads(print_mock.call_args.args[0])
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["status"], "draft_ready")
+            self.assertEqual(payload["result_ref"], "runs/minimal-cli-demo/packages/deepresearch_minimal_result.json")
+            self.assertTrue((root / payload["result_ref"]).exists())
+
     def test_academic_single_agent_run_prints_run_result(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -33,6 +57,34 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["status"], "draft_ready")
             self.assertEqual(payload["run_result_ref"], "runs/cli-demo/packages/deepresearch_run_result.json")
             self.assertTrue((root / payload["run_result_ref"]).exists())
+
+    def test_academic_minimal_loop_run_prints_loop_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            with patch("builtins.print") as print_mock:
+                exit_code = main(
+                    [
+                        "academic",
+                        "minimal-loop-run",
+                        "--topic",
+                        "compiler autotuning survey",
+                        "--request-id",
+                        "minimal-loop-cli-demo",
+                        "--workspace",
+                        str(root),
+                        "--reviewer-mode",
+                        "fixture",
+                        "--review-rounds",
+                        "1",
+                    ]
+                )
+
+            payload = json.loads(print_mock.call_args.args[0])
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["status"], "accepted")
+            self.assertEqual(payload["result_ref"], "runs/minimal-loop-cli-demo/packages/deepresearch_minimal_loop_result.json")
+            self.assertTrue((root / payload["result_ref"]).exists())
 
     def test_academic_tool_healthcheck_prints_healthcheck_result(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

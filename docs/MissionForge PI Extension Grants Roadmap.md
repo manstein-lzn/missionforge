@@ -124,7 +124,7 @@ MissionForge 的 extension 机制只做四件事：
 @dataclass(frozen=True)
 class ExtensionGrant:
     grant_id: str
-    package: str              # 例如 "npm:pi-web-access"
+    package: str              # 例如 "npm:pi-web-access" 或 "local:extensions/pi-academic-sources"
     version_spec: str         # 声明期可以是范围，编译后必须精确
     capability: str           # 例如 "web", "mcp", "lsp", "subagent", "memory"
     config_ref: str | None = None
@@ -207,8 +207,8 @@ python -m missionforge.adapters.cli extensions compile \
 编译阶段做几件事：
 
 1. 读取 `PermissionManifest.tool_grants`；
-2. 解析 `npm:<package>`；
-3. 安装对应包；
+2. 解析 `npm:<package>` 或 `local:<workspace/ref>`；
+3. 安装或复制对应包；
 4. 锁定精确版本；
 5. 记录 integrity / resolved URL；
 6. 生成 `extension_lock.json`；
@@ -216,6 +216,13 @@ python -m missionforge.adapters.cli extensions compile \
 
 默认编译模式只校验已安装扩展。需要真实安装时，调用方必须显式选择
 `--mode install`，并让安装行为落在受控的安装根目录里。
+
+当前实现支持两种包来源：
+
+- `npm:`：写入受控安装根目录的 `package.json`，执行 `npm install
+  --ignore-scripts --package-lock=false`；
+- `local:`：从当前工程工作区复制本地 Pi extension 包到安装根目录，
+  用于尚未发布到 npm 的产品内置扩展。
 
 #### extension_lock.json 示例
 

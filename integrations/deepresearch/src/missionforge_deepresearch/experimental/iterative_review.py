@@ -24,7 +24,7 @@ from missionforge.piworker_runtime import PiWorkerCallAdapter, run_piworker_call
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from missionforge.task_contract import NetworkPolicy, PermissionManifest
 
-from .compiler import (
+from ..compiler import (
     EXTENSION_LOCK_REF,
     EXPECTED_WORKER_OUTPUT_REFS,
     JUDGE_RUBRIC_REF,
@@ -40,7 +40,7 @@ from .compiler import (
     WORKSPACE_POLICY_REF,
     load_deepresearch_task_contract,
 )
-from .product_contract import (
+from ..product_contract import (
     AcademicResearchRequest,
     DeepResearchReviewedRunResult,
     DeepResearchReviewedRunStatus,
@@ -48,7 +48,7 @@ from .product_contract import (
     DeepResearchRunStatus,
     research_intensity_profile,
 )
-from .runtime import (
+from ..runtime import (
     RESEARCHER_MODES,
     RESEARCHER_CALL_REF,
     RESEARCHER_CALL_RESULT_REF,
@@ -60,8 +60,8 @@ from .runtime import (
     run_deepresearch_academic_single_agent,
     run_structural_checks,
 )
-from .source_collector import AcademicSourceCollectionConfig
-from .workspace import read_json_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
+from ..source_collector import AcademicSourceCollectionConfig
+from ..workspace import read_json_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
 
 
 REVIEWER_MODES = {"fixture", "piworker"}
@@ -315,7 +315,7 @@ def run_deepresearch_academic_reviewed_judged(
 ) -> Any:
     """Run reviewer-guided updates, then submit the revised draft to the independent judge."""
 
-    from .judging import judge_deepresearch_run
+    from ..judging import judge_deepresearch_run
 
     reviewed = run_deepresearch_academic_reviewed(
         request,
@@ -720,7 +720,7 @@ def _write_reviewed_result(
 
 
 def _compile_result_from_run(run_result: DeepResearchRunResult) -> Any:
-    from .compiler import DeepResearchTaskContractCompileResult
+    from ..compiler import DeepResearchTaskContractCompileResult
 
     return DeepResearchTaskContractCompileResult(
         request_id=run_result.request_id,

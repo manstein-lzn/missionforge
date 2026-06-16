@@ -1,0 +1,14 @@
+{
+  "name": "@missionforge/pi-academic-sources",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": "./index.js",
+  "description": "Pi extension exposing normalized academic source and repository search tools.",
+  "pi": {
+    "extensions": [
+      "index.js"
+    ]
+  }
+}

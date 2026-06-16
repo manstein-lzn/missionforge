@@ -12,11 +12,11 @@ from urllib.request import Request, urlopen
 
 from missionforge.contracts import require_mapping
 
-from .compiler import _live_extension_grants
-from .product_contract import AcademicResearchRequest
-from .search_intent import AcademicSearchIntent, SEARCH_INTENT_REF
-from .source_collector import AcademicSourceCollectionConfig, SourceCollectionError, collect_live_academic_sources
-from .workspace import write_json_ref, write_text_ref
+from ..compiler import _live_extension_grants
+from ..product_contract import AcademicResearchRequest
+from ..search_intent import AcademicSearchIntent, SEARCH_INTENT_REF
+from ..source_collector import AcademicSourceCollectionConfig, SourceCollectionError, collect_live_academic_sources
+from ..workspace import write_json_ref, write_text_ref
 
 
 TOOL_HEALTHCHECK_SCHEMA_VERSION = "missionforge_deepresearch.tool_healthcheck.v1"
@@ -74,8 +74,8 @@ def run_deepresearch_tool_healthcheck(
         timeout=cfg.provider_timeout_seconds,
         fetch_json=fetch_github_json or _fetch_json,
     )
-    npm_records = [
-        _check_npm_package(
+    extension_records = [
+        _check_extension_package(
             grant.package,
             grant.version_spec,
             timeout=cfg.provider_timeout_seconds,
@@ -83,6 +83,7 @@ def run_deepresearch_tool_healthcheck(
         )
         for grant in _live_extension_grants(request)
     ]
+    npm_records = [record for record in extension_records if record.get("package", "").startswith("npm:")]
     scholar_record = {
         "surface": "google_scholar",
         "status": "unsupported",
@@ -99,9 +100,10 @@ def run_deepresearch_tool_healthcheck(
         "search_queries": list(effective_search_intent.queries),
         "result_ref": f"{run_ref}/{TOOL_HEALTHCHECK_RESULT_REF}",
         "report_ref": f"{run_ref}/{TOOL_HEALTHCHECK_REPORT_REF}",
-        "status": _overall_status([*academic_records, github_record, *npm_records, scholar_record]),
+        "status": _overall_status([*academic_records, github_record, *extension_records, scholar_record]),
         "academic_provider_checks": academic_records,
         "github_check": github_record,
+        "extension_package_checks": extension_records,
         "npm_extension_package_checks": npm_records,
         "scholar_check": scholar_record,
         "notes": [
@@ -223,6 +225,42 @@ def _check_github_search(query: str, *, timeout: float, fetch_json: FetchJson) -
         }
 
 
+def _check_extension_package(package: str, version: str, *, timeout: float, fetch_json: FetchJson) -> dict[str, Any]:
+    if package.startswith("local:"):
+        return _check_local_package(package, version)
+    if package.startswith("npm:"):
+        return _check_npm_package(package, version, timeout=timeout, fetch_json=fetch_json)
+    return {
+        "surface": "extension_package",
+        "package": package,
+        "version_spec": version,
+        "status": "failed",
+        "error_type": "UnsupportedPackage",
+        "message": "Only local: and npm: extension packages are supported.",
+    }
+
+
+def _check_local_package(package: str, version: str) -> dict[str, Any]:
+    started = time.monotonic()
+    source_ref = package.split(":", 1)[1] if ":" in package else package
+    source_path = Path.cwd() / source_ref
+    package_json = source_path / "package.json"
+    has_entry = (source_path / "index.js").is_file() or (source_path / "index.ts").is_file()
+    status = "passed" if package_json.is_file() and has_entry else "failed"
+    record: dict[str, Any] = {
+        "surface": "local_extension_package",
+        "package": package,
+        "version_spec": version,
+        "status": status,
+        "duration_ms": _duration_ms(started),
+        "source_ref": source_ref,
+    }
+    if status == "failed":
+        record["error_type"] = "MissingLocalExtensionPackage"
+        record["message"] = "Local extension package must contain package.json and index.js or index.ts."
+    return record
+
+
 def _check_npm_package(package: str, version: str, *, timeout: float, fetch_json: FetchJson) -> dict[str, Any]:
     started = time.monotonic()
     package_name = package.split(":", 1)[1] if ":" in package else package
@@ -317,7 +355,8 @@ def _healthcheck_markdown(result: Mapping[str, Any]) -> str:
         if github.get("message"):
             lines.append(f"  - {github.get('error_type')}: {github.get('message')}")
     lines.extend(["", "## Pi Extension Packages", ""])
-    for record in result.get("npm_extension_package_checks", []):
+    extension_records = result.get("extension_package_checks", result.get("npm_extension_package_checks", []))
+    for record in extension_records:
         if isinstance(record, Mapping):
             lines.append(f"- {record.get('package')}@{record.get('version_spec')}: `{record.get('status')}`")
             if record.get("message"):

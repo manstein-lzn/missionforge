@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import hashlib
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -379,14 +380,17 @@ InstallExtension = Callable[[ExtensionGrant, Path], Mapping[str, Any]]
 
 
 def npm_install_extension(grant: ExtensionGrant, install_root: Path) -> Mapping[str, Any]:
-    """Install one npm extension into the declared install root.
+    """Install one extension into the declared install root.
 
-    This is intentionally thin: it creates the local package root if needed and
-    runs `npm install` with scripts disabled. Callers own the supply-chain risk.
+    This is intentionally thin. npm packages are installed with scripts
+    disabled. local packages are copied from the current working tree. Callers
+    own the supply-chain risk.
     """
 
     safe_install_root = Path(install_root)
     safe_install_root.mkdir(parents=True, exist_ok=True)
+    if grant.package.startswith("local:"):
+        return _copy_local_extension_package(grant, safe_install_root, Path.cwd())
     package_name = _package_name(grant.package)
     install_path = (
         safe_install_root / "node_modules" / package_name
@@ -449,7 +453,7 @@ def compile_extension_lock(
     workspace_path = Path(workspace_root)
     install_root = _resolve_workspace_ref(workspace_path, safe_install_root_ref)
     if mode == "install" and installer is npm_install_extension:
-        _install_declared_npm_extensions(permission_manifest.extension_grants, install_root)
+        _install_declared_extensions(permission_manifest.extension_grants, install_root, workspace_path)
         installer = None
     entries: list[ExtensionLockEntry] = []
     for grant in permission_manifest.extension_grants:
@@ -626,16 +630,23 @@ def _lock_entry_from_grant(
     )
 
 
+def _install_declared_extensions(grants: list[ExtensionGrant], install_root: Path, workspace_root: Path) -> None:
+    _install_declared_npm_extensions(grants, install_root)
+    _install_declared_local_extensions(grants, install_root, Path.cwd())
+
+
 def _install_declared_npm_extensions(grants: list[ExtensionGrant], install_root: Path) -> None:
     if not grants:
         return
     install_root.mkdir(parents=True, exist_ok=True)
-    package_json = install_root / "package.json"
     dependencies = {
         _package_name(grant.package): grant.version_spec
         for grant in grants
         if grant.package.startswith("npm:")
     }
+    if not dependencies:
+        return
+    package_json = install_root / "package.json"
     package_json.write_text(
         json.dumps(
             {
@@ -662,6 +673,40 @@ def _install_declared_npm_extensions(grants: list[ExtensionGrant], install_root:
         raise ContractValidationError(
             f"npm install failed for declared extensions with exit code {exc.returncode}"
         ) from exc
+
+
+def _install_declared_local_extensions(grants: list[ExtensionGrant], install_root: Path, workspace_root: Path) -> None:
+    for grant in grants:
+        if grant.package.startswith("local:"):
+            _copy_local_extension_package(grant, install_root, workspace_root)
+
+
+def _copy_local_extension_package(
+    grant: ExtensionGrant,
+    install_root: Path,
+    source_root: Path,
+) -> Mapping[str, Any]:
+    source_ref = validate_ref(grant.package[len("local:"):], "extension.local_package")
+    source_path = _resolve_workspace_ref(source_root, source_ref)
+    if not source_path.exists():
+        raise ContractValidationError(f"local extension source does not exist: {source_ref}")
+    package_name = _package_name(grant.package)
+    install_path = install_root / package_name
+    if install_path.exists():
+        if install_path.is_dir():
+            shutil.rmtree(install_path)
+        else:
+            install_path.unlink()
+    install_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_path.is_dir():
+        shutil.copytree(
+            source_path,
+            install_path,
+            ignore=shutil.ignore_patterns("node_modules", ".git", "__pycache__", "*.pyc"),
+        )
+    else:
+        shutil.copy2(source_path, install_path)
+    return {}
 
 
 def _grant_lock_mismatch(

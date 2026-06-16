@@ -6,18 +6,18 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from missionforge_deepresearch import (
+from missionforge_deepresearch.experimental import (
     DeepResearchQualityEvaluationResult,
     FixtureDirectBaselineAdapter,
+    FixtureQualityEvaluatorAdapter,
     load_deepresearch_quality_evaluation_result,
     run_deepresearch_quality_evaluation,
 )
-from missionforge_deepresearch.quality_evaluation import (
+from missionforge_deepresearch.experimental.quality_evaluation import (
     DIRECT_BASELINE_CALL_REF,
     DIRECT_BASELINE_STRUCTURAL_CHECK_REF,
     EVALUATION_REPORT_REF,
     EVALUATION_SCORECARD_REF,
-    FixtureQualityEvaluatorAdapter,
     _direct_baseline_permission_manifest,
 )
 

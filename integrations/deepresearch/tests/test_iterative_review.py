@@ -9,6 +9,8 @@ from missionforge.contracts import ContractValidationError
 from missionforge_deepresearch import (
     DeepResearchReviewedRunStatus,
     FixtureDeepResearchJudgeAdapter,
+)
+from missionforge_deepresearch.experimental import (
     FixturePeerReviewerAdapter,
     FixtureReviewedResearcherAdapter,
     load_deepresearch_reviewed_run_result,

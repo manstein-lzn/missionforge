@@ -12,9 +12,19 @@ This package intentionally starts small:
 - run structural checks over the expected draft files, structured source
   packet, and citation refs;
 - return `draft_ready`, not `accepted`.
-- optionally run paper-review-style update rounds before final judging;
-- run Phase 3 quality comparisons against a direct skill-like baseline when
-  requested.
+
+The primary source path lives directly under
+`missionforge_deepresearch`: contracts, compiler, runtime, evidence checks,
+source collection, search intent, and the independent judge. Phase-style
+diagnostics and larger workflows live under
+`missionforge_deepresearch.experimental`:
+
+- paper-review-style update rounds before final judging;
+- Phase 3 quality comparisons against a direct skill-like baseline;
+- live tool health checks.
+
+The CLI still exposes those experimental commands for convenience, but they are
+not part of the minimal DeepResearch runtime path.
 
 The default path remains offline fixture mode. Live mode declares extension
 grants, compiles an extension lock, and lets the researcher use mounted Pi
@@ -40,10 +50,79 @@ the preset when needed.
 
 Live runs use a thin install step in the declared extension root. By default
 the extension compiler verifies preinstalled packages; live DeepResearch passes
-an npm-based installer into that compile step so the lock is produced from the
-declared packages, not from a custom Python collector.
+an installer into that compile step so the lock is produced from declared
+`local:` and `npm:` packages, not from a custom Python collector.
+
+The academic live tool surface currently declares:
+
+- `local:extensions/pi-academic-sources`, which registers `academic_search`,
+  `academic_fetch`, `citation_lookup`, and `repo_search`;
+- `npm:pi-web-access`, for general web search/fetch;
+- `npm:@juicesharp/rpiv-web-tools`, for code and repository search.
+
+`pi-academic-sources` normalizes provider APIs for arXiv, OpenAlex, Semantic
+Scholar, Crossref, and GitHub. It is mechanical source acquisition glue, not a
+research planner or semantic ranker.
 
 Offline quick start:
+
+Minimal prompt-first path:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic minimal-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-minimal \
+  --workspace /tmp/mf-dr-minimal
+```
+
+`minimal-run` is the recommended shape for validating the product direction:
+Python freezes a small contract, writes a skill-like manual, calls one
+researcher PiWorker, and records boundary validation for files, source ids,
+citations, and required refs. Boundary validation is not semantic acceptance:
+the result separates `worker_status`, `boundary_status`, and the product-facing
+draft status. It intentionally avoids live collectors, review loops, quality
+A/B, and semantic route logic.
+
+Minimal live extension run:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic minimal-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-minimal-live \
+  --workspace /tmp/mf-dr-minimal-live \
+  --researcher-mode piworker \
+  --live-extension-mode \
+  --piworker-provider-config-source codex_current
+```
+
+`--live-extension-mode` keeps the same minimal orchestration shape. It declares
+Pi extension grants in the permission manifest, compiles them into
+`compiled/extension_lock.json`, and passes that lock to the PiWorker runtime.
+The researcher still decides how to search, triage, and synthesize.
+
+Minimal researcher-reviewer loop:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic minimal-loop-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-minimal-loop \
+  --workspace /tmp/mf-dr-minimal-loop \
+  --researcher-mode piworker \
+  --reviewer-mode piworker \
+  --review-rounds 2 \
+  --live-extension-mode \
+  --piworker-provider-config-source codex_current
+```
+
+`minimal-loop-run` adds one independent reviewer PiWorker role. The reviewer
+writes `reviews/review_round_N.json` with `accepted`, `continue`,
+`tool_blocked`, or `rejected`. Python only follows that decision and updates
+refs; it does not infer research gaps or search terms.
+
+Full Phase 1 path:
 
 ```bash
 PYTHONPATH=src:integrations/deepresearch/src \
@@ -201,6 +280,26 @@ Evidence and citation contract:
 - structural checks reject unknown citations or empty source records, but do
   not rank source importance.
 
+High-quality output contract:
+
+- `product_contract/output_contract.json` now carries a `quality_contract`
+  derived from `--research-intensity`.
+- The contract requires first-class report sections for scope/method, evidence
+  base, major lines of work, comparison matrix, counterevidence/failure modes,
+  research delta, source gaps, and references.
+- Report sections have stable `section_id` values plus localized display
+  titles. For example, a Chinese request can require `## 对比矩阵` while the
+  contract still records `section_id: comparison_matrix`.
+- The source packet declares mechanical minimums for source count, distinct
+  source types, recent sources, and provenance fields such as `accessed_at`,
+  `evidence_note`, and `evidence_strength`.
+- The same contract exposes judge-facing quality dimensions for coverage,
+  freshness, citation integrity, synthesis, delta clarity, and
+  gaps/counterevidence.
+- Structural checks enforce this shape mechanically. They do not decide which
+  sources are important or whether the synthesis is semantically good; that
+  remains the researcher and independent judge's responsibility.
+
 Tool healthcheck:
 
 ```bash
@@ -223,12 +322,12 @@ runs/{request_id}/health/tool_healthcheck.md
 ```
 
 It probes public academic indexes, GitHub repository search, and the declared
-npm Pi extension packages. Google Scholar is recorded as unsupported instead
-of scraped because it has no stable official API. This command checks whether
-the product's source-acquisition hands can produce structured records; it does
-not judge final research quality. If `--search-query` is omitted, the original
-topic is used as the only query; passing explicit queries is the recommended
-way to test whether the tools are usable independent of prompt-language noise.
+Pi extension packages. Google Scholar is recorded as unsupported instead of
+scraped because it has no stable official API. This command checks whether the
+product's source-acquisition hands can produce structured records; it does not
+judge final research quality. If `--search-query` is omitted, the original topic
+is used as the only query; passing explicit queries is the recommended way to
+test whether the tools are usable independent of prompt-language noise.
 
 Phase 3 quality comparison:
 

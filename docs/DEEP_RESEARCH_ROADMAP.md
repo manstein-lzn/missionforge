@@ -122,7 +122,8 @@ The source layer is the product's hands.
 Prepare it as a bounded tool surface, not as hidden research intelligence:
 
 - Pi extensions for web search, code search, fetch, and repository access;
-- academic search APIs and paper indexes;
+- a Pi academic source extension for arXiv, OpenAlex, Semantic Scholar,
+  Crossref, and GitHub repository metadata;
 - code repositories;
 - benchmark and dataset sources;
 - web fetch for allowed source URLs;
@@ -132,6 +133,11 @@ Prepare it as a bounded tool surface, not as hidden research intelligence:
 Provider-specific query syntax adaptation is allowed as mechanical glue.
 Domain-specific fallback terms are not allowed. If a topic is hard to collect,
 the agent should report source gaps and propose follow-up searches.
+
+Current live academic runs declare `local:extensions/pi-academic-sources`
+alongside the existing web/code-search Pi packages. That local extension
+registers `academic_search`, `academic_fetch`, `citation_lookup`, and
+`repo_search`; PiWorker decides which queries and follow-up fetches to run.
 
 The structured evidence sink is `sources/source_packet.json`. The researcher
 may freely explore with authorized tools, but must settle sources into
@@ -167,6 +173,25 @@ Current implementation:
 
 - `integrations/deepresearch` contains a compact academic request contract,
   compiler, fixture researcher adapter, structural checks, CLI, and tests.
+- `academic minimal-run` is the prompt-first reference path. It keeps Python to
+  boundary work only: write a small contract/manual/permission/output contract,
+  call one PiWorker, and record boundary validation for file/source/citation
+  shape.
+- `academic minimal-run --live-extension-mode` declares Pi extension grants,
+  compiles them into `compiled/extension_lock.json`, and passes that lock to the
+  PiWorker runtime. Python does not precollect sources or choose search terms.
+- `academic minimal-loop-run` adds the smallest research loop: researcher
+  PiWorker writes/updates the evidence and report refs, reviewer PiWorker writes
+  `reviews/review_round_N.json`, and Python only follows
+  `accepted|continue|tool_blocked|rejected`.
+- Minimal results separate `worker_status`, `boundary_status`, and the
+  product-facing draft status. Boundary validation is not semantic acceptance;
+  it should block only missing core artifacts, malformed source packets, or
+  citations to unknown sources.
+- The primary runtime modules stay directly under `missionforge_deepresearch`.
+  Stage-specific diagnostics and larger workflows live under
+  `missionforge_deepresearch.experimental` so the main path remains readable:
+  quality evaluation, reviewer-guided iteration, and tool health checks.
 - The default run produces `draft_ready`, never `accepted`.
 - The default mode is fixture source collection and fixture researcher.
 - `research_intensity` is part of the academic request contract and is exposed
@@ -174,6 +199,15 @@ Current implementation:
 - Structural checks now require a non-empty `sources/source_packet.json`,
   source ids in `[S1]` form, a `## References` section, and final-report
   citations that resolve to source packet records.
+- The product output contract now includes a mechanical high-quality contract:
+  required report sections, source-count/source-type/recentness thresholds, and
+  source provenance fields. These checks reject overly thin report shapes
+  without ranking source importance or performing semantic research judgment in
+  Python.
+- The high-quality contract uses stable section ids, localized report headings,
+  and shared worker/judge quality dimensions. This keeps product output
+  requirements explicit without turning MissionForge into a deterministic
+  research expert.
 - Live source collection is available through `--source-mode live`, but remains
   a bounded source tool, not a Python research engine.
 - There is no independent judge or multi-agent split in Phase 1.
@@ -194,6 +228,8 @@ Current implementation:
 - `--source-mode live --live-extension-mode` compiles declared extension grants
   into `compiled/extension_lock.json`, writes `sources/source_packet.json`, and
   records acquisition diagnostics in `sources/source_collection_report.json`.
+- The live tool surface includes the local `pi-academic-sources` extension for
+  normalized academic provider access, plus web and code-search Pi packages.
 - `--search-intent-mode none` preserves the original topic as the only query.
 - `--search-intent-mode external` executes user- or product-supplied queries.
 - `--search-intent-mode piworker` asks a PiWorker authoring node to write the
@@ -296,7 +332,7 @@ Exit criteria:
 
 - probe public academic indexes separately;
 - probe GitHub repository search separately;
-- verify that declared npm Pi extension packages are reachable;
+- verify that declared Pi extension packages are reachable;
 - record Google Scholar as unsupported unless a stable product-grade provider
   is configured;
 - write refs-first healthcheck JSON and markdown artifacts.
@@ -304,7 +340,7 @@ Exit criteria:
 Current implementation:
 
 - `academic tool-healthcheck` probes Semantic Scholar, Crossref, OpenAlex,
-  arXiv, GitHub public repository search, and the declared npm Pi extension
+  arXiv, GitHub public repository search, and the declared Pi extension
   packages.
 - The command writes `health/tool_healthcheck.json` and
   `health/tool_healthcheck.md` under the run workspace.

@@ -22,7 +22,7 @@ from missionforge.piworker_runtime import PiWorkerCallAdapter, run_piworker_call
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from missionforge.task_contract import NetworkPolicy, PermissionManifest
 
-from .compiler import (
+from ..compiler import (
     EXPECTED_DRAFT_REFS,
     EXTENSION_LOCK_REF,
     OUTPUT_CONTRACT_REF,
@@ -34,14 +34,14 @@ from .compiler import (
     TASK_CONTRACT_REF,
     WORKSPACE_POLICY_REF,
 )
-from .product_contract import AcademicResearchRequest, DeepResearchRunResult
-from .product_contract import DeepResearchRunStatus
-from .runtime import (
+from ..product_contract import AcademicResearchRequest, DeepResearchRunResult
+from ..product_contract import DeepResearchRunStatus
+from ..runtime import (
     run_deepresearch_academic_single_agent,
 )
-from .search_intent import SEARCH_INTENT_REF
-from .source_collector import AcademicSourceCollectionConfig
-from .workspace import read_json_ref, read_text_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
+from ..search_intent import SEARCH_INTENT_REF
+from ..source_collector import AcademicSourceCollectionConfig
+from ..workspace import read_json_ref, read_text_ref, ref_is_non_empty_file, write_json_ref, write_text_ref
 
 
 QUALITY_EVALUATION_RESULT_SCHEMA_VERSION = "missionforge_deepresearch.quality_evaluation_result.v1"
