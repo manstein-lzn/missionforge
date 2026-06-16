@@ -214,6 +214,12 @@ class RuntimeTests(unittest.TestCase):
                                 "url": "https://arxiv.org/abs/2401.00001",
                                 "arxiv_id": "2401.00001",
                             },
+                        },
+                        {
+                            "source_id": "S2",
+                            "title": "External source ref source",
+                            "source_type": "official_documentation",
+                            "source_ref": "https://tvm.apache.org/docs/v0.16.0/how_to/tune_with_autoscheduler/tune_network_cuda.html",
                         }
                     ],
                 },
@@ -221,9 +227,15 @@ class RuntimeTests(unittest.TestCase):
             write_text_ref(
                 root,
                 "reports/final_report.md",
-                "# Report\n\nClaim [S1].\n\n## References\n\n- [S1] Nested locator source. https://arxiv.org/abs/2401.00001\n",
+                (
+                    "# Report\n\n"
+                    "Claim [S1, S2].\n\n"
+                    "## References\n\n"
+                    "- [S1] Nested locator source. https://arxiv.org/abs/2401.00001\n"
+                    "- [S2] External source ref source. https://tvm.apache.org/docs/v0.16.0/how_to/tune_with_autoscheduler/tune_network_cuda.html\n"
+                ),
             )
-            write_text_ref(root, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Nested locator source.\n")
+            write_text_ref(root, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Nested locator source.\n- [S2] External source ref source.\n")
             write_text_ref(root, "reports/research_delta.md", "# Delta\n\nBaseline.\n")
             write_text_ref(root, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
             write_text_ref(root, "reports/source_gaps.md", "# Source Gaps\n\nNone.\n")
