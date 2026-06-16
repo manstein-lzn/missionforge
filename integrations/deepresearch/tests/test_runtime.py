@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole
+from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallRole
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from missionforge_deepresearch import (
     DeepResearchRunStatus,
@@ -19,6 +19,7 @@ from missionforge_deepresearch.runtime import (
     RESEARCHER_EXECUTION_REPORT_REF,
     RESEARCHER_METRICS_REF,
     FixtureAcademicResearcherAdapter,
+    run_structural_checks,
 )
 from missionforge_deepresearch.search_intent import FixtureSearchIntentAdapter, SEARCH_INTENT_CALL_RESULT_REF, SEARCH_INTENT_REF
 from missionforge_deepresearch.source_collector import AcademicSourceCollectionResult
@@ -193,6 +194,79 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result.status, DeepResearchRunStatus.FAILED)
             self.assertEqual(structural["citation_audit"]["status"], "failed")
             self.assertIn("final_report_unknown_source_ids:S999", structural["citation_audit"]["errors"])
+
+    def test_source_packet_accepts_nested_locator_object(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            write_json_ref(
+                root,
+                "sources/source_packet.json",
+                {
+                    "schema_version": "missionforge_deepresearch.source_packet.v1",
+                    "request_id": "nested-locator",
+                    "source_records": [
+                        {
+                            "source_id": "S1",
+                            "title": "Nested locator source",
+                            "source_type": "paper",
+                            "year": 2024,
+                            "locator": {
+                                "url": "https://arxiv.org/abs/2401.00001",
+                                "arxiv_id": "2401.00001",
+                            },
+                        }
+                    ],
+                },
+            )
+            write_text_ref(
+                root,
+                "reports/final_report.md",
+                "# Report\n\nClaim [S1].\n\n## References\n\n- [S1] Nested locator source. https://arxiv.org/abs/2401.00001\n",
+            )
+            write_text_ref(root, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Nested locator source.\n")
+            write_text_ref(root, "reports/research_delta.md", "# Delta\n\nBaseline.\n")
+            write_text_ref(root, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
+            write_text_ref(root, "reports/source_gaps.md", "# Source Gaps\n\nNone.\n")
+            call = PiWorkerCall(
+                call_id="nested-locator-call",
+                role=PiWorkerCallRole.EXECUTOR,
+                contract_id="nested-locator-contract",
+                contract_hash="sha256:" + "1" * 64,
+                contract_ref="contract/task_contract.json",
+                objective="Validate nested locator.",
+                writable_refs=["sources", "reports"],
+                expected_output_refs=[
+                    "sources/source_packet.json",
+                    "reports/final_report.md",
+                    "reports/evidence_index.md",
+                    "reports/research_delta.md",
+                    "reports/reading_plan.md",
+                    "reports/source_gaps.md",
+                ],
+            )
+            report = ExecutionReport(
+                report_id="nested-locator-report",
+                call_id=call.call_id,
+                status="completed",
+                produced_artifacts=list(call.expected_output_refs),
+                changed_refs=list(call.expected_output_refs),
+            )
+            call_result = PiWorkerCallResult.from_worker_adapter_result(
+                call,
+                WorkerAdapterResult(
+                    execution_report=report,
+                    worker_result=WorkerResult(status="completed", execution_report_ref="attempts/report.json"),
+                ),
+            )
+
+            structural = run_structural_checks(
+                workspace=root,
+                expected_refs=list(call.expected_output_refs),
+                call_result=call_result,
+            )
+
+            self.assertEqual(structural["status"], "passed")
+            self.assertEqual(structural["source_packet_audit"]["status"], "passed")
 
     def test_result_package_uses_adapter_runtime_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

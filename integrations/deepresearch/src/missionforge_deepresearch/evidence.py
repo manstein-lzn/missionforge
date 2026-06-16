@@ -153,7 +153,7 @@ def _validate_source_record_shape(record: Mapping[str, Any], source_id: str, err
         value = record.get(field_name)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"source_record_{source_id}_missing_{field_name}")
-    if not any(isinstance(record.get(field_name), str) and record.get(field_name, "").strip() for field_name in _LOCATOR_FIELDS):
+    if not _has_locator(record):
         errors.append(f"source_record_{source_id}_missing_locator")
     source_ref = record.get("source_ref")
     if isinstance(source_ref, str) and source_ref.strip():
@@ -164,6 +164,15 @@ def _validate_source_record_shape(record: Mapping[str, Any], source_id: str, err
     year = record.get("year", record.get("publication_year"))
     if year is not None and (not isinstance(year, int) or isinstance(year, bool)):
         errors.append(f"source_record_{source_id}_invalid_year")
+
+
+def _has_locator(record: Mapping[str, Any]) -> bool:
+    if any(isinstance(record.get(field_name), str) and record.get(field_name, "").strip() for field_name in _LOCATOR_FIELDS):
+        return True
+    locator = record.get("locator")
+    if not isinstance(locator, Mapping):
+        return False
+    return any(isinstance(locator.get(field_name), str) and locator.get(field_name, "").strip() for field_name in _LOCATOR_FIELDS)
 
 
 def _references_section(text: str) -> str:
