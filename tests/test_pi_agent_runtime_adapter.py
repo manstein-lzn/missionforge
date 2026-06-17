@@ -435,11 +435,15 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             )
             self.assertEqual(input_payload["context_projection_ref"], "attempts/WU-000001/context/projection.json")
             self.assertEqual(input_payload["context_raw_dir_ref"], "attempts/WU-000001/context/raw")
+            self.assertIsNone(input_payload["long_memory_packet_ref"])
             self.assertEqual(
                 input_payload["context_projection_config"],
                 {
                     "schema_version": "missionforge.pi_agent_context_projection_config.v1",
                     "large_observation_bytes": 8192,
+                    "soft_compact_ratio": 0.8,
+                    "hard_compact_ratio": 0.9,
+                    "cache_aware": True,
                 },
             )
             self.assertEqual(input_payload["permission_manifest"]["schema_version"], "permission_manifest.v1")
@@ -473,6 +477,9 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                 "attempts/WU-000001/context/tool_observations.jsonl",
             )
             self.assertEqual(projection_payload["context_projection_config"]["large_observation_bytes"], 8192)
+            self.assertEqual(projection_payload["context_projection_config"]["soft_compact_ratio"], 0.8)
+            self.assertEqual(projection_payload["context_projection_config"]["hard_compact_ratio"], 0.9)
+            self.assertIs(projection_payload["context_projection_config"]["cache_aware"], True)
             self.assertEqual(
                 json.loads((root / "attempts/WU-000001/runtime_workspace_policy.json").read_text(encoding="utf-8"))["schema_version"],
                 "workspace_policy.v1",
@@ -528,9 +535,88 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(repair["failed_constraints"], ["C-artifact"])
         self.assertEqual(repair["previous_output_ref"], "attempts/WU-000001/pi_agent_output.json")
 
+    def test_adapter_passes_context_pressure_config(self) -> None:
+        runner = RecordingRunner()
+        config = PiAgentRuntimeConfig(
+            command=("pi-agent-runtime",),
+            context_large_observation_bytes=4096,
+            context_soft_compact_ratio=0.7,
+            context_hard_compact_ratio=0.88,
+            context_cache_aware=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            PiAgentRuntimeAdapter(config, runner=runner).run_call(
+                sample_piworker_call(),
+                workspace=tempdir,
+                evidence_store=InMemoryEvidenceStore(),
+            )
+
+        self.assertIsNotNone(runner.captured_input)
+        self.assertEqual(
+            runner.captured_input["context_projection_config"],  # type: ignore[index]
+            {
+                "schema_version": "missionforge.pi_agent_context_projection_config.v1",
+                "large_observation_bytes": 4096,
+                "soft_compact_ratio": 0.7,
+                "hard_compact_ratio": 0.88,
+                "cache_aware": False,
+            },
+        )
+
+    def test_adapter_passes_long_memory_packet_ref(self) -> None:
+        runner = RecordingRunner()
+        config = PiAgentRuntimeConfig(
+            command=("pi-agent-runtime",),
+            long_memory_packet_ref="attempts/WU-000001/context/long_memory_packet.json",
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            PiAgentRuntimeAdapter(config, runner=runner).run_call(
+                sample_piworker_call(),
+                workspace=tempdir,
+                evidence_store=InMemoryEvidenceStore(),
+            )
+
+        self.assertIsNotNone(runner.captured_input)
+        self.assertEqual(
+            runner.captured_input["long_memory_packet_ref"],  # type: ignore[index]
+            "attempts/WU-000001/context/long_memory_packet.json",
+        )
+
+    def test_adapter_rejects_long_memory_packet_ref_outside_attempt_dir(self) -> None:
+        runner = RecordingRunner()
+        config = PiAgentRuntimeConfig(
+            command=("pi-agent-runtime",),
+            long_memory_packet_ref="context/long_memory_packet.json",
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with self.assertRaisesRegex(ContractValidationError, "long_memory_packet_ref"):
+                PiAgentRuntimeAdapter(config, runner=runner).run_call(
+                    sample_piworker_call(),
+                    workspace=tempdir,
+                    evidence_store=InMemoryEvidenceStore(),
+                )
+
+        self.assertIsNone(runner.captured_input)
+
+    def test_config_rejects_escaping_long_memory_packet_ref(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "long_memory_packet_ref"):
+            PiAgentRuntimeConfig(
+                command=("pi-agent-runtime",),
+                long_memory_packet_ref="../long_memory_packet.json",
+            )
+
     def test_with_repair_clones_adapter_with_repair_envelope(self) -> None:
         runner = RecordingRunner()
-        adapter = PiAgentRuntimeAdapter(PiAgentRuntimeConfig(command=("pi-agent-runtime",)), runner=runner)
+        adapter = PiAgentRuntimeAdapter(
+            PiAgentRuntimeConfig(
+                command=("pi-agent-runtime",),
+                long_memory_packet_ref="attempts/WU-000001/context/long_memory_packet.json",
+            ),
+            runner=runner,
+        )
         repair_adapter = adapter.with_repair(
             verifier_failures=["missing output"],
             failed_constraints=["C-artifact"],
@@ -548,6 +634,10 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result.worker_result.status, "completed")
         self.assertIsNotNone(runner.captured_input)
         self.assertEqual(runner.captured_input["repair"]["mode"], "follow_up")  # type: ignore[index]
+        self.assertEqual(
+            runner.captured_input["long_memory_packet_ref"],  # type: ignore[index]
+            "attempts/WU-000001/context/long_memory_packet.json",
+        )
 
     def test_command_failure_redacts_secret_from_artifacts_and_evidence(self) -> None:
         secret = "sk-live-secret-456"
@@ -635,7 +725,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(output["status"], "failed")
         self.assertIn("savepoint artifact is missing", " ".join(output["failures"]))
 
-    def test_resume_payload_carries_explicit_summary_artifact_refs(self) -> None:
+    def test_resume_payload_carries_explicit_checkpoint_refs(self) -> None:
         runner = RecordingRunner()
         adapter = PiAgentRuntimeAdapter(
             PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
@@ -644,8 +734,9 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             savepoint_ref="attempts/WU-000001/pi_agent_savepoints.jsonl#turn=1",
             session_ref="attempts/WU-000001/pi_agent_session.jsonl",
             events_ref="attempts/WU-000001/pi_agent_events.jsonl",
+            checkpoint_refs=("attempts/WU-000001/context/context_pressure_checkpoint.json",),
             summary_artifact_refs=("attempts/WU-000001/context/summary.json",),
-            follow_up_prompt="Continue using the explicit context summary artifact.",
+            follow_up_prompt="Continue using the explicit context checkpoint.",
         )
 
         with tempfile.TemporaryDirectory() as tempdir:
@@ -653,12 +744,16 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
         assert runner.captured_input is not None
         self.assertEqual(
+            runner.captured_input["resume"]["checkpoint_refs"],
+            ["attempts/WU-000001/context/context_pressure_checkpoint.json"],
+        )
+        self.assertEqual(
             runner.captured_input["resume"]["summary_artifact_refs"],
             ["attempts/WU-000001/context/summary.json"],
         )
         self.assertEqual(
             runner.captured_input["resume"]["resume_prompt"],
-            "Continue using the explicit context summary artifact.",
+            "Continue using the explicit context checkpoint.",
         )
 
     def test_out_of_scope_produced_artifact_is_rewritten_as_failure(self) -> None:

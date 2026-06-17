@@ -45,7 +45,11 @@ PI_AGENT_INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1"
 PI_AGENT_OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1"
 PI_AGENT_CONTEXT_PROJECTION_SCHEMA_VERSION = "missionforge.pi_agent_context_projection.v1"
 PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1"
+PI_AGENT_LONG_MEMORY_PACKET_SCHEMA_VERSION = "missionforge.long_memory_packet.v1"
 DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024
+DEFAULT_CONTEXT_SOFT_COMPACT_RATIO = 0.8
+DEFAULT_CONTEXT_HARD_COMPACT_RATIO = 0.9
+DEFAULT_CONTEXT_CACHE_AWARE = True
 DEFAULT_PI_AGENT_TIMEOUT_SECONDS = 300
 MAX_CAPTURED_STREAM_CHARS = 4000
 
@@ -142,6 +146,7 @@ class PiAgentRuntimeInput:
     context_observations_ref: str
     context_projection_ref: str
     context_raw_dir_ref: str
+    long_memory_packet_ref: str | None
     context_projection_config: Mapping[str, Any]
     extension_lock_ref: str | None
     extension_load_report_ref: str
@@ -194,6 +199,7 @@ class PiAgentRuntimeInput:
                 "pi_agent_runtime_input.context_projection_ref",
             ),
             context_raw_dir_ref=validate_ref(refs["context_raw_dir"], "pi_agent_runtime_input.context_raw_dir_ref"),
+            long_memory_packet_ref=config.long_memory_packet_ref,
             context_projection_config=_context_projection_config_payload(config),
             extension_lock_ref=validate_ref(refs["extension_lock"], "pi_agent_runtime_input.extension_lock_ref")
             if refs.get("extension_lock")
@@ -234,6 +240,12 @@ class PiAgentRuntimeInput:
             validate_ref(getattr(self, field_name), f"pi_agent_runtime_input.{field_name}")
         if self.extension_lock_ref is not None:
             validate_ref(self.extension_lock_ref, "pi_agent_runtime_input.extension_lock_ref")
+        if self.long_memory_packet_ref is not None:
+            validate_ref(self.long_memory_packet_ref, "pi_agent_runtime_input.long_memory_packet_ref")
+            if not _is_within(self.long_memory_packet_ref, self.attempt_dir_ref):
+                raise ContractValidationError(
+                    "pi_agent_runtime_input.long_memory_packet_ref must be inside attempt_dir_ref"
+                )
         ensure_json_value(
             require_mapping(self.permission_manifest, "pi_agent_runtime_input.permission_manifest"),
             "pi_agent_runtime_input.permission_manifest",
@@ -272,6 +284,7 @@ class PiAgentRuntimeInput:
             "context_observations_ref": self.context_observations_ref,
             "context_projection_ref": self.context_projection_ref,
             "context_raw_dir_ref": self.context_raw_dir_ref,
+            "long_memory_packet_ref": self.long_memory_packet_ref,
             "extension_lock_ref": self.extension_lock_ref,
             "extension_load_report_ref": self.extension_load_report_ref,
             "context_projection_config": ensure_json_value(
@@ -311,6 +324,7 @@ class PiAgentRuntimeInput:
                 "savepoint_ref": self.config.resume_savepoint_ref,
                 "session_ref": self.config.resume_session_ref,
                 "events_ref": self.config.resume_events_ref,
+                "checkpoint_refs": list(self.config.resume_checkpoint_refs),
                 "summary_artifact_refs": list(self.config.resume_summary_artifact_refs),
                 "resume_prompt": self.config.resume_prompt,
             },
@@ -339,9 +353,14 @@ class PiAgentRuntimeConfig:
     resume_savepoint_ref: str | None = None
     resume_session_ref: str | None = None
     resume_events_ref: str | None = None
+    resume_checkpoint_refs: tuple[str, ...] = ()
     resume_summary_artifact_refs: tuple[str, ...] = ()
     resume_prompt: str | None = None
     context_large_observation_bytes: int = DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES
+    context_soft_compact_ratio: float = DEFAULT_CONTEXT_SOFT_COMPACT_RATIO
+    context_hard_compact_ratio: float = DEFAULT_CONTEXT_HARD_COMPACT_RATIO
+    context_cache_aware: bool = DEFAULT_CONTEXT_CACHE_AWARE
+    long_memory_packet_ref: str | None = None
 
     def __post_init__(self) -> None:
         command = self.command or default_pi_agent_runtime_command()
@@ -394,6 +413,14 @@ class PiAgentRuntimeConfig:
                 validate_ref(value, f"pi_agent_config.{field_name}")
         object.__setattr__(
             self,
+            "resume_checkpoint_refs",
+            tuple(
+                validate_ref(ref, "pi_agent_config.resume_checkpoint_refs[]")
+                for ref in self.resume_checkpoint_refs
+            ),
+        )
+        object.__setattr__(
+            self,
             "resume_summary_artifact_refs",
             tuple(
                 validate_ref(ref, "pi_agent_config.resume_summary_artifact_refs[]")
@@ -412,6 +439,16 @@ class PiAgentRuntimeConfig:
             "pi_agent_config.context_large_observation_bytes",
             1,
         )
+        soft_ratio = _require_ratio(self.context_soft_compact_ratio, "pi_agent_config.context_soft_compact_ratio")
+        hard_ratio = _require_ratio(self.context_hard_compact_ratio, "pi_agent_config.context_hard_compact_ratio")
+        if hard_ratio <= soft_ratio:
+            raise ContractValidationError(
+                "pi_agent_config.context_hard_compact_ratio must be greater than context_soft_compact_ratio"
+            )
+        if not isinstance(self.context_cache_aware, bool):
+            raise ContractValidationError("pi_agent_config.context_cache_aware must be a boolean")
+        if self.long_memory_packet_ref is not None:
+            validate_ref(self.long_memory_packet_ref, "pi_agent_config.long_memory_packet_ref")
 
 
 @dataclass(frozen=True)
@@ -755,6 +792,11 @@ class PiAgentRuntimeAdapter:
             failed_constraints=tuple(failed_constraints),
             previous_output_ref=previous_output_ref,
             repair_prompt=repair_prompt,
+            context_large_observation_bytes=self.config.context_large_observation_bytes,
+            context_soft_compact_ratio=self.config.context_soft_compact_ratio,
+            context_hard_compact_ratio=self.config.context_hard_compact_ratio,
+            context_cache_aware=self.config.context_cache_aware,
+            long_memory_packet_ref=self.config.long_memory_packet_ref,
         )
         return PiAgentRuntimeAdapter(
             repair_config,
@@ -770,6 +812,7 @@ class PiAgentRuntimeAdapter:
         session_ref: str,
         events_ref: str,
         follow_up_prompt: str,
+        checkpoint_refs: Sequence[str] = (),
         summary_artifact_refs: Sequence[str] = (),
     ) -> "PiAgentRuntimeAdapter":
         """Clone this adapter for a completed-turn resume follow-up."""
@@ -792,11 +835,20 @@ class PiAgentRuntimeAdapter:
             resume_savepoint_ref=savepoint_ref,
             resume_session_ref=session_ref,
             resume_events_ref=events_ref,
+            resume_checkpoint_refs=tuple(
+                validate_ref(ref, "pi_agent_config.resume_checkpoint_refs[]")
+                for ref in checkpoint_refs
+            ),
             resume_summary_artifact_refs=tuple(
                 validate_ref(ref, "pi_agent_config.resume_summary_artifact_refs[]")
                 for ref in summary_artifact_refs
             ),
             resume_prompt=follow_up_prompt,
+            context_large_observation_bytes=self.config.context_large_observation_bytes,
+            context_soft_compact_ratio=self.config.context_soft_compact_ratio,
+            context_hard_compact_ratio=self.config.context_hard_compact_ratio,
+            context_cache_aware=self.config.context_cache_aware,
+            long_memory_packet_ref=self.config.long_memory_packet_ref,
         )
         return PiAgentRuntimeAdapter(
             resume_config,
@@ -1550,6 +1602,9 @@ def _context_projection_config_payload(config: PiAgentRuntimeConfig) -> dict[str
     payload = {
         "schema_version": PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
         "large_observation_bytes": config.context_large_observation_bytes,
+        "soft_compact_ratio": config.context_soft_compact_ratio,
+        "hard_compact_ratio": config.context_hard_compact_ratio,
+        "cache_aware": config.context_cache_aware,
     }
     return _validate_context_projection_config_payload(payload)
 
@@ -1566,9 +1621,27 @@ def _validate_context_projection_config_payload(payload: Mapping[str, Any]) -> d
         "pi_agent_context_projection_config.large_observation_bytes",
         1,
     )
+    soft_compact_ratio = _require_ratio(
+        data.get("soft_compact_ratio", DEFAULT_CONTEXT_SOFT_COMPACT_RATIO),
+        "pi_agent_context_projection_config.soft_compact_ratio",
+    )
+    hard_compact_ratio = _require_ratio(
+        data.get("hard_compact_ratio", DEFAULT_CONTEXT_HARD_COMPACT_RATIO),
+        "pi_agent_context_projection_config.hard_compact_ratio",
+    )
+    if hard_compact_ratio <= soft_compact_ratio:
+        raise ContractValidationError(
+            "pi_agent_context_projection_config.hard_compact_ratio must be greater than soft_compact_ratio"
+        )
+    cache_aware = data.get("cache_aware", DEFAULT_CONTEXT_CACHE_AWARE)
+    if not isinstance(cache_aware, bool):
+        raise ContractValidationError("pi_agent_context_projection_config.cache_aware must be a boolean")
     return {
         "schema_version": PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
         "large_observation_bytes": large_observation_bytes,
+        "soft_compact_ratio": soft_compact_ratio,
+        "hard_compact_ratio": hard_compact_ratio,
+        "cache_aware": cache_aware,
     }
 
 
@@ -1721,6 +1794,15 @@ def _require_same_refs(actual: list[str], expected: list[str], field_name: str) 
     _validate_ref_list(expected, field_name)
     if set(actual) != set(expected):
         raise ContractValidationError(f"{field_name} must match PiWorkerCall refs")
+
+
+def _require_ratio(value: Any, field_name: str) -> float:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ContractValidationError(f"{field_name} must be a number in (0, 1]")
+    result = float(value)
+    if result <= 0.0 or result > 1.0:
+        raise ContractValidationError(f"{field_name} must be a number in (0, 1]")
+    return result
 
 
 def _validate_ref_list(values: list[str], field_name: str) -> None:

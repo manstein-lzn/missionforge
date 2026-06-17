@@ -167,6 +167,51 @@ class CliTests(unittest.TestCase):
         self.assertEqual(call.kwargs["piworker_config"].timeout_seconds, 600)
         self.assertEqual(call.kwargs["piworker_environ"]["MISSIONFORGE_PI_AGENT_MAX_TURNS"], "12")
 
+    def test_academic_single_agent_cli_can_enable_mem0_long_memory(self) -> None:
+        expected = type(
+            "Result",
+            (),
+            {
+                "to_dict": lambda self: {
+                    "schema_version": "missionforge_deepresearch.run_result.v1",
+                    "request_id": "cli-memory",
+                    "status": "draft_ready",
+                }
+            },
+        )()
+        provider = object()
+
+        with (
+            patch("missionforge_deepresearch.cli.Mem0LongMemoryProvider.from_environment", return_value=provider) as provider_mock,
+            patch("missionforge_deepresearch.cli.run_deepresearch_academic_single_agent", return_value=expected) as run_mock,
+            patch("builtins.print") as print_mock,
+        ):
+            exit_code = main(
+                [
+                    "academic",
+                    "single-agent-run",
+                    "--topic",
+                    "compiler autotuning survey",
+                    "--request-id",
+                    "cli-memory",
+                    "--long-memory-provider",
+                    "mem0",
+                    "--long-memory-budget-tokens",
+                    "1500",
+                    "--long-memory-limit",
+                    "4",
+                ]
+            )
+
+        payload = json.loads(print_mock.call_args.args[0])
+        call = run_mock.call_args
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["request_id"], "cli-memory")
+        provider_mock.assert_called_once_with()
+        self.assertIs(call.kwargs["long_memory_provider"], provider)
+        self.assertEqual(call.kwargs["long_memory_budget_tokens"], 1500)
+        self.assertEqual(call.kwargs["long_memory_limit"], 4)
+
     def test_academic_reviewed_run_cli_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -231,6 +276,80 @@ class CliTests(unittest.TestCase):
                 "runs/reviewed-judged-cli-demo/packages/deepresearch_final_package.json",
             )
             self.assertTrue((root / payload["final_package_ref"]).exists())
+
+    def test_academic_run_can_watch_progress_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            with patch("builtins.print") as print_mock, patch("sys.stderr") as stderr_mock:
+                exit_code = main(
+                    [
+                        "academic",
+                        "single-agent-run",
+                        "--topic",
+                        "compiler autotuning survey",
+                        "--request-id",
+                        "watched-cli-demo",
+                        "--workspace",
+                        str(root),
+                        "--stream-progress",
+                        "--progress-interval",
+                        "0.01",
+                    ]
+                )
+
+            payload = json.loads(print_mock.call_args.args[0])
+            progress_output = "".join(call.args[0] for call in stderr_mock.write.call_args_list)
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(payload["status"], "draft_ready")
+            self.assertIn("开始调研：compiler autotuning survey", progress_output)
+            self.assertIn("正在冻结研究任务和输出要求。", progress_output)
+            self.assertIn("调研流程完成。", progress_output)
+
+    def test_academic_run_watch_progress_reports_failed_result(self) -> None:
+        expected = type(
+            "Result",
+            (),
+            {
+                "status": "failed",
+                "run_result_ref": "runs/watched-failed/packages/deepresearch_run_result.json",
+                "to_dict": lambda self: {
+                    "schema_version": "missionforge_deepresearch.run_result.v1",
+                    "request_id": "watched-failed",
+                    "status": "failed",
+                    "run_result_ref": self.run_result_ref,
+                },
+            },
+        )()
+
+        with (
+            tempfile.TemporaryDirectory() as tempdir,
+            patch("missionforge_deepresearch.cli.run_deepresearch_academic_single_agent", return_value=expected),
+            patch("builtins.print") as print_mock,
+            patch("sys.stderr") as stderr_mock,
+        ):
+            exit_code = main(
+                [
+                    "academic",
+                    "single-agent-run",
+                    "--topic",
+                    "compiler autotuning survey",
+                    "--request-id",
+                    "watched-failed",
+                    "--workspace",
+                    tempdir,
+                    "--stream-progress",
+                    "--progress-interval",
+                    "0.01",
+                ]
+            )
+
+        payload = json.loads(print_mock.call_args.args[0])
+        progress_output = "".join(call.args[0] for call in stderr_mock.write.call_args_list)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("调研流程未完成。", progress_output)
+        self.assertIn("运行结果为 failed", progress_output)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,12 @@ export const SANDBOX_PROFILE_SCHEMA_VERSION = "sandbox_profile.v1";
 export const EXTENSION_LOCK_SCHEMA_VERSION = "missionforge_extension_lock.v1";
 export const EXTENSION_LOAD_REPORT_SCHEMA_VERSION = "missionforge_extension_load_report.v1";
 export const CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1";
+export const RUNTIME_CONTEXT_CHECKPOINT_SCHEMA_VERSION = "missionforge.runtime_context_checkpoint.v1";
+export const LONG_MEMORY_PACKET_SCHEMA_VERSION = "missionforge.long_memory_packet.v1";
 export const DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024;
+export const DEFAULT_CONTEXT_SOFT_COMPACT_RATIO = 0.8;
+export const DEFAULT_CONTEXT_HARD_COMPACT_RATIO = 0.9;
+export const DEFAULT_CONTEXT_CACHE_AWARE = true;
 
 export type NetworkPolicy = "disabled" | "restricted" | "enabled";
 export type SandboxMode = "bubblewrap" | "nsjail" | "subprocess" | "unsupported";
@@ -28,11 +33,17 @@ export type JsonObject = Record<string, unknown>;
 export interface ContextProjectionConfig {
   schema_version: typeof CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION;
   large_observation_bytes: number;
+  soft_compact_ratio: number;
+  hard_compact_ratio: number;
+  cache_aware: boolean;
 }
 
 export const DEFAULT_CONTEXT_PROJECTION_CONFIG: ContextProjectionConfig = {
   schema_version: CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
   large_observation_bytes: DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES,
+  soft_compact_ratio: DEFAULT_CONTEXT_SOFT_COMPACT_RATIO,
+  hard_compact_ratio: DEFAULT_CONTEXT_HARD_COMPACT_RATIO,
+  cache_aware: DEFAULT_CONTEXT_CACHE_AWARE,
 };
 
 export interface PiAgentCallSpec {
@@ -63,6 +74,7 @@ export interface RuntimeInput {
   context_observations_ref: string;
   context_projection_ref: string;
   context_raw_dir_ref: string;
+  long_memory_packet_ref: string | null;
   context_projection_config: ContextProjectionConfig;
   extension_lock_ref: string | null;
   extension_load_report_ref: string;
@@ -215,6 +227,48 @@ export interface ExtensionLoadReport {
   rejected_extensions: ExtensionLoadRecord[];
 }
 
+export type LongMemoryConfidence = "low" | "medium" | "high";
+export type LongMemoryStatus = "active" | "superseded" | "conflicting";
+
+export interface LongMemoryScope {
+  project_id?: string;
+  mission_id: string;
+  role: PiWorkerCall["role"];
+  user_id?: string;
+}
+
+export interface LongMemoryRecord {
+  memory_id: string;
+  statement: string;
+  why_relevant: string;
+  source_refs: string[];
+  confidence: LongMemoryConfidence;
+  status: LongMemoryStatus;
+  created_at?: string;
+  supersedes?: string[];
+  conflicts_with?: string[];
+  metadata?: JsonObject;
+}
+
+export interface LongMemoryCatalogHit {
+  segment_ref: string;
+  turn_range?: [number, number];
+  topics?: string[];
+  artifact_refs?: string[];
+  hash?: string;
+}
+
+export interface LongMemoryPacket {
+  schema_version: typeof LONG_MEMORY_PACKET_SCHEMA_VERSION;
+  provider: string;
+  packet_ref?: string;
+  advisory_only: true;
+  budget_tokens: number;
+  scope: LongMemoryScope;
+  memories: LongMemoryRecord[];
+  catalog_hits?: LongMemoryCatalogHit[];
+}
+
 export interface RepairInput {
   mode: "none" | "follow_up";
   verifier_failures: string[];
@@ -229,6 +283,7 @@ export interface ResumeInput {
   savepoint_ref: string | null;
   session_ref: string | null;
   events_ref: string | null;
+  checkpoint_refs: string[];
   summary_artifact_refs: string[];
   resume_prompt: string | null;
 }
@@ -293,6 +348,10 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
       data.context_raw_dir_ref === undefined || data.context_raw_dir_ref === null
         ? `${attemptDirRef}/context/raw`
         : requireRef(data.context_raw_dir_ref, "context_raw_dir_ref"),
+    long_memory_packet_ref:
+      data.long_memory_packet_ref === undefined || data.long_memory_packet_ref === null
+        ? null
+        : requireRef(data.long_memory_packet_ref, "long_memory_packet_ref"),
     context_projection_config: parseContextProjectionConfig(data.context_projection_config),
     extension_lock_ref:
       data.extension_lock_ref === undefined || data.extension_lock_ref === null
@@ -332,6 +391,9 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
   if (!refIsUnder(result.context_raw_dir_ref, result.attempt_dir_ref)) {
     throw new Error("input.context_raw_dir_ref must be inside attempt_dir_ref");
+  }
+  if (result.long_memory_packet_ref !== null && !refIsUnder(result.long_memory_packet_ref, result.attempt_dir_ref)) {
+    throw new Error("input.long_memory_packet_ref must be inside attempt_dir_ref");
   }
   if (!refIsUnder(result.extension_load_report_ref, result.attempt_dir_ref)) {
     throw new Error("input.extension_load_report_ref must be inside attempt_dir_ref");
@@ -579,12 +641,26 @@ export function parseContextProjectionConfig(value: unknown): ContextProjectionC
   if (schemaVersion !== CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION) {
     throw new Error(`Unsupported context_projection_config.schema_version: ${schemaVersion}`);
   }
+  const softCompactRatio = requireRatio(
+    data.soft_compact_ratio ?? DEFAULT_CONTEXT_SOFT_COMPACT_RATIO,
+    "context_projection_config.soft_compact_ratio",
+  );
+  const hardCompactRatio = requireRatio(
+    data.hard_compact_ratio ?? DEFAULT_CONTEXT_HARD_COMPACT_RATIO,
+    "context_projection_config.hard_compact_ratio",
+  );
+  if (hardCompactRatio <= softCompactRatio) {
+    throw new Error("context_projection_config.hard_compact_ratio must be greater than soft_compact_ratio");
+  }
   return {
     schema_version: CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION,
     large_observation_bytes: requirePositiveInteger(
       data.large_observation_bytes ?? DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES,
       "context_projection_config.large_observation_bytes",
     ),
+    soft_compact_ratio: softCompactRatio,
+    hard_compact_ratio: hardCompactRatio,
+    cache_aware: requireBoolean(data.cache_aware ?? DEFAULT_CONTEXT_CACHE_AWARE, "context_projection_config.cache_aware"),
   };
 }
 
@@ -596,6 +672,7 @@ function parseResume(value: unknown): ResumeInput {
       savepoint_ref: null,
       session_ref: null,
       events_ref: null,
+      checkpoint_refs: [],
       summary_artifact_refs: [],
       resume_prompt: null,
     };
@@ -624,6 +701,7 @@ function parseResume(value: unknown): ResumeInput {
     data.events_ref === undefined || data.events_ref === null
       ? null
       : requireRef(data.events_ref, "resume.events_ref");
+  const checkpointRefs = requireRefList(data.checkpoint_refs ?? [], "resume.checkpoint_refs");
   const summaryArtifactRefs = requireRefList(data.summary_artifact_refs ?? [], "resume.summary_artifact_refs");
   const resumePrompt =
     data.resume_prompt === undefined || data.resume_prompt === null
@@ -646,6 +724,7 @@ function parseResume(value: unknown): ResumeInput {
     savepoint_ref: savepointRef,
     session_ref: sessionRef,
     events_ref: eventsRef,
+    checkpoint_refs: checkpointRefs,
     summary_artifact_refs: summaryArtifactRefs,
     resume_prompt: resumePrompt,
   };
@@ -1089,6 +1168,13 @@ function requirePositiveInteger(value: unknown, field: string): number {
 function requireNonNegativeInteger(value: unknown, field: string): number {
   if (!Number.isInteger(value) || typeof value !== "number" || value < 0) {
     throw new Error(`${field} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function requireRatio(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new Error(`${field} must be a number in (0, 1]`);
   }
   return value;
 }

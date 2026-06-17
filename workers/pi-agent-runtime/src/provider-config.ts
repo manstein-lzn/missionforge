@@ -20,6 +20,7 @@ export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): Run
   const toolTimeoutSeconds = positiveInt(env.MISSIONFORGE_PI_AGENT_TOOL_TIMEOUT_SECONDS, 60);
   const cancelAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_CANCEL_AFTER_TURNS);
   const compactAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_COMPACT_AFTER_TURNS);
+  const contextWindow = positiveInt(env.MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW, 128000);
   if (mode === "faux") {
     return {
       mode,
@@ -37,7 +38,7 @@ export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): Run
         reasoning: false,
         input: [],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128000,
+        contextWindow,
         maxTokens: 4096,
       } satisfies Model<any>,
     };
@@ -63,7 +64,7 @@ export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): Run
       reasoning: reasoning !== "off",
       input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128000,
+      contextWindow,
       maxTokens: 4096,
       compat: {
         sendSessionIdHeader: false,

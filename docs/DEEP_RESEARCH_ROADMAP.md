@@ -1,12 +1,15 @@
 # Deep Research Roadmap
 
-Last updated: 2026-06-16
+Last updated: 2026-06-17
 
 Status: Phase 1 offline single-agent baseline, Phase 2 live extension-backed
 source acquisition, Phase 3 quality comparison, Phase 4 independent judging,
-Phase 5A evidence/citation hard checks, and tool healthcheck diagnostics are
-implemented under `integrations/deepresearch`. Implementation stays outside
-`src/missionforge` until a primitive is proven to be product-neutral.
+Phase 5A evidence/citation hard checks, Phase 5B tool healthcheck diagnostics,
+Phase 5C fixed reviewer-guided iteration, and the first Phase 6 reviewer
+observation routing path are implemented under `integrations/deepresearch`.
+The active Phase 6 work is prompt/manual polish, posterior state contract
+hardening, and live validation. Implementation stays outside `src/missionforge`
+until a primitive is proven to be product-neutral.
 
 ## Direction
 
@@ -29,6 +32,46 @@ The model owns semantic research work: planning, source triage, coverage
 judgment, synthesis, report writing, delta analysis, and repair proposals.
 Python owns the hard boundaries: workspace layout, refs, permissions, tool
 execution, schemas, package shape, ledgers, and role separation.
+
+## Research Loop Principle
+
+Deep Research is naturally a state-estimation loop, not a one-shot source
+collection job. The initial request is a noisy prior. Sources, papers,
+repositories, benchmarks, and reviewer observations are measurements. The
+durable research state is the posterior that should become clearer as the run
+learns more.
+
+Use this mental model:
+
+```text
+topic / previous run refs = prior
+source packet + fetched evidence = observations
+research_state.json = posterior
+reviewer report = expert measurement of the posterior
+controller decision = simple bounded routing
+judge report = final independent acceptance decision
+```
+
+Each research update should improve the posterior, not merely append more
+sources. The researcher should record what it now believes about the field:
+major schools of work, strong evidence, weak evidence, conflicting evidence,
+unresolved gaps, and the most valuable next action. The reviewer should assess
+that state like a serious academic reviewer: whether the current view of the
+field is structurally right, what blockers remain, and whether another research
+step is likely to add meaningful value.
+
+Reviewer and Judge PiWorkers should give complete, high-quality feedback in one
+pass. They should batch material blockers, missing evidence, stale claims,
+failed taxonomy, and repair guidance instead of drip-feeding critique across
+loops. Minor polish, nice-to-have expansion, and disclosed residual uncertainty
+should not cause endless iteration.
+
+The dynamic controller should remain extremely small and non-semantic. It may
+route explicit decisions such as `continue`, `ready_for_judge`, `tool_blocked`,
+`revision_required`, `rejected`, and `accepted`; it may enforce round budgets
+and stop when no progress is visible. It must not infer domain concepts, add
+keywords, rank papers, or judge whether the synthesis is true. Those judgments
+belong to PiWorkers through artifacts.
 
 ## Non-Goals
 
@@ -89,6 +132,7 @@ Start with one researcher PiWorker.
 Research request
   -> SearchIntent
   -> bounded source collection tools
+  -> optional advisory LongMemoryPacket
   -> compact Deep Research manual
   -> TaskContract + WorkspacePolicy + PermissionManifest
   -> single researcher PiWorker
@@ -101,6 +145,12 @@ The first version may let product code execute source tools on behalf of the
 agent when direct tool calling is unavailable. That code must execute
 LLM-authored search intent and record refs; it must not rescue quality with
 topic-specific rules.
+
+Long-memory support is an optional product integration layer. DeepResearch may
+ask a provider such as Mem0 for a bounded MissionForge
+`LongMemoryPacket`, but the packet is advisory retrieval context only. It must
+carry source refs, stay under budget, and enter the PiWorker runtime through
+the same provider-neutral packet boundary as any other product.
 
 The single researcher should produce:
 
@@ -373,6 +423,11 @@ Current implementation:
   rounds, and returns `draft_ready` or `failed`.
 - `academic reviewed-judged-run` runs the same reviewer-guided path and then
   submits the revised draft to the independent Judge PiWorker.
+- Reviewer and judge roles are instructed to provide complete one-pass feedback:
+  batch material blockers, missing evidence, stale claims, and repair guidance
+  instead of drip-feeding critique across repeated loops.
+- Minor polish, nice-to-have expansion, and disclosed residual uncertainty
+  should not force endless iteration.
 - `research_intensity` now carries default and maximum review-round budgets:
   quick defaults to one round, standard to two, and intensive to three with a
   four-round cap.
@@ -403,8 +458,166 @@ Allowed reasons:
 Decomposition should preserve the same manual-first design. More nodes are not
 a quality metric.
 
+### Phase 6: State-Driven Research Loop
+
+Replace fixed review-round control with a compact state-driven loop.
+
+Current implementation:
+
+- `academic reviewed-run` requires the reviewer to write
+  `reviews/round_XX/reviewer_observation.json`.
+- The reviewed-run controller routes only on the observation `decision`.
+- `continue` runs one researcher revision and records `research_state.json`.
+- `ready_for_judge` stops the loop as `draft_ready` without a revision round.
+- `tool_blocked` and `revision_required` stop as `blocked`.
+- `rejected` stops as `failed`.
+- `academic reviewed-judged-run` invokes the independent judge only after a
+  reviewed result is `draft_ready`.
+
+Exit criteria:
+
+- define `research_state.json` as the durable posterior for the run;
+- define reviewer observations with explicit decisions such as `continue`,
+  `ready_for_judge`, `tool_blocked`, `revision_required`, and `rejected`;
+- let the researcher update evidence, reports, and research state from reviewer
+  observations;
+- let a small controller route only on the structured decisions, progress
+  evidence, and hard budgets;
+- send the final candidate to the independent judge only when the reviewer says
+  the state is ready or budgets force a final decision;
+- allow judge `repair` to trigger at most a bounded same-contract repair and
+  rejudge path, with complete repair briefs rather than drip-fed issues;
+- stop as blocked or revision-required when tools, evidence, or the frozen
+  contract prevent meaningful progress.
+
+Target round artifacts:
+
+```text
+reviews/round_XX/review_spec.json
+reviews/round_XX/reviewer_report.md
+reviews/round_XX/next_research_directive.md
+reviews/round_XX/reviewer_observation.json
+reviews/round_XX/research_state.json   # only after a continue revision
+```
+
+`reviewer_observation.json` is the only artifact Python reads for loop
+routing. It is intentionally refs-first and small:
+
+```json
+{
+  "schema_version": "missionforge_deepresearch.reviewer_observation.v1",
+  "request_id": "npu-compiler-survey",
+  "round_index": 1,
+  "decision": "continue",
+  "contract_ref": "contract/task_contract.json",
+  "contract_hash": "sha256:...",
+  "reviewer_report_ref": "reviews/round_01/reviewer_report.md",
+  "next_directive_ref": "reviews/round_01/next_research_directive.md",
+  "artifact_refs": ["reports/final_report.md"],
+  "evidence_refs": ["sources/source_packet.json"],
+  "blocker_refs": [],
+  "state_refs": [],
+  "allowed_next_actions": ["researcher_revision"]
+}
+```
+
+`research_state.json` is the researcher-authored posterior after a `continue`
+revision. It is not a controller decision and must not replace the independent
+judge. It should be durable enough for the next researcher, reviewer, or judge
+to recover the current view of the field from refs:
+
+```json
+{
+  "schema_version": "missionforge_deepresearch.research_state.v1",
+  "request_id": "npu-compiler-survey",
+  "round_index": 1,
+  "posterior_kind": "review_guided_research_state",
+  "contract_ref": "contract/task_contract.json",
+  "contract_hash": "sha256:...",
+  "source_packet_ref": "sources/source_packet.json",
+  "prior_state_refs": [],
+  "reviewer_observation_ref": "reviews/round_01/reviewer_observation.json",
+  "reviewer_guidance_refs": [
+    "reviews/round_01/reviewer_report.md",
+    "reviews/round_01/next_research_directive.md",
+    "reviews/round_01/reviewer_observation.json"
+  ],
+  "belief_updates": [
+    {
+      "update": "what changed in the researcher's view",
+      "supporting_refs": ["sources/source_packet.json"],
+      "risk_refs": ["reports/source_gaps.md"]
+    }
+  ],
+  "current_hypotheses": [
+    {
+      "hypothesis": "current synthesis claim or taxonomy choice",
+      "supporting_refs": ["reports/final_report.md", "sources/source_packet.json"]
+    }
+  ],
+  "confidence_notes": [
+    {
+      "topic": "where the posterior is strong or weak",
+      "evidence_refs": ["sources/source_packet.json"],
+      "risk_refs": ["reports/source_gaps.md"]
+    }
+  ],
+  "unresolved_gaps": [
+    {
+      "gap": "remaining uncertainty",
+      "gap_refs": ["reports/source_gaps.md"],
+      "next_action": "best next evidence action if another round is allowed"
+    }
+  ],
+  "next_best_actions": [
+    {
+      "action": "judge, continue research, revise contract, or stop",
+      "depends_on_refs": ["reports/final_report.md"]
+    }
+  ],
+  "updated_artifact_refs": ["reports/final_report.md"],
+  "evidence_refs": ["sources/source_packet.json", "reports/evidence_index.md"]
+}
+```
+
+The shape is intentionally lightweight: Python may validate schema, refs, round,
+and contract linkage, but it must not score the beliefs, rank sources, or infer
+semantic sufficiency from the state body.
+
+Decision semantics:
+
+- `continue`: run one researcher revision round, then structural checks, then
+  continue if the hard review-round budget allows it.
+- `ready_for_judge`: stop the review loop and return `draft_ready` without a
+  researcher revision in that round.
+- `tool_blocked`: stop as `blocked`; the reviewer report/directive should cite
+  the tool or evidence blockers.
+- `revision_required`: stop as `blocked`; a frozen-contract revision record is
+  required before execution can continue.
+- `rejected`: stop as `failed`; product acceptance still belongs only to the
+  independent judge and cannot be inferred by this controller.
+
+Controller laws:
+
+- route only on the structured observation decision and hard budgets;
+- never inspect report prose to infer whether the research is good enough;
+- never synthesize missing domain concepts, fallback queries, or source ranks;
+- require refs and schema validation for observation, directives, research
+  state, and call records;
+- keep reviewer authority guidance-only unless the independent judge is called
+  later.
+
+Non-goals:
+
+- no Python semantic research planner;
+- no topic-specific fallback terms;
+- no paper ranking in code;
+- no unbounded loops;
+- no replacement of the independent judge with controller heuristics.
+
 ## Next Step
 
-Run a real live `academic judged-run` after Phase 4 unit coverage. Keep the
-single researcher unless measured output quality shows a need for another
-role, more tools, or a repair loop.
+Run live reviewed and reviewed-judged acceptance on a real topic, then decide
+whether reviewer/revision calls need explicit role-scoped long-memory packets.
+Keep the single researcher unless measured output quality shows a need for
+another role, more tools, or a specialized repair role.

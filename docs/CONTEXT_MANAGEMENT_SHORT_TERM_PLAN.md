@@ -118,6 +118,33 @@ Exit condition:
 - PiWorker can ask which large observations were demoted and which cited refs
   can be re-read under the current PermissionManifest.
 
+## Phase 6: Runtime Pressure Boundary
+
+Status: implemented as a Pi agent runtime boundary.
+
+- `ContextProjectionConfig` now includes:
+  - `large_observation_bytes`
+  - `soft_compact_ratio` defaulting to `0.8`
+  - `hard_compact_ratio` defaulting to `0.9`
+  - `cache_aware`
+- `context/projection.json` records provider-view diagnostics:
+  estimated input tokens, model context window, pressure ratio, cache
+  read/write tokens, projection strategy, and recommended action.
+- At a completed-turn safe point, the runtime writes an explicit refs-only
+  `missionforge.runtime_context_checkpoint.v1` artifact at
+  `attempts/<call_id>/context/context_pressure_checkpoint.json` when pressure
+  reaches the soft boundary.
+- When pressure reaches the hard boundary, the runtime stops before the next
+  provider request, marks the run `cancelled`, and recommends resume with the
+  context checkpoint ref.
+
+This phase remains deliberately non-semantic. The runtime estimates pressure,
+records refs and hashes, writes savepoints, and routes on explicit diagnostics.
+It does not decide what content matters, synthesize hidden memory, or weaken
+permissions. Prompt cache economics are preserved by delaying projection until
+the boundary requires it and by keeping dynamic context in refs/diagnostics
+rather than rewriting stable authority prompts.
+
 ## Raw Ref Recovery Policy
 
 - `source_ref` recovery uses the existing `read` tool and only succeeds when the
@@ -140,9 +167,12 @@ Exit condition:
   truth, summarize content, or change permissions.
 - `context_snapshot` is read-only inspection; it does not compact or recover
   content.
-- `ContextSummaryArtifact` is an explicit PiWorker/Judge-authored artifact
-  schema, not a runtime side effect.
-- Context token/window budget enforcement remains out of scope for this branch.
+- `ContextSummaryArtifact` is an explicit PiWorker/Judge-authored semantic
+  artifact schema. Runtime pressure handling writes refs-only context
+  checkpoints instead; it must not contain raw tool output, prompts,
+  transcripts, provider payloads, artifact bodies, or secrets.
+- Context token/window budget enforcement is a runtime pressure boundary, not a
+  semantic route or acceptance authority.
 
 ## Phase 5: Pi AgentSession Evaluation
 
@@ -193,17 +223,22 @@ Exit condition:
 - `ContextSummaryArtifact` schema validation requires observation ids,
   raw/source refs, hashes, producing role, and permission manifest refs while
   rejecting hidden raw bodies.
-- Completed-turn resume envelopes can carry explicit summary artifact refs
-  without reading them automatically or changing permissions.
+- Completed-turn resume envelopes can carry explicit context checkpoint refs
+  without reading them automatically or changing permissions. Legacy semantic
+  summary artifact refs remain accepted for compatibility.
+- Projection diagnostics expose context pressure and cache read/write evidence.
+- Hard context pressure stops at a completed-turn safe point and emits an
+  explicit refs-only context checkpoint for resume.
 
 ## Remaining Test Candidates
 
-- Full replay/hydration from explicit compaction or summary artifact savepoints.
+- Full replay/hydration from explicit checkpoint refs and optional Pi-authored
+  semantic summaries.
 
 ## Open Questions
 
-- Whether retroactive projection harms provider prefix-cache economics enough to
-  prefer append-only negative markers.
+- Whether provider-specific token estimators should replace the current
+  conservative chars-per-token runtime estimate.
 - Whether raw refs should be scoped per branch/attempt to prevent cross-branch
   leakage.
 - How to use Pi turn-boundary cut rules without adopting hidden Pi

@@ -19,9 +19,13 @@ test("parseRuntimeInput accepts valid input", () => {
   assert.equal(input.context_observations_ref, "attempts/WU-000001/context/tool_observations.jsonl");
   assert.equal(input.context_projection_ref, "attempts/WU-000001/context/projection.json");
   assert.equal(input.context_raw_dir_ref, "attempts/WU-000001/context/raw");
+  assert.equal(input.long_memory_packet_ref, null);
   assert.deepEqual(input.context_projection_config, {
     schema_version: "missionforge.pi_agent_context_projection_config.v1",
     large_observation_bytes: 8192,
+    soft_compact_ratio: 0.8,
+    hard_compact_ratio: 0.9,
+    cache_aware: true,
   });
 });
 
@@ -70,18 +74,58 @@ test("parseRuntimeInput rejects context refs outside the attempt directory", () 
   );
 });
 
+test("parseRuntimeInput accepts long memory packet refs inside the attempt directory", () => {
+  const input = parseRuntimeInput(
+    sampleInput({
+      long_memory_packet_ref: "attempts/WU-000001/context/long_memory_packet.json",
+    }),
+  );
+
+  assert.equal(input.long_memory_packet_ref, "attempts/WU-000001/context/long_memory_packet.json");
+});
+
+test("parseRuntimeInput rejects long memory packet refs outside the attempt directory", () => {
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          long_memory_packet_ref: "context/long_memory_packet.json",
+        }),
+      ),
+    /long_memory_packet_ref must be inside attempt_dir_ref/,
+  );
+});
+
 test("parseRuntimeInput validates context projection config", () => {
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+            context_projection_config: {
+              schema_version: "missionforge.pi_agent_context_projection_config.v1",
+              large_observation_bytes: 0,
+            },
+          }),
+      ),
+    /large_observation_bytes must be at least 1/,
+  );
+});
+
+test("parseRuntimeInput validates compact ratios", () => {
   assert.throws(
     () =>
       parseRuntimeInput(
         sampleInput({
           context_projection_config: {
             schema_version: "missionforge.pi_agent_context_projection_config.v1",
-            large_observation_bytes: 0,
+            large_observation_bytes: 8192,
+            soft_compact_ratio: 0.9,
+            hard_compact_ratio: 0.8,
+            cache_aware: true,
           },
         }),
       ),
-    /large_observation_bytes must be at least 1/,
+    /hard_compact_ratio must be greater than soft_compact_ratio/,
   );
 });
 
@@ -273,6 +317,7 @@ test("parseRuntimeInput validates completed-turn resume envelope", () => {
         savepoint_ref: "attempts/WU-000001/pi_agent_savepoints.jsonl#turn=1",
         session_ref: "attempts/WU-000001/pi_agent_session.jsonl",
         events_ref: "attempts/WU-000001/pi_agent_events.jsonl",
+        checkpoint_refs: ["attempts/WU-000001/context/context_pressure_checkpoint.json"],
         summary_artifact_refs: ["attempts/WU-000001/context/summary.json"],
         resume_prompt: "Continue from the last completed turn.",
       },
@@ -281,6 +326,7 @@ test("parseRuntimeInput validates completed-turn resume envelope", () => {
 
   assert.equal(input.resume.mode, "follow_up");
   assert.equal(input.resume.boundary, "after_completed_turn");
+  assert.deepEqual(input.resume.checkpoint_refs, ["attempts/WU-000001/context/context_pressure_checkpoint.json"]);
   assert.deepEqual(input.resume.summary_artifact_refs, ["attempts/WU-000001/context/summary.json"]);
 });
 

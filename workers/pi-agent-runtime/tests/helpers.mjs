@@ -32,9 +32,13 @@ export function sampleInput(overrides = {}) {
     context_observations_ref: `${attempt}/context/tool_observations.jsonl`,
     context_projection_ref: `${attempt}/context/projection.json`,
     context_raw_dir_ref: `${attempt}/context/raw`,
+    long_memory_packet_ref: null,
     context_projection_config: {
       schema_version: "missionforge.pi_agent_context_projection_config.v1",
       large_observation_bytes: 8192,
+      soft_compact_ratio: 0.8,
+      hard_compact_ratio: 0.9,
+      cache_aware: true,
     },
     piworker_call: {
       schema_version: "piworker_call.v1",
@@ -101,6 +105,7 @@ export function sampleInput(overrides = {}) {
       savepoint_ref: null,
       session_ref: null,
       events_ref: null,
+      checkpoint_refs: [],
       summary_artifact_refs: [],
       resume_prompt: null,
     },

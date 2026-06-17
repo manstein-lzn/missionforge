@@ -468,6 +468,7 @@ def judge_deepresearch_run(
             "product_contract",
             "projections",
             "reports",
+            "reviews",
             "sources",
             "attempts",
         ],
@@ -519,7 +520,10 @@ def judge_deepresearch_run(
         contract_ref=TASK_CONTRACT_REF,
         objective=(
             "Independently judge the DeepResearch draft against the frozen contract, "
-            "judge rubric, hard checks, artifact refs, and evidence refs. "
+            "judge rubric, hard checks, artifact refs, evidence refs, and any visible review/research-state trail. "
+            "Give one complete final judgment: if repair is needed, write a complete same-contract "
+            "repair brief that batches every material blocker instead of drip-feeding issues. "
+            "Reviewer readiness is guidance only, not acceptance authority. "
             "Write the required judge report JSON and rationale ref only."
         ),
         visible_refs=_dedupe_refs(
@@ -889,6 +893,14 @@ You are the independent DeepResearch judge. Use only the frozen task contract,
 judge rubric, hard checks, draft artifact refs, and evidence refs listed in
 `judge/judge_spec.json`.
 
+When review artifacts are present, treat `reviewer_observation.json`,
+`reviewer_report.md`, `next_research_directive.md`, and `research_state.json`
+as evidence refs about the run's research process and current posterior. They
+may help you understand what was checked, what changed, and what risks remain.
+They are not acceptance authority: reviewer readiness or researcher confidence
+must never override the frozen contract, judge rubric, hard checks, artifact
+content, and cited evidence.
+
 Write:
 
 - `reports/judge_report.json`
@@ -907,6 +919,20 @@ hard checks passed. Use `repair` for same-contract fixes and write
 `reports/judge_repair_brief.md`. Use `revision_required` only when the frozen
 contract itself must change and write `reports/judge_revision_request.md`.
 Do not modify draft artifacts.
+
+Judge in one complete pass. Do not conserve critique for later runs. If the
+draft is not acceptable, identify every material blocker you can see from the
+visible refs and batch them into the rationale and, when decision is `repair`,
+`reports/judge_repair_brief.md`. Minor polish, nice-to-have expansion, or
+unresolvable residual uncertainty should be recorded as residual risk rather
+than used to force another loop.
+
+Use `repair` only when the same frozen contract can be satisfied by concrete
+artifact or evidence updates. Use `revision_required` when the user request,
+contract, or acceptance criteria are materially wrong or underspecified. Use
+`rejected` when the work cannot be repaired within the contract or available
+evidence surface. Use `accepted` when the report is reliable enough to deliver,
+even if non-blocking limitations remain clearly disclosed.
 
 `reports/judge_report.json` must be a single JSON object with exactly this
 shape:

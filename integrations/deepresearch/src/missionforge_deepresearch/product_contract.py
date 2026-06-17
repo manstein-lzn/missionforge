@@ -531,6 +531,7 @@ class DeepResearchReviewedRunResult:
     final_run_result_ref: str
     review_round_count: int
     reviewer_report_refs: list[str]
+    reviewer_observation_refs: list[str]
     research_state_refs: list[str]
     reviewer_call_refs: list[str]
     reviewer_call_result_refs: list[str]
@@ -576,6 +577,10 @@ class DeepResearchReviewedRunResult:
                 data.get("reviewer_report_refs", []),
                 "deepresearch_reviewed_run_result.reviewer_report_refs",
             ),
+            reviewer_observation_refs=_ref_list(
+                data.get("reviewer_observation_refs", []),
+                "deepresearch_reviewed_run_result.reviewer_observation_refs",
+            ),
             research_state_refs=_ref_list(
                 data.get("research_state_refs", []),
                 "deepresearch_reviewed_run_result.research_state_refs",
@@ -615,6 +620,10 @@ class DeepResearchReviewedRunResult:
             validate_ref(getattr(self, field_name), f"deepresearch_reviewed_run_result.{field_name}")
         require_int_at_least(self.review_round_count, "deepresearch_reviewed_run_result.review_round_count", 0)
         _validate_unique_refs(self.reviewer_report_refs, "deepresearch_reviewed_run_result.reviewer_report_refs")
+        _validate_unique_refs(
+            self.reviewer_observation_refs,
+            "deepresearch_reviewed_run_result.reviewer_observation_refs",
+        )
         _validate_unique_refs(self.research_state_refs, "deepresearch_reviewed_run_result.research_state_refs")
         _validate_unique_refs(self.reviewer_call_refs, "deepresearch_reviewed_run_result.reviewer_call_refs")
         _validate_unique_refs(
@@ -641,6 +650,7 @@ class DeepResearchReviewedRunResult:
             "final_run_result_ref": self.final_run_result_ref,
             "review_round_count": self.review_round_count,
             "reviewer_report_refs": list(self.reviewer_report_refs),
+            "reviewer_observation_refs": list(self.reviewer_observation_refs),
             "research_state_refs": list(self.research_state_refs),
             "reviewer_call_refs": list(self.reviewer_call_refs),
             "reviewer_call_result_refs": list(self.reviewer_call_result_refs),

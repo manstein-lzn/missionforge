@@ -95,6 +95,9 @@ test("ContextProjector diagnostics report refs-only projection metadata", () => 
     context_projection_config: {
       schema_version: "missionforge.pi_agent_context_projection_config.v1",
       large_observation_bytes: 8192,
+      soft_compact_ratio: 0.8,
+      hard_compact_ratio: 0.9,
+      cache_aware: true,
     },
   };
   const projector = new ContextProjector({
@@ -106,6 +109,8 @@ test("ContextProjector diagnostics report refs-only projection metadata", () => 
       }),
     ],
     currentTurnIndex: () => 3,
+    contextWindow: () => 100000,
+    metrics: () => ({ cache_read_tokens: 123, cache_write_tokens: 45 }),
   });
 
   projector.project([toolResultMessage({ toolCallId: "bash-call-3", text: largeOutput })]);
@@ -117,10 +122,169 @@ test("ContextProjector diagnostics report refs-only projection metadata", () => 
   assert.equal(diagnostics.projected_observations.length, 1);
   assert.equal(diagnostics.projected_observations[0].observation_id, "tool-observation-000003");
   assert.equal(diagnostics.projected_observations[0].projected_bytes > 0, true);
+  assert.equal(diagnostics.model_context_window, 100000);
+  assert.equal(diagnostics.cache_read_tokens, 123);
+  assert.equal(diagnostics.cache_write_tokens, 45);
+  assert.equal(diagnostics.recommended_action, "continue");
+  assert.equal(diagnostics.context_budget.schema_version, "missionforge.context_budget.v1");
+  assert.equal(diagnostics.context_budget.usable_input_budget > 0, true);
+  assert.equal(diagnostics.memory_layers.stable_authority_prefix.kept_first, true);
+  assert.equal(diagnostics.pressure_ratio >= 0, true);
   assert.equal(JSON.stringify(diagnostics).includes(largeOutput.slice(0, 80)), false);
 });
 
-function toolResultMessage({ toolCallId, text, details = undefined }) {
+test("ContextProjector archives older messages into a flat segment stub", () => {
+  const messages = Array.from({ length: 30 }, (_value, index) => ({
+    role: "user",
+    content: [{ type: "text", text: `message-${index}` }],
+    timestamp: index,
+  }));
+  const input = {
+    call_id: "WU-000001",
+    attempt_dir_ref: "attempts/WU-000001",
+    context_observations_ref: "attempts/WU-000001/context/tool_observations.jsonl",
+    context_projection_config: {
+      schema_version: "missionforge.pi_agent_context_projection_config.v1",
+      large_observation_bytes: 8192,
+      soft_compact_ratio: 0.8,
+      hard_compact_ratio: 0.9,
+      cache_aware: true,
+    },
+  };
+  const projector = new ContextProjector({
+    observations: () => [],
+    currentTurnIndex: () => 10,
+  });
+
+  const projected = projector.project(messages, "", undefined, input);
+  const diagnostics = projector.diagnostics(input);
+
+  assert.equal(projected.length, 25);
+  assert.equal(projected[0].content[0].text.includes("context/segments/catalog.json"), true);
+  assert.equal(diagnostics.memory_layers.archived_history.archived_message_count, 6);
+  assert.deepEqual(diagnostics.memory_layers.archived_history.segment_refs, [
+    "attempts/WU-000001/context/segments/segment-000001.jsonl",
+  ]);
+});
+
+test("ContextProjector does not split assistant tool calls from their tool results", () => {
+  const messages = [
+    ...Array.from({ length: 12 }, (_value, index) => ({
+      role: "user",
+      content: [{ type: "text", text: `prefix-${index}` }],
+      timestamp: index,
+    })),
+    {
+      role: "assistant",
+      api: "openai-responses",
+      content: [
+        { type: "toolCall", id: "call_keep_1|fc_keep_1", name: "read", arguments: { path: "refs/a.json" } },
+        { type: "toolCall", id: "call_keep_2|fc_keep_2", name: "read", arguments: { path: "refs/b.json" } },
+      ],
+      timestamp: 20,
+    },
+    toolResultMessage({
+      toolCallId: "call_keep_1|fc_keep_1",
+      text: "result one",
+      timestamp: 21,
+    }),
+    toolResultMessage({
+      toolCallId: "call_keep_2|fc_keep_2",
+      text: "result two",
+      timestamp: 22,
+    }),
+    ...Array.from({ length: 23 }, (_value, index) => ({
+      role: "user",
+      content: [{ type: "text", text: `tail-${index}` }],
+      timestamp: index + 30,
+    })),
+  ];
+  const input = {
+    call_id: "WU-000001",
+    attempt_dir_ref: "attempts/WU-000001",
+    context_observations_ref: "attempts/WU-000001/context/tool_observations.jsonl",
+  };
+  const projector = new ContextProjector({
+    observations: () => [],
+    currentTurnIndex: () => 10,
+  });
+
+  const projected = projector.project(messages, "", undefined, input);
+  const diagnostics = projector.diagnostics(input);
+
+  assert.equal(projected.length, 27);
+  assert.equal(projected[0].content[0].text.includes("archived_message_count: 12"), true);
+  assert.equal(diagnostics.memory_layers.archived_history.archived_message_count, 12);
+  assert.equal(projected[1].role, "assistant");
+  assert.equal(projected[1].content[0].id, "call_keep_1|fc_keep_1");
+  assert.equal(projected[1].content[1].id, "call_keep_2|fc_keep_2");
+  assert.equal(projected[2].role, "toolResult");
+  assert.equal(projected[3].role, "toolResult");
+});
+
+test("ContextProjector injects long memory before archived and projected history", () => {
+  const longMemoryMessage = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: "[MissionForge long-memory packet]\npacket_ref: attempts/WU-000001/context/long_memory_packet.json\n",
+      },
+    ],
+    timestamp: 1,
+  };
+  const messages = Array.from({ length: 30 }, (_value, index) => ({
+    role: "user",
+    content: [{ type: "text", text: `message-${index}` }],
+    timestamp: index + 10,
+  }));
+  const input = {
+    call_id: "WU-000001",
+    attempt_dir_ref: "attempts/WU-000001",
+    context_observations_ref: "attempts/WU-000001/context/tool_observations.jsonl",
+    context_projection_config: {
+      schema_version: "missionforge.pi_agent_context_projection_config.v1",
+      large_observation_bytes: 8192,
+      soft_compact_ratio: 0.8,
+      hard_compact_ratio: 0.9,
+      cache_aware: true,
+    },
+  };
+  const projector = new ContextProjector({
+    observations: () => [],
+    currentTurnIndex: () => 10,
+    longMemory: () => ({
+      packet: null,
+      message: longMemoryMessage,
+      diagnostics: {
+        provider_enabled: true,
+        packet_ref: "attempts/WU-000001/context/long_memory_packet.json",
+        provider: "mem0",
+        advisory_only: true,
+        degraded: false,
+        memory_count: 1,
+        catalog_hit_count: 1,
+        budget_tokens: 2000,
+        estimated_tokens: 42,
+        warnings: [],
+      },
+    }),
+  });
+
+  const projected = projector.project(messages, "", undefined, input);
+  const diagnostics = projector.diagnostics(input);
+
+  assert.equal(projected[0], longMemoryMessage);
+  assert.equal(projected[1].content[0].text.includes("[MissionForge archived context segment]"), true);
+  assert.equal(projected[2].content[0].text, "message-6");
+  assert.equal(diagnostics.memory_layers.long_memory.provider_enabled, true);
+  assert.equal(diagnostics.memory_layers.long_memory.provider, "mem0");
+  assert.equal(diagnostics.memory_layers.long_memory.degraded, false);
+  assert.equal(diagnostics.memory_layers.long_memory.memory_count, 1);
+  assert.equal(diagnostics.memory_layers.long_memory.catalog_hit_count, 1);
+});
+
+function toolResultMessage({ toolCallId, text, details = undefined, timestamp = 1 }) {
   return {
     role: "toolResult",
     toolCallId,
@@ -128,7 +292,7 @@ function toolResultMessage({ toolCallId, text, details = undefined }) {
     content: [{ type: "text", text }],
     details,
     isError: false,
-    timestamp: 1,
+    timestamp,
   };
 }
 

@@ -7,6 +7,7 @@ from typing import Any, Callable, Mapping
 
 from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
 from missionforge.contracts import ContractValidationError, stable_json_hash, validate_ref
+from missionforge.progress_stream import DEFAULT_PROGRESS_REF, ProgressStreamWriter
 from missionforge.task_contract import ExtensionGrant
 from missionforge.piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallResultStatus, PiWorkerCallRole
 from missionforge.piworker_runtime import PiWorkerCallAdapter, run_piworker_call
@@ -29,6 +30,7 @@ from .compiler import (
     load_deepresearch_task_contract,
 )
 from .evidence import audit_quality_contract, audit_report_citations, audit_source_packet
+from .long_memory import DeepResearchLongMemoryProvider, prepare_researcher_long_memory_packet
 from .product_contract import AcademicResearchRequest, DeepResearchRunResult, DeepResearchRunStatus
 from .product_contract import research_intensity_profile, research_report_section_specs
 from .search_intent import (
@@ -71,10 +73,21 @@ def run_deepresearch_academic_single_agent(
     piworker_environ: Mapping[str, str] | None = None,
     live_extension_mode: bool = False,
     extension_installer: ExtensionInstaller | None = None,
+    long_memory_provider: DeepResearchLongMemoryProvider | None = None,
+    long_memory_budget_tokens: int = 2000,
+    long_memory_limit: int = 8,
 ) -> DeepResearchRunResult:
     """Run the single-agent academic research baseline."""
 
     request.validate()
+    progress = ProgressStreamWriter(Path(workspace).resolve() / f"runs/{request.request_id}", stream_ref=DEFAULT_PROGRESS_REF)
+    progress.emit(
+        stage="research_contract",
+        state="running",
+        message="正在冻结研究任务和输出要求。",
+        detail="明确报告结构、引用合同、证据包和工具权限边界。",
+        progress_hint="1/7",
+    )
     if source_mode not in SOURCE_MODES:
         raise ContractValidationError(f"deepresearch source_mode must be one of {sorted(SOURCE_MODES)}")
     if researcher_mode not in RESEARCHER_MODES:
@@ -100,8 +113,24 @@ def run_deepresearch_academic_single_agent(
         piworker_config=piworker_config,
         piworker_environ=piworker_environ,
     )
+    if source_mode == "live":
+        progress.emit(
+            stage="search_intent",
+            state="completed",
+            message="已准备检索意图。",
+            detail="后续检索会优先使用英文论文和工程资料查询，同时保留用户指定语言的输出要求。",
+            progress_hint="2/7",
+            refs=[SEARCH_INTENT_REF],
+        )
     source_collection = None
     if source_mode == "live" and not live_extension_mode:
+        progress.emit(
+            stage="source_collection",
+            state="running",
+            message="正在收集候选来源。",
+            detail="检索学术索引、论文元数据和工程资料，形成可引用证据包。",
+            progress_hint="3/7",
+        )
         source_collection = collect_live_academic_sources(
             request,
             config=effective_source_config,
@@ -114,6 +143,14 @@ def run_deepresearch_academic_single_agent(
         search_intent=search_intent,
         live_extension_mode=live_extension_mode or source_mode == "live",
         extension_installer=extension_installer,
+    )
+    progress.emit(
+        stage="workspace_ready",
+        state="completed",
+        message="研究工作区已准备完成。",
+        detail="合同、手册、证据包、输出合同和权限清单已经写入工作区。",
+        progress_hint="3/7",
+        refs=[compile_result.task_contract_ref, compile_result.permission_manifest_ref],
     )
     task_contract, _workspace_policy, permission_manifest = load_deepresearch_task_contract(root, compile_result)
     run_root = root / compile_result.run_workspace_ref
@@ -174,8 +211,51 @@ def run_deepresearch_academic_single_agent(
             "research_intensity": request.research_intensity.value,
         },
     )
+    long_memory_packet_ref = prepare_researcher_long_memory_packet(
+        long_memory_provider,
+        request=request,
+        call=call,
+        workspace=run_root,
+        budget_tokens=long_memory_budget_tokens,
+        limit=long_memory_limit,
+    )
+    if long_memory_packet_ref:
+        call = PiWorkerCall(
+            call_id=call.call_id,
+            role=call.role,
+            contract_id=call.contract_id,
+            contract_hash=call.contract_hash,
+            contract_ref=call.contract_ref,
+            objective=call.objective,
+            visible_refs=list(call.visible_refs),
+            writable_refs=list(call.writable_refs),
+            expected_output_refs=list(call.expected_output_refs),
+            permission_manifest_ref=call.permission_manifest_ref,
+            source_packet_ref=call.source_packet_ref,
+            source_packet_hash=call.source_packet_hash,
+            evidence_refs=_dedupe_refs([*call.evidence_refs, long_memory_packet_ref]),
+            output_schema_ref=call.output_schema_ref,
+            validation_policy_ref=call.validation_policy_ref,
+            runtime_budget=call.runtime_budget,
+            metadata={
+                **dict(call.metadata),
+                "context_packet_ref": long_memory_packet_ref,
+            },
+        )
     write_json_ref(run_root, RESEARCHER_CALL_REF, call.to_dict())
-    researcher = adapter or _researcher_adapter(researcher_mode, piworker_config, piworker_environ)
+    researcher = adapter or _researcher_adapter(
+        researcher_mode,
+        _piworker_config_with_long_memory(piworker_config, long_memory_packet_ref),
+        piworker_environ,
+    )
+    progress.emit(
+        stage="researcher",
+        state="running",
+        message="研究员正在阅读证据并撰写报告。",
+        detail="目标是覆盖主要研究线、对比矩阵、近三年增量、失败模式和证据缺口。",
+        progress_hint="4/7",
+        refs=[SOURCE_PACKET_REF, OUTPUT_CONTRACT_REF],
+    )
     call_result = run_piworker_call(
         call,
         workspace=run_root,
@@ -189,6 +269,14 @@ def run_deepresearch_academic_single_agent(
             "search_intent_mode": search_intent_mode,
         },
     )
+    progress.emit(
+        stage="researcher",
+        state="completed" if call_result.status is PiWorkerCallResultStatus.COMPLETED else "failed",
+        message="研究员阶段已结束。",
+        detail="正在检查报告结构、引用完整性和证据包一致性。",
+        progress_hint="5/7",
+        refs=[RESEARCHER_CALL_RESULT_REF],
+    )
     write_json_ref(run_root, RESEARCHER_CALL_RESULT_REF, call_result.to_dict())
     structural = run_structural_checks(
         workspace=run_root,
@@ -196,6 +284,14 @@ def run_deepresearch_academic_single_agent(
         call_result=call_result,
     )
     structural_status = structural["status"]
+    progress.emit(
+        stage="structural_checks",
+        state="completed" if structural_status == "passed" else "failed",
+        message="结构化检查完成。",
+        detail="已检查报告文件、source packet、引用列表和输出合同的机械完整性。",
+        progress_hint="6/7",
+        refs=[STRUCTURAL_CHECK_REPORT_REF],
+    )
     status = (
         DeepResearchRunStatus.DRAFT_READY
         if call_result.status is PiWorkerCallResultStatus.COMPLETED and structural_status == "passed"
@@ -217,6 +313,7 @@ def run_deepresearch_academic_single_agent(
         evidence_refs=_dedupe_refs([
             *[_outer_ref(compile_result.run_workspace_ref, ref) for ref in search_intent_evidence_refs],
             _outer_ref(compile_result.run_workspace_ref, SEARCH_INTENT_REF),
+            *([_outer_ref(compile_result.run_workspace_ref, long_memory_packet_ref)] if long_memory_packet_ref else []),
             compile_result.source_packet_ref,
             compile_result.source_collection_report_ref,
             *([compile_result.extension_lock_ref] if compile_result.extension_lock_ref else []),
@@ -293,6 +390,42 @@ def _researcher_adapter(
             environ=piworker_environ,
         )
     raise ContractValidationError(f"deepresearch researcher_mode must be one of {sorted(RESEARCHER_MODES)}")
+
+
+def _piworker_config_with_long_memory(
+    config: PiAgentRuntimeConfig | None,
+    long_memory_packet_ref: str | None,
+) -> PiAgentRuntimeConfig | None:
+    if long_memory_packet_ref is None:
+        return config
+    base = config or PiAgentRuntimeConfig(provider_mode="live")
+    return PiAgentRuntimeConfig(
+        command=base.command,
+        timeout_seconds=base.timeout_seconds,
+        provider_mode=base.provider_mode,
+        provider_config_source=base.provider_config_source,
+        runtime_name=base.runtime_name,
+        model=base.model,
+        metadata=base.metadata,
+        repair_mode=base.repair_mode,
+        verifier_failures=base.verifier_failures,
+        failed_constraints=base.failed_constraints,
+        previous_output_ref=base.previous_output_ref,
+        repair_prompt=base.repair_prompt,
+        resume_mode=base.resume_mode,
+        resume_boundary=base.resume_boundary,
+        resume_savepoint_ref=base.resume_savepoint_ref,
+        resume_session_ref=base.resume_session_ref,
+        resume_events_ref=base.resume_events_ref,
+        resume_checkpoint_refs=base.resume_checkpoint_refs,
+        resume_summary_artifact_refs=base.resume_summary_artifact_refs,
+        resume_prompt=base.resume_prompt,
+        context_large_observation_bytes=base.context_large_observation_bytes,
+        context_soft_compact_ratio=base.context_soft_compact_ratio,
+        context_hard_compact_ratio=base.context_hard_compact_ratio,
+        context_cache_aware=base.context_cache_aware,
+        long_memory_packet_ref=long_memory_packet_ref,
+    )
 
 
 def _piworker_adapter(

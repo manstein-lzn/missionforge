@@ -411,11 +411,16 @@ python -m missionforge.adapters.cli diagnose --workspace . --run run-sample-miss
 python -m missionforge.adapters.cli control halt --workspace . --run run-sample-mission --reason "Pause before the next attempt."
 python -m missionforge.adapters.cli review record --workspace . --run run-sample-mission --decision approved --review-ref reviews/reviewer-decision.json
 python -m missionforge.adapters.cli validate
+python -m missionforge.adapters.cli tui --workspace . --run-ref runs/run-sample-mission --watch
 ```
 
 There is no top-level `run` or `resume` command. Operator output is observation
 and control. It does not grant semantic acceptance by itself. Product execution
 belongs in the TaskContract-native PiWorker lane.
+
+For product-facing progress, declare a `progress_streams` entry in the
+`PermissionManifest` and stream `ProgressEvent` records. The CLI/TUI observer is
+for operators; progress streams are the user-visible surface.
 
 ## Public API Guidance
 

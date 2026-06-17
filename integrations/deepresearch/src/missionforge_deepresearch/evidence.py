@@ -298,14 +298,25 @@ def _validate_source_record_shape(record: Mapping[str, Any], source_id: str, err
         errors.append(f"source_record_{source_id}_missing_locator")
     source_ref = record.get("source_ref")
     if isinstance(source_ref, str) and source_ref.strip():
-        if "://" not in source_ref:
-            try:
-                validate_ref(source_ref, f"source_record_{source_id}.source_ref")
-            except Exception:
-                errors.append(f"source_record_{source_id}_invalid_source_ref")
+        if not _valid_source_ref_locator(source_ref):
+            errors.append(f"source_record_{source_id}_invalid_source_ref")
     year = record.get("year", record.get("publication_year"))
     if year is not None and (not isinstance(year, int) or isinstance(year, bool)):
         errors.append(f"source_record_{source_id}_invalid_year")
+
+
+def _valid_source_ref_locator(value: str) -> bool:
+    source_ref = value.strip()
+    if not source_ref or any(char in source_ref for char in "\r\n\t"):
+        return False
+    if "://" in source_ref:
+        return True
+    try:
+        validate_ref(source_ref, "source_ref")
+        return True
+    except Exception:
+        pass
+    return bool(re.match(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}:.+$", source_ref))
 
 
 def _has_locator(record: Mapping[str, Any]) -> bool:

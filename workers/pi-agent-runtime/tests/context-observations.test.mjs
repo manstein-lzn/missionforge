@@ -126,6 +126,9 @@ test("context projection config controls large observation threshold", async () 
         context_projection_config: {
           schema_version: "missionforge.pi_agent_context_projection_config.v1",
           large_observation_bytes: 50000,
+          soft_compact_ratio: 0.8,
+          hard_compact_ratio: 0.9,
+          cache_aware: true,
         },
       }),
     );

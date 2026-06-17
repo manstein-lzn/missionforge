@@ -39,6 +39,9 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     assert.equal(projection.schema_version, "missionforge.pi_agent_context_projection.v1");
     assert.equal(projection.context_observations_ref, output.context_observations_ref);
     assert.equal(projection.projected_observations.length, 0);
+    assert.equal(projection.context_projection_config.soft_compact_ratio, 0.8);
+    assert.equal(projection.context_projection_config.hard_compact_ratio, 0.9);
+    assert.equal(projection.recommended_action, "continue");
     const metrics = await readJson(join(root, input.metrics_ref));
     assert.equal(metrics.tool_call_count, 2);
     assert.equal(metrics.cache_read_tokens > 0, true);
@@ -153,7 +156,7 @@ test("faux runtime cancellation writes normalized non-success output", async () 
   });
 });
 
-test("faux runtime compaction writes a savepoint marker", async () => {
+test("faux runtime context checkpoint writes a savepoint marker", async () => {
   await withWorkspace(async (root) => {
     const input = sampleInput();
     await writeInput(root, input);
@@ -167,9 +170,33 @@ test("faux runtime compaction writes a savepoint marker", async () => {
 
     const savepoints = await readFile(join(root, input.savepoints_ref), "utf-8");
     const events = await readFile(join(root, input.events_ref), "utf-8");
-    assert.equal(savepoints.includes('"compaction"'), true);
+    assert.equal(savepoints.includes('"context_checkpoint"'), true);
     assert.equal(savepoints.includes("after_completed_turn"), true);
-    assert.equal(events.includes('"event_type":"compaction"'), true);
+    assert.equal(events.includes('"event_type":"context_pressure_checkpoint"'), true);
+  });
+});
+
+test("faux runtime context checkpoint is written with refs-only metadata", async () => {
+  await withWorkspace(async (root) => {
+    const input = sampleInput();
+    await writeInput(root, input);
+    process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+    process.env.MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW = "1";
+    try {
+      await runMissionForgePiAgent(parseRuntimeInput(input), root);
+    } finally {
+      delete process.env.MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW;
+    }
+
+    const output = await readJson(join(root, input.output_ref));
+    const checkpointRef = `${input.attempt_dir_ref}/context/context_pressure_checkpoint.json`;
+    const checkpoint = await readJson(join(root, checkpointRef));
+    assert.equal(output.status, "cancelled");
+    assert.equal(output.recommended_next_steps.some((step) => step.includes(checkpointRef)), true);
+    assert.equal(checkpoint.schema_version, "missionforge.runtime_context_checkpoint.v1");
+    assert.equal(checkpoint.kind, "runtime_context_checkpoint");
+    assert.equal(checkpoint.sources.length > 0, true);
+    assert.equal(JSON.stringify(checkpoint).includes("pi-agent-runtime faux artifact"), false);
   });
 });
 

@@ -307,6 +307,80 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(structural["source_packet_audit"]["status"], "passed")
             self.assertEqual(structural["quality_contract_audit"]["status"], "skipped")
 
+    def test_source_packet_accepts_provider_source_ref_locator_when_url_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            write_json_ref(
+                root,
+                "sources/source_packet.json",
+                {
+                    "schema_version": "missionforge_deepresearch.source_packet.v1",
+                    "request_id": "provider-locator",
+                    "source_records": [
+                        {
+                            "source_id": "S1",
+                            "title": "Provider locator source",
+                            "source_type": "official_documentation",
+                            "year": 2026,
+                            "url": "https://tvm.apache.org/docs/deep_dive/tensor_ir/tutorials/meta_schedule.html",
+                            "source_ref": "web_search:Apache TVM MetaSchedule auto tuning documentation 2024",
+                        }
+                    ],
+                },
+            )
+            write_text_ref(
+                root,
+                "reports/final_report.md",
+                _quality_report_text(
+                    title="Report",
+                    claim="Claim [S1].",
+                    references="- [S1] Provider locator source. https://tvm.apache.org/docs/deep_dive/tensor_ir/tutorials/meta_schedule.html\n",
+                ),
+            )
+            write_text_ref(root, "reports/evidence_index.md", "# Evidence Index\n\n- [S1] Provider locator source.\n")
+            write_text_ref(root, "reports/research_delta.md", "# Delta\n\nBaseline.\n")
+            write_text_ref(root, "reports/reading_plan.md", "# Reading Plan\n\nRead [S1].\n")
+            write_text_ref(root, "reports/source_gaps.md", "# Source Gaps\n\nNone.\n")
+            call = PiWorkerCall(
+                call_id="provider-locator-call",
+                role=PiWorkerCallRole.EXECUTOR,
+                contract_id="provider-locator-contract",
+                contract_hash="sha256:" + "1" * 64,
+                contract_ref="contract/task_contract.json",
+                objective="Validate provider source ref locator.",
+                writable_refs=["sources", "reports"],
+                expected_output_refs=[
+                    "sources/source_packet.json",
+                    "reports/final_report.md",
+                    "reports/evidence_index.md",
+                    "reports/research_delta.md",
+                    "reports/reading_plan.md",
+                    "reports/source_gaps.md",
+                ],
+            )
+            report = ExecutionReport(
+                report_id="provider-locator-report",
+                call_id=call.call_id,
+                status="completed",
+                produced_artifacts=list(call.expected_output_refs),
+                changed_refs=list(call.expected_output_refs),
+            )
+            call_result = PiWorkerCallResult.from_worker_adapter_result(
+                call,
+                WorkerAdapterResult(
+                    execution_report=report,
+                    worker_result=WorkerResult(status="completed", execution_report_ref="attempts/report.json"),
+                ),
+            )
+
+            structural = run_structural_checks(
+                workspace=root,
+                expected_refs=list(call.expected_output_refs),
+                call_result=call_result,
+            )
+
+            self.assertEqual(structural["source_packet_audit"]["status"], "passed")
+
     def test_result_package_uses_adapter_runtime_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

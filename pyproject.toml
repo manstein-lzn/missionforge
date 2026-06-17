@@ -12,5 +12,8 @@ license = {text = "Proprietary"}
 authors = [{name = "MissionForge contributors"}]
 dependencies = []
 
+[project.optional-dependencies]
+mem0 = ["mem0ai"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

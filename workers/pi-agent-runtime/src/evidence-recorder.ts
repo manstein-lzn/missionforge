@@ -1,6 +1,9 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
+import { RUNTIME_CONTEXT_CHECKPOINT_SCHEMA_VERSION } from "./contract.js";
 import type { RuntimeInput } from "./contract.js";
 import type { ToolObservation } from "./context-observations.js";
 import { appendJsonLine, prepareWorkspaceWritePath, resolveWorkspaceRef, writeJsonFile } from "./paths.js";
@@ -31,6 +34,23 @@ export interface RuntimeMetrics {
   commands_run: string[];
   tests_run: string[];
   stop_reason?: string;
+}
+
+export interface ContextCheckpointDiagnostics {
+  pressure_ratio?: number;
+  estimated_input_tokens?: number;
+  model_context_window?: number;
+  usable_input_budget?: number;
+  budget_pressure_ratio?: number;
+  context_budget?: {
+    usable_input_budget?: number;
+    budget_pressure_ratio?: number;
+  };
+  soft_compact_ratio?: number;
+  hard_compact_ratio?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  recommended_action?: string;
 }
 
 export class EvidenceRecorder {
@@ -184,7 +204,12 @@ export class EvidenceRecorder {
     };
   }
 
-  async writeCompactionMarker(reason: string): Promise<void> {
+  contextCheckpointRef(): string {
+    return `${this.input.attempt_dir_ref}/context/context_pressure_checkpoint.json`;
+  }
+
+  async writeContextCheckpoint(reason: string, diagnostics: ContextCheckpointDiagnostics = {}): Promise<string> {
+    const checkpointRef = this.contextCheckpointRef();
     await appendJsonLine(
       resolveWorkspaceRef(this.workspaceRoot, this.input.events_ref),
       {
@@ -192,13 +217,14 @@ export class EvidenceRecorder {
         event_id: `pi-agent-event-${String(++this.sequence).padStart(6, "0")}`,
         created_at: new Date().toISOString(),
         call_id: this.input.call_id,
-        event_type: "compaction",
+        event_type: "context_pressure_checkpoint",
         payload: redactJson({
           reason,
           turn_index: this.metrics.turn_count,
           savepoints_ref: this.input.savepoints_ref,
           context_observations_ref: this.input.context_observations_ref,
           context_projection_ref: this.input.context_projection_ref,
+          checkpoint_refs: [checkpointRef],
           resume_boundary: "after_completed_turn",
         }, this.env),
       },
@@ -211,14 +237,14 @@ export class EvidenceRecorder {
         call_id: this.input.call_id,
         turn_index: this.metrics.turn_count,
         created_at: new Date().toISOString(),
-        message_ref: `${this.input.session_ref}#compact`,
+        message_ref: `${this.input.session_ref}#checkpoint`,
         events_ref: this.input.events_ref,
         context_observations_ref: this.input.context_observations_ref,
         context_projection_ref: this.input.context_projection_ref,
         changed_refs: [],
         tool_call_count: this.metrics.tool_call_count,
         commands_run: this.metrics.commands_run.slice(),
-        stop_reason: "compacted",
+        stop_reason: "context_checkpoint",
         token_count: this.metrics.total_tokens,
         resume_hint: {
           supported: true,
@@ -230,13 +256,114 @@ export class EvidenceRecorder {
             "uncommitted_filesystem_mutations",
           ],
         },
-        compaction: {
+        context_checkpoint: {
           applied: true,
           reason,
+          checkpoint_ref: checkpointRef,
         },
       }, this.env),
       { workspaceRoot: this.workspaceRoot },
     );
+    await this.writeRuntimeContextCheckpoint(checkpointRef, reason, diagnostics);
+    return checkpointRef;
+  }
+
+  private async writeRuntimeContextCheckpoint(
+    ref: string,
+    reason: string,
+    diagnostics: ContextCheckpointDiagnostics,
+  ): Promise<void> {
+    const permissionManifestRef =
+      this.input.piworker_call.permission_manifest_ref ?? this.input.capability_grant.permission_manifest_ref;
+    const sources = await this.compactionSources(permissionManifestRef);
+    await writeJsonFile(
+      resolveWorkspaceRef(this.workspaceRoot, ref),
+      {
+        schema_version: RUNTIME_CONTEXT_CHECKPOINT_SCHEMA_VERSION,
+        checkpoint_id: `${this.input.call_id}-context-checkpoint-${String(this.metrics.turn_count).padStart(4, "0")}`,
+        call_id: this.input.call_id,
+        role: this.input.piworker_call.role,
+        kind: "runtime_context_checkpoint",
+        reason: redactText(reason, this.env),
+        turn_index: this.metrics.turn_count,
+        sources,
+        permission_manifest_ref: permissionManifestRef,
+        created_by: "missionforge.pi_agent_runtime",
+        metadata: compactMetadata({
+          reason: redactText(reason, this.env),
+          turn_index: this.metrics.turn_count,
+          savepoints_ref: this.input.savepoints_ref,
+          session_ref: this.input.session_ref,
+          events_ref: this.input.events_ref,
+          context_observations_ref: this.input.context_observations_ref,
+          context_projection_ref: this.input.context_projection_ref,
+          pressure_ratio: diagnostics.pressure_ratio,
+          estimated_input_tokens: diagnostics.estimated_input_tokens,
+          model_context_window: diagnostics.model_context_window,
+          usable_input_budget: diagnostics.usable_input_budget ?? diagnostics.context_budget?.usable_input_budget,
+          budget_pressure_ratio: diagnostics.budget_pressure_ratio ?? diagnostics.context_budget?.budget_pressure_ratio,
+          soft_compact_ratio: diagnostics.soft_compact_ratio,
+          hard_compact_ratio: diagnostics.hard_compact_ratio,
+          cache_read_tokens: diagnostics.cache_read_tokens,
+          cache_write_tokens: diagnostics.cache_write_tokens,
+          recommended_action: diagnostics.recommended_action,
+          resume_boundary: "after_completed_turn",
+        }),
+      },
+      { workspaceRoot: this.workspaceRoot },
+    );
+  }
+
+  private async compactionSources(permissionManifestRef: string): Promise<Array<Record<string, unknown>>> {
+    const candidates = [
+      {
+        source_id: "source-001",
+        observation_id: "runtime-savepoints",
+        ref: this.input.savepoints_ref,
+        range_hint: `turn=${this.metrics.turn_count}`,
+        source_kind: "savepoints",
+      },
+      {
+        source_id: "source-002",
+        observation_id: "context-projection",
+        ref: this.input.context_projection_ref,
+        range_hint: "latest",
+        source_kind: "projection",
+      },
+      {
+        source_id: "source-003",
+        observation_id: "context-observations",
+        ref: this.input.context_observations_ref,
+        range_hint: "index",
+        source_kind: "observations",
+      },
+      {
+        source_id: "source-004",
+        observation_id: "runtime-input",
+        ref: this.input.input_ref,
+        range_hint: "contract",
+        source_kind: "runtime_input",
+      },
+    ];
+    const sources: Array<Record<string, unknown>> = [];
+    for (const candidate of candidates) {
+      const path = resolveWorkspaceRef(this.workspaceRoot, candidate.ref);
+      if (!(await fileExists(path))) continue;
+      sources.push({
+        source_id: candidate.source_id,
+        observation_id: candidate.observation_id,
+        ref: candidate.ref,
+        content_hash: await hashFile(path),
+        source_role: this.input.piworker_call.role,
+        permission_manifest_ref: permissionManifestRef,
+        range_hint: candidate.range_hint,
+        metadata: { source_kind: candidate.source_kind },
+      });
+    }
+    if (sources.length === 0) {
+      throw new Error("runtime context checkpoint requires at least one refs-only source");
+    }
+    return sources;
   }
 
   private async flushToolGatewayDecisions(): Promise<void> {
@@ -560,4 +687,19 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function hashFile(path: string): Promise<string> {
+  const content = await readFile(path);
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+function compactMetadata(values: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) continue;
+    if (typeof value === "number" && !Number.isFinite(value)) continue;
+    result[key] = value;
+  }
+  return result;
 }

@@ -12,6 +12,7 @@ from missionforge.task_contract import (
     TASK_CONTRACT_SCHEMA_VERSION,
     WORKSPACE_POLICY_SCHEMA_VERSION,
     PermissionManifest,
+    ProgressStreamGrant,
     TaskContract,
     TaskContractRevision,
     WorkspacePolicy,
@@ -286,6 +287,46 @@ class TaskContractTests(unittest.TestCase):
 
         self.assertEqual(manifest.extension_grants, [])
         self.assertEqual(manifest.to_dict()["extension_grants"], [])
+
+    def test_permission_manifest_declares_progress_streams(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "schema_version": PERMISSION_MANIFEST_SCHEMA_VERSION,
+                "manifest_id": "perm-progress",
+                "writable_refs": ["progress/progress.jsonl"],
+                "progress_streams": [
+                    {
+                        "stream_id": "user-progress",
+                        "stream_ref": "progress/progress.jsonl",
+                        "audience": "user",
+                        "renderer": "plain",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(PermissionManifest.from_dict(manifest.to_dict()), manifest)
+        self.assertEqual(
+            manifest.progress_streams[0],
+            ProgressStreamGrant(
+                stream_id="user-progress",
+                stream_ref="progress/progress.jsonl",
+                audience="user",
+                renderer="plain",
+            ),
+        )
+        self.assertEqual(manifest.to_dict()["progress_streams"][0]["stream_ref"], "progress/progress.jsonl")
+
+        with self.assertRaises(ContractValidationError):
+            PermissionManifest.from_dict(
+                {
+                    "schema_version": PERMISSION_MANIFEST_SCHEMA_VERSION,
+                    "manifest_id": "perm-progress-bad",
+                    "progress_streams": [
+                        {"stream_id": "user-progress", "stream_ref": "../progress.jsonl"},
+                    ],
+                }
+            )
 
     def test_extension_grants_validate_ids_packages_capabilities_and_env(self) -> None:
         valid = {

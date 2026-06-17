@@ -42,6 +42,7 @@ COMMAND_NAMES = {
     "extensions compile",
     "extensions inspect",
     "extensions verify",
+    "tui",
 }
 COMMAND_RESULT_STATUSES = {"completed", "failed", "blocked", "unsupported"}
 COMMAND_EXIT_CODE_BY_REASON = {
@@ -267,6 +268,8 @@ class MissionCLI:
             return self._command_extensions_inspect(args)
         if command == "extensions" and args.extensions_command == "verify":
             return self._command_extensions_verify(args)
+        if command == "tui":
+            return self._command_tui(args)
         return _error_result("inspect", "unsupported_operation", f"unsupported command: {command}")
 
     def _command_inspect(self, args: argparse.Namespace) -> MissionCommandResult:
@@ -514,6 +517,29 @@ class MissionCLI:
         except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
             return _error_result(command_name, "invalid_input", str(exc), refs=[manifest_ref, lock_ref])
 
+    def _command_tui(self, args: argparse.Namespace) -> MissionCommandResult:
+        command_name = "tui"
+        try:
+            from ..tui import build_tui_snapshot
+
+            if args.watch:
+                return _error_result(
+                    command_name,
+                    "invalid_input",
+                    "tui --watch is a terminal rendering mode; use it without --json through the CLI entrypoint",
+                )
+            snapshot = build_tui_snapshot(
+                args.workspace,
+                run_ref=args.run_ref,
+                max_files=args.max_files,
+                event_tail=args.event_tail,
+            )
+            data = _tui_command_data(snapshot)
+            refs = [item.ref for item in [*snapshot.event_files, *snapshot.report_files, *snapshot.artifact_files]]
+            return _success_result(command_name, data=data, refs=refs[: args.max_files])
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            return _error_result(command_name, "invalid_input", str(exc))
+
     def _run_validation(self, root: Path) -> tuple[int, str]:
         if self._validate_runner is not None:
             return self._validate_runner(root)
@@ -536,6 +562,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the optional CLI shell and print the refs-only command result."""
 
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "tui" and "--json" not in args:
+        from ..tui import build_tui_snapshot, render_tui_snapshot, watch_tui
+
+        parser = _command_parser()
+        namespace = parser.parse_args(args)
+        try:
+            if namespace.watch:
+                return watch_tui(
+                    namespace.workspace,
+                    run_ref=namespace.run_ref,
+                    interval_seconds=namespace.interval,
+                    max_files=namespace.max_files,
+                    event_tail=namespace.event_tail,
+                )
+            snapshot = build_tui_snapshot(
+                namespace.workspace,
+                run_ref=namespace.run_ref,
+                max_files=namespace.max_files,
+                event_tail=namespace.event_tail,
+            )
+            print(render_tui_snapshot(snapshot), end="")
+            return 0
+        except (OSError, json.JSONDecodeError, ContractValidationError) as exc:
+            print(f"missionforge tui: {exc}", file=sys.stderr)
+            return command_exit_code("invalid_input")
     cli = MissionCLI()
     result = cli.run_command(args)
     print(json.dumps(result.to_dict(), sort_keys=True))
@@ -619,6 +670,15 @@ def _command_parser() -> argparse.ArgumentParser:
         help="Workspace-relative ExtensionLoadReport output ref.",
     )
     ext_verify.add_argument("--json", action="store_true", help="Emit deterministic JSON.")
+
+    tui = subparsers.add_parser("tui", help="Watch a read-only terminal status dashboard.")
+    tui.add_argument("--workspace", default=".", help="Workspace root.")
+    tui.add_argument("--run-ref", default=".", help="Workspace-relative run root to observe.")
+    tui.add_argument("--interval", type=float, default=2.0, help="Refresh interval for --watch.")
+    tui.add_argument("--max-files", type=int, default=60, help="Maximum files to summarize per category.")
+    tui.add_argument("--event-tail", type=int, default=8, help="Number of recent event records to show per log.")
+    tui.add_argument("--watch", action="store_true", help="Refresh until interrupted.")
+    tui.add_argument("--json", action="store_true", help="Return snapshot JSON in command result.")
 
     def add_frontdesk_piworker_flags(command: argparse.ArgumentParser) -> None:
         command.add_argument(
@@ -726,6 +786,24 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     if root not in path.parents and path != root:
         raise ContractValidationError("MissionCLI ref escapes workspace")
     return path
+
+
+def _tui_command_data(snapshot: Any) -> dict[str, Any]:
+    return {
+        "snapshot_schema_version": snapshot.schema_version,
+        "workspace_scope": snapshot.workspace_scope,
+        "run_scope": snapshot.run_ref,
+        "generated_at": snapshot.generated_at,
+        "snapshot_status": snapshot.status,
+        "event_file_count": len(snapshot.event_files),
+        "report_file_count": len(snapshot.report_files),
+        "artifact_file_count": len(snapshot.artifact_files),
+        "warning_count": len(snapshot.warnings),
+        "warnings": list(snapshot.warnings),
+        "event_files": [item.to_dict() for item in snapshot.event_files],
+        "report_files": [item.to_dict() for item in snapshot.report_files],
+        "artifact_files": [item.to_dict() for item in snapshot.artifact_files],
+    }
 
 
 def _success_result(command: str, *, data: Mapping[str, Any], refs: list[str] | None = None) -> MissionCommandResult:

@@ -42,6 +42,29 @@ The adapter rejects raw prompt/transcript/payload/body/stdout/stderr/secret
 fields, validates safe refs and hashes, requires expected outputs, and rejects
 outputs outside writable refs.
 
+The Pi agent runtime also owns a product-neutral context pressure boundary.
+Projection diagnostics report estimated input tokens, model context window,
+pressure ratio, budget diagnostics, memory-layer diagnostics, and cache
+read/write tokens. At the soft boundary the runtime writes an explicit
+refs-only `missionforge.runtime_context_checkpoint.v1` artifact under the
+attempt context directory. At the hard boundary it stops at a completed-turn
+safe point before the next provider request and recommends resume with that
+checkpoint ref. This mechanism records refs and hashes only; it does not create
+hidden memory, run automatic compaction, or decide semantic sufficiency.
+
+The same boundary can accept an optional
+`missionforge.long_memory_packet.v1` artifact through
+`long_memory_packet_ref`. The ref must stay under the attempt directory, and
+the runtime validates that the packet is advisory-only, scoped to the current
+mission and PiWorker role, source-ref backed, and budgeted before injecting it
+ahead of archived and projected history. If no valid packet is configured, the
+runtime reports degraded long-memory diagnostics and continues with refs,
+checkpoints, segment catalogs, and recent context only. Provider-specific
+memory systems such as Mem0 must live outside runtime core and map into this
+packet contract. The default Mem0 mapping lives in
+`missionforge.adapters.long_memory` and is available only when the optional
+`mem0` extra is installed.
+
 Default tests run the PI Agent runtime in faux provider mode. Live provider
 execution is opt-in through `provider_mode="live"` and current Codex config
 resolution when requested. Provider credentials are passed only through child

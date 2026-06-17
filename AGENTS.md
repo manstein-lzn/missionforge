@@ -96,6 +96,30 @@ Keep these roles separate:
 - When adding tests, test contract shape, permission rejection, role separation,
   refs-only state, and revision behavior before broad semantic assertions.
 
+## Research Loop Principle
+
+For DeepResearch-style products, do not model research as a fixed checklist that
+Python completes. Model it as stateful evidence refinement:
+
+```text
+initial direction -> evidence observations -> research_state posterior
+  -> expert reviewer observation -> next research decision
+  -> independent judge acceptance when ready
+```
+
+The researcher PiWorker owns evolving the research state, source triage,
+taxonomy, synthesis, and next-step hypotheses. Reviewer and Judge PiWorkers must
+give complete, high-quality feedback in one pass rather than drip-feeding small
+issues across loops. MissionForge should only route on explicit LLM-authored
+state artifacts and enforce hard bounds: max rounds, role separation, refs,
+permission manifests, contract revision records, and final judge authority.
+
+The controller may be simple, but it must not become a Python research expert.
+It can route `continue`, `ready_for_judge`, `tool_blocked`,
+`revision_required`, `rejected`, and `accepted` decisions from structured
+artifacts. It must not infer missing domain concepts, rank papers, or decide
+semantic sufficiency itself.
+
 ## Legacy Code Guidance
 
 The existing MissionIR, runtime, verifier, steering, metric, and revision

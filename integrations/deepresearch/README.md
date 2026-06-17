@@ -64,6 +64,26 @@ The academic live tool surface currently declares:
 Scholar, Crossref, and GitHub. It is mechanical source acquisition glue, not a
 research planner or semantic ranker.
 
+Research loop direction:
+
+DeepResearch should converge toward a state-driven research loop. The initial
+topic and previous run refs are the prior, source packets and fetched evidence
+are observations, `research_state.json` is the posterior, the reviewer is an
+expert measurement of that posterior, and the independent judge is the final
+acceptance authority.
+
+The researcher should update evidence, reports, and research state as its view
+of the field improves. The reviewer should decide whether the state needs
+another research step, is ready for judge, is blocked by tools/evidence, or
+requires contract revision. Python should only route those explicit decisions
+within hard budgets; it should not infer domain concepts, rank papers, or
+decide semantic sufficiency.
+
+Reviewer and Judge PiWorkers are expected to give complete one-pass feedback.
+They should batch material blockers and repair guidance rather than drip-feeding
+small issues across loops. Residual risks should be disclosed without forcing
+endless iteration.
+
 Offline quick start:
 
 Minimal prompt-first path:
@@ -132,6 +152,30 @@ python3 -m missionforge_deepresearch.cli academic single-agent-run \
   --workspace /tmp/mf-dr-phase1
 ```
 
+`single-agent-run` can explicitly opt into the provider-neutral MissionForge
+long-memory packet boundary. The default remains off; without a provider the
+Pi runtime reports degraded long-memory diagnostics and relies on refs,
+checkpoints, segment catalogs, and recent context. With Mem0 installed through
+the optional `mem0` extra and a `MISSIONFORGE_MEM0_API_KEY` or `MEM0_API_KEY`,
+the researcher run can request a bounded advisory packet:
+
+```bash
+PYTHONPATH=src:integrations/deepresearch/src \
+python3 -m missionforge_deepresearch.cli academic single-agent-run \
+  --topic "compiler autotuning survey" \
+  --request-id demo-research-memory \
+  --workspace /tmp/mf-dr-memory \
+  --researcher-mode piworker \
+  --piworker-provider-config-source codex_current \
+  --long-memory-provider mem0 \
+  --long-memory-budget-tokens 2000 \
+  --long-memory-limit 8
+```
+
+The packet is written under the PiWorker attempt context directory and cited as
+evidence. It is advisory only: frozen contracts, explicit revisions, source
+packets, and judge evidence remain authoritative.
+
 The run package is written under:
 
 ```text
@@ -158,19 +202,48 @@ each round the reviewer writes:
 ```text
 reviews/round_XX/reviewer_report.md
 reviews/round_XX/next_research_directive.md
+reviews/round_XX/reviewer_observation.json
 ```
 
-The researcher then updates the evidence packet and report artifacts, and
-records the belief update at:
+`reviewer_observation.json` is the state-loop control artifact. It is small
+and refs-first, with a `decision` of `continue`, `ready_for_judge`,
+`tool_blocked`, `revision_required`, or `rejected`. Python routes only on that
+structured decision and the hard review-round budget; it does not read the
+review prose to infer research quality.
+
+`--review-rounds` is a maximum budget, not a requirement to run every round.
+The reviewer PiWorker decides whether another research step is worthwhile by
+writing `continue` or `ready_for_judge`; the controller only enforces the cap so
+the loop cannot run unbounded.
+
+When the observation decision is `continue`, the researcher updates the
+evidence packet and report artifacts, and records the posterior state at:
 
 ```text
 reviews/round_XX/research_state.json
 ```
 
+`research_state.json` is authored by the researcher, not by Python. It should
+summarize the current posterior with refs: prior state refs, the reviewer
+observation ref, belief updates, current hypotheses, confidence notes,
+unresolved gaps, next best actions, updated artifact refs, and evidence refs.
+Python treats this as a durable state artifact for later roles; it does not
+score the hypotheses or infer semantic sufficiency from the state body.
+
+When the decision is `ready_for_judge`, the review loop stops without another
+researcher revision and returns `draft_ready`. `tool_blocked` and
+`revision_required` stop as `blocked`; `rejected` stops as `failed`.
+
 The reviewer is a strict academic critique role. It may guide the next research
 step, but it cannot accept the product. The command returns
-`packages/deepresearch_reviewed_run_result.json` with `draft_ready` or
-`failed`.
+`packages/deepresearch_reviewed_run_result.json` with `draft_ready`,
+`blocked`, or `failed`.
+
+Reviewer feedback is expected to be complete in one pass. The reviewer should
+batch material blockers, evidence gaps, stale claims, and concrete repair
+directions into the current round instead of drip-feeding critique across
+future rounds. Minor polish and residual risks should be disclosed without
+forcing endless iteration.
 
 Each revision round also writes a round-local permission manifest under
 `reviews/round_XX/revision_permission_manifest.json` so the researcher can
@@ -191,11 +264,18 @@ python3 -m missionforge_deepresearch.cli academic reviewed-judged-run \
   --search-intent-mode piworker \
   --researcher-mode piworker \
   --judge-mode piworker \
-  --piworker-provider-config-source codex_current
+  --piworker-provider-config-source codex_current \
+  --stream-progress
 ```
 
 Only `reviewed-judged-run` can produce the final package, and only when the
-separate Judge PiWorker returns `accepted`.
+separate Judge PiWorker returns `accepted`. The judge sees the review and
+research-state trail as evidence refs when present, but reviewer readiness is
+guidance only and is not final acceptance.
+
+`--stream-progress` renders MissionForge user-visible progress events in the
+same terminal while the command runs. Progress goes to stderr and the final JSON
+result still prints to stdout, so scripts can keep parsing command output.
 
 Live source collection with the fixture researcher:
 
@@ -389,6 +469,12 @@ runs/{request_id}/packages/deepresearch_judged_run_result.json
 `packages/deepresearch_final_package.json` is written only when the separate
 Judge PiWorker returns `accepted`. `repair`, `revision_required`, and
 `rejected` are recorded without running a repair loop.
+
+The judge is also instructed to judge in one complete pass. If the decision is
+`repair`, the repair brief should batch every visible same-contract blocker so
+one repair attempt has enough information to fix the draft. Non-blocking
+limitations should be recorded as residual risk rather than used to force
+another loop.
 
 The judge report uses a strict refs-first JSON schema. The runtime may normalize
 mechanical field aliases from live Judge PiWorker output, but it does not change

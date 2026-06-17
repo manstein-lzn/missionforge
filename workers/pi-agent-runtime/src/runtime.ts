@@ -2,16 +2,24 @@ import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, streamSimple } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
 import { access } from "node:fs/promises";
-import type { AgentEvent, AgentMessage, AfterToolCallContext } from "@earendil-works/pi-agent-core";
+import type {
+  AgentEvent,
+  AgentMessage,
+  AfterToolCallContext,
+  ShouldStopAfterTurnContext,
+} from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 
 import type { RuntimeInput } from "./contract.js";
 import { ToolObservationRecorder } from "./context-observations.js";
-import { ContextProjector } from "./context-projector.js";
+import { contextPressureExceeded, ContextProjector } from "./context-projector.js";
+import type { ContextProjectionDiagnostics } from "./context-projector.js";
 import { EvidenceRecorder } from "./evidence-recorder.js";
 import { assertExtensionLoadReportAccepted, loadExtensionLock, writeExtensionLoadReport } from "./extensions.js";
 import { loadExtensionTools } from "./extensions.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
+import { degradedLongMemoryDiagnostics, loadLongMemoryContext } from "./long-memory.js";
+import type { LongMemoryContext } from "./long-memory.js";
 import { resolveWorkspaceRef } from "./paths.js";
 import { resolveProviderConfig } from "./provider-config.js";
 import { buildRuntimeOutput, writeRuntimeOutput } from "./result-writer.js";
@@ -25,19 +33,31 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   const before = await snapshotWorkspace(workspaceRoot);
   const recorder = new EvidenceRecorder(input, workspaceRoot);
   const observations = new ToolObservationRecorder({ input, workspaceRoot });
+  let longMemoryContext: LongMemoryContext = {
+    packet: null,
+    message: null,
+    diagnostics: degradedLongMemoryDiagnostics("long_memory context not loaded"),
+  };
   const projector = new ContextProjector({
     observations: () => observations.list(),
     currentTurnIndex: () => turnStartCount,
+    contextWindow: () => provider.model.contextWindow ?? 128000,
+    metrics: () => recorder.metrics,
+    longMemory: () => longMemoryContext,
   });
   const failures: string[] = [];
   const workerClaims: string[] = [];
   let turnStartCount = 0;
   let cancelled = false;
-  let compactionWritten = false;
+  let checkpointWritten = false;
+  let contextCheckpointRef: string | null = null;
+  let cancellationReason: string | null = null;
+  let latestProjectionDiagnostics: ContextProjectionDiagnostics | null = null;
   let unregisterFaux: (() => void) | undefined;
   let permissionBoundaryReady = false;
 
   try {
+    longMemoryContext = await loadLongMemoryContext(input, workspaceRoot);
     const extensionLock = await loadExtensionLock(input, workspaceRoot);
     const extensionLoadReport = await writeExtensionLoadReport(input, workspaceRoot, extensionLock);
     assertExtensionLoadReportAccepted(extensionLoadReport);
@@ -72,13 +92,15 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     permissionBoundaryReady = true;
 
     if (provider.mode === "faux") {
+      const configuredContextWindow = provider.model.contextWindow;
       const faux = registerFauxProvider({
         api: "missionforge-faux",
         provider: "missionforge-faux",
         models: [{ id: "missionforge-faux", name: "MissionForge Faux" }],
       });
       unregisterFaux = faux.unregister;
-      provider.model = faux.getModel();
+      const fauxModel = faux.getModel();
+      provider.model = { ...fauxModel, contextWindow: configuredContextWindow ?? fauxModel.contextWindow };
       const outputs = input.call_spec.expected_outputs;
       if (outputs.length === 0) throw new Error("PiWorker call requires at least one expected output");
       faux.setResponses([
@@ -102,8 +124,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       reasoning: provider.reasoning === "off" ? undefined : provider.reasoning,
       sessionId: input.call_id,
       convertToLlm: async (messages: AgentMessage[]): Promise<Message[]> => convertAgentMessagesToLlm(messages),
-      transformContext: async (messages: AgentMessage[]) =>
-        projector.project(await stripUnreplayableResponsesReasoning(messages)),
+      transformContext: async (messages: AgentMessage[]) => {
+        const projected = projector.project(
+          await stripUnreplayableResponsesReasoning(messages),
+          systemPrompt,
+          provider.model,
+          input,
+        );
+        latestProjectionDiagnostics = projector.diagnostics(input);
+        return projected;
+      },
       getApiKey: () => provider.apiKey,
       toolExecution: "parallel" as const,
       afterToolCall: async (context: AfterToolCallContext) => {
@@ -112,7 +142,35 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
         if (observation) await recorder.recordToolObservation(observation);
         return undefined;
       },
-      shouldStopAfterTurn: async () => {
+      shouldStopAfterTurn: async (turnContext: ShouldStopAfterTurnContext) => {
+        projector.project(
+          await stripUnreplayableResponsesReasoning(turnContext.context.messages),
+          systemPrompt,
+          provider.model,
+          input,
+        );
+        latestProjectionDiagnostics = projector.diagnostics(input);
+        const checkpointRef = await maybeWriteContextCheckpoint({
+          input,
+          workspaceRoot,
+          projector,
+          recorder,
+          diagnostics: latestProjectionDiagnostics,
+          reason: checkpointReason(latestProjectionDiagnostics),
+          alreadyWritten: () => checkpointWritten,
+          markWritten: (ref) => {
+            checkpointWritten = true;
+            contextCheckpointRef = ref;
+          },
+          onFailure: (message) => pushFailures(failures, [message]),
+        });
+        if (checkpointRef && contextPressureExceeded(latestProjectionDiagnostics)) {
+          cancelled = true;
+          cancellationReason =
+            `context pressure ${latestProjectionDiagnostics.pressure_ratio.toFixed(4)} reached hard threshold ` +
+            `${latestProjectionDiagnostics.hard_compact_ratio.toFixed(4)}`;
+          return true;
+        }
         if (input.piworker_call.role !== "frontdesk_author_piworker") return false;
         if (input.call_spec.expected_outputs.length === 0) return false;
         return (await missingExpectedOutputRefs(input, workspaceRoot)).length === 0;
@@ -131,10 +189,15 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
         event.type === "turn_end" &&
         provider.compactAfterTurns !== null &&
         turnStartCount >= provider.compactAfterTurns &&
-        !compactionWritten
+        !checkpointWritten
       ) {
-        compactionWritten = true;
-        await recorder.writeCompactionMarker(`turn_count >= ${provider.compactAfterTurns}`);
+        checkpointWritten = true;
+        latestProjectionDiagnostics = projector.diagnostics(input);
+        await projector.writeDiagnostics(input, workspaceRoot);
+        contextCheckpointRef = await recorder.writeContextCheckpoint(
+          `turn_count >= ${provider.compactAfterTurns}`,
+          latestProjectionDiagnostics,
+        );
       }
       if (
         event.type === "turn_end" &&
@@ -200,7 +263,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     durationMs,
     metrics: recorder.safeMetrics() as unknown as Record<string, unknown>,
     statusOverride: cancelled ? "cancelled" : undefined,
-    recommendedNextSteps: cancelled ? ["Run was cancelled at a MissionForge safe point."] : undefined,
+    recommendedNextSteps: cancelled
+      ? [
+          cancellationReason
+            ? `Run was cancelled at a MissionForge safe point: ${cancellationReason}.`
+            : "Run was cancelled at a MissionForge safe point.",
+          contextCheckpointRef
+            ? `Resume with checkpoint_refs including ${contextCheckpointRef}.`
+            : "Resume from the latest completed-turn savepoint.",
+        ]
+      : undefined,
   });
   await writeRuntimeOutput(workspaceRoot, input, output);
 }
@@ -231,6 +303,44 @@ function pushFailures(target: string[], candidates: string[]): void {
     if (!candidate || target.includes(candidate)) continue;
     target.push(candidate);
   }
+}
+
+interface MaybeWriteContextCheckpointOptions {
+  input: RuntimeInput;
+  workspaceRoot: string;
+  projector: ContextProjector;
+  recorder: EvidenceRecorder;
+  diagnostics: ContextProjectionDiagnostics;
+  reason: string;
+  alreadyWritten: () => boolean;
+  markWritten: (ref: string) => void;
+  onFailure: (message: string) => void;
+}
+
+async function maybeWriteContextCheckpoint(options: MaybeWriteContextCheckpointOptions): Promise<string | null> {
+  if (options.alreadyWritten()) return null;
+  if (options.diagnostics.recommended_action === "continue") return null;
+  try {
+    await options.projector.writeDiagnostics(options.input, options.workspaceRoot);
+    const checkpointRef = await options.recorder.writeContextCheckpoint(options.reason, options.diagnostics);
+    options.markWritten(checkpointRef);
+    return checkpointRef;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    options.onFailure(`runtime context checkpoint failed: ${message}`);
+    return null;
+  }
+}
+
+function checkpointReason(diagnostics: ContextProjectionDiagnostics): string {
+  return [
+    `context_pressure=${diagnostics.pressure_ratio.toFixed(4)}`,
+    `estimated_input_tokens=${diagnostics.estimated_input_tokens}`,
+    `usable_input_budget=${diagnostics.context_budget.usable_input_budget}`,
+    `model_context_window=${diagnostics.model_context_window}`,
+    `soft=${diagnostics.soft_compact_ratio}`,
+    `hard=${diagnostics.hard_compact_ratio}`,
+  ].join(" ");
 }
 
 function runtimeKnownFileRefs(input: RuntimeInput): string[] {
@@ -294,8 +404,11 @@ function buildSystemPrompt(input: RuntimeInput): string {
     lines.push(`Resume savepoint: ${input.resume.savepoint_ref}`);
     lines.push(`Resume session: ${input.resume.session_ref}`);
     lines.push(`Resume events: ${input.resume.events_ref}`);
+    if (input.resume.checkpoint_refs.length > 0) {
+      lines.push(`Resume context checkpoints: ${input.resume.checkpoint_refs.join(", ")}`);
+    }
     if (input.resume.summary_artifact_refs.length > 0) {
-      lines.push(`Resume summary artifacts: ${input.resume.summary_artifact_refs.join(", ")}`);
+      lines.push(`Resume semantic summary artifacts: ${input.resume.summary_artifact_refs.join(", ")}`);
     }
   }
   return lines.join("\n");
@@ -309,7 +422,8 @@ function buildUserPrompt(input: RuntimeInput): string {
       `Savepoint ref: ${input.resume.savepoint_ref}`,
       `Session ref: ${input.resume.session_ref}`,
       `Events ref: ${input.resume.events_ref}`,
-      `Summary artifact refs: ${input.resume.summary_artifact_refs.join(", ") || "<none>"}`,
+      `Context checkpoint refs: ${input.resume.checkpoint_refs.join(", ") || "<none>"}`,
+      `Semantic summary artifact refs: ${input.resume.summary_artifact_refs.join(", ") || "<none>"}`,
       `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
       "Do not claim completion as acceptance; MissionForge will verify after this attempt.",
       "Use only permitted tools and refs, then stop.",

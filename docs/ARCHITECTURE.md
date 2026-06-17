@@ -149,9 +149,14 @@ hash.
 
 ## Operator Surface
 
-The CLI/RPC adapters are operator surfaces for refs-only inspection, diagnosis,
-explicit control intent, review records, validation, and FrontDesk authoring.
-They are not a product execution facade.
+The CLI/RPC adapters are operator surfaces for refs-only inspection, terminal
+observation, diagnosis, explicit control intent, review records, validation,
+and FrontDesk authoring. They are not a product execution facade.
+
+The terminal observer (`tui`) reads existing workspace refs and renders compact
+metadata only. It does not mutate state, drive execution, perform semantic
+judgment, or expose raw prompts, transcripts, provider payloads, stdout/stderr
+bodies, artifact bodies, or secrets.
 
 There is no top-level `run` or `resume` command. Product execution should compile
 to `TaskContract`, `WorkspacePolicy`, and `PermissionManifest`, then use the

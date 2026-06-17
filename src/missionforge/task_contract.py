@@ -56,6 +56,43 @@ class ExtensionAdapterMode(StrEnum):
 
 
 @dataclass(frozen=True)
+class ProgressStreamGrant:
+    """Frozen declaration that a role may write user-visible progress events."""
+
+    stream_id: str
+    stream_ref: str
+    audience: str = "user"
+    renderer: str = "plain"
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ProgressStreamGrant":
+        data = require_mapping(payload, "progress_stream_grant")
+        grant = cls(
+            stream_id=require_non_empty_str(data.get("stream_id"), "progress_stream_grant.stream_id"),
+            stream_ref=validate_ref(data.get("stream_ref"), "progress_stream_grant.stream_ref"),
+            audience=require_non_empty_str(data.get("audience", "user"), "progress_stream_grant.audience"),
+            renderer=require_non_empty_str(data.get("renderer", "plain"), "progress_stream_grant.renderer"),
+        )
+        grant.validate()
+        return grant
+
+    def validate(self) -> None:
+        require_non_empty_str(self.stream_id, "progress_stream_grant.stream_id")
+        validate_ref(self.stream_ref, "progress_stream_grant.stream_ref")
+        require_non_empty_str(self.audience, "progress_stream_grant.audience")
+        require_non_empty_str(self.renderer, "progress_stream_grant.renderer")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return {
+            "stream_id": self.stream_id,
+            "stream_ref": self.stream_ref,
+            "audience": self.audience,
+            "renderer": self.renderer,
+        }
+
+
+@dataclass(frozen=True)
 class ContractClause:
     """Small reusable clause for outputs, constraints, criteria, and risks."""
 
@@ -266,6 +303,7 @@ class PermissionManifest:
     secret_ref: str | None = None
     unsupported_hard_policies: list[str] = field(default_factory=list)
     extension_grants: list[ExtensionGrant] = field(default_factory=list)
+    progress_streams: list[ProgressStreamGrant] = field(default_factory=list)
     schema_version: str = PERMISSION_MANIFEST_SCHEMA_VERSION
 
     @classmethod
@@ -314,6 +352,10 @@ class PermissionManifest:
                 data.get("extension_grants", []),
                 "permission_manifest.extension_grants",
             ),
+            progress_streams=_progress_streams_from_dicts(
+                data.get("progress_streams", []),
+                "permission_manifest.progress_streams",
+            ),
             schema_version=require_non_empty_str(
                 data.get("schema_version", PERMISSION_MANIFEST_SCHEMA_VERSION),
                 "permission_manifest.schema_version",
@@ -336,6 +378,7 @@ class PermissionManifest:
             validate_ref(self.secret_ref, "permission_manifest.secret_ref")
         require_str_list(self.unsupported_hard_policies, "permission_manifest.unsupported_hard_policies")
         _validate_extension_grants(self.extension_grants, "permission_manifest.extension_grants")
+        _validate_progress_streams(self.progress_streams, "permission_manifest.progress_streams")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -352,6 +395,7 @@ class PermissionManifest:
             "secret_ref": self.secret_ref,
             "unsupported_hard_policies": list(self.unsupported_hard_policies),
             "extension_grants": [grant.to_dict() for grant in self.extension_grants],
+            "progress_streams": [stream.to_dict() for stream in self.progress_streams],
         }
 
 
@@ -617,6 +661,14 @@ def _extension_grants_from_dicts(value: Any, field_name: str) -> list[ExtensionG
     return grants
 
 
+def _progress_streams_from_dicts(value: Any, field_name: str) -> list[ProgressStreamGrant]:
+    if not isinstance(value, list):
+        raise ContractValidationError(f"{field_name} must be a list")
+    streams = [ProgressStreamGrant.from_dict(require_mapping(item, f"{field_name}[]")) for item in value]
+    _validate_progress_streams(streams, field_name)
+    return streams
+
+
 def _output_clauses_from_dicts(value: Any, field_name: str) -> list[ContractClause]:
     return _mapped_clauses(
         value,
@@ -706,6 +758,19 @@ def _validate_extension_grants(grants: list[ExtensionGrant], field_name: str) ->
         if grant.grant_id in seen:
             raise ContractValidationError(f"duplicate {field_name} grant_id: {grant.grant_id}")
         seen.add(grant.grant_id)
+
+
+def _validate_progress_streams(streams: list[ProgressStreamGrant], field_name: str) -> None:
+    if not isinstance(streams, list):
+        raise ContractValidationError(f"{field_name} must be a list")
+    seen: set[str] = set()
+    for stream in streams:
+        if not isinstance(stream, ProgressStreamGrant):
+            raise ContractValidationError(f"{field_name}[] must be a ProgressStreamGrant")
+        stream.validate()
+        if stream.stream_id in seen:
+            raise ContractValidationError(f"duplicate {field_name} stream_id: {stream.stream_id}")
+        seen.add(stream.stream_id)
 
 
 def _ref_list(value: Any, field_name: str) -> list[str]:

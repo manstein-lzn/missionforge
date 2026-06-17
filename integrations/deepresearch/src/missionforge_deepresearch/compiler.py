@@ -20,6 +20,7 @@ from missionforge.task_contract import (
     ExtensionGrant,
     NetworkPolicy,
     PermissionManifest,
+    ProgressStreamGrant,
     TaskContract,
     WorkspacePolicy,
 )
@@ -58,6 +59,7 @@ EXPECTED_DRAFT_REFS = [
     "reports/source_gaps.md",
 ]
 EXPECTED_WORKER_OUTPUT_REFS = [SOURCE_PACKET_REF, *EXPECTED_DRAFT_REFS]
+PROGRESS_STREAM_REF = "progress/progress.jsonl"
 
 
 @dataclass(frozen=True)
@@ -572,12 +574,20 @@ def _permission_manifest(request: AcademicResearchRequest, *, source_mode: str) 
         manifest_id=f"deepresearch-{request.request_id}-permissions",
         workspace_policy_ref=WORKSPACE_POLICY_REF,
         readable_refs=["contract", "policy", "projections", "manuals", "sources", "product_contract", "compiled"],
-        writable_refs=["reports", SOURCE_PACKET_REF, "attempts", "packages", "ledgers", "compiled"],
+        writable_refs=["reports", SOURCE_PACKET_REF, "attempts", "packages", "ledgers", "compiled", PROGRESS_STREAM_REF],
         denied_refs=["secrets"],
         allowed_commands=[],
         network_policy=NetworkPolicy.ENABLED if source_mode == "live" else NetworkPolicy.DISABLED,
         env_allowlist=["PATH"] if source_mode == "live" else [],
         extension_grants=extension_grants,
+        progress_streams=[
+            ProgressStreamGrant(
+                stream_id="user-progress",
+                stream_ref=PROGRESS_STREAM_REF,
+                audience="user",
+                renderer="plain",
+            )
+        ],
     )
 
 
@@ -710,6 +720,21 @@ Own the semantic work:
 - cite source identifiers from `sources/source_packet.json` in material claims;
 - write concise artifacts for an R&D audience.
 
+State refinement:
+
+- In reviewer-guided revision calls, treat prior `research_state.json` refs as
+  the previous posterior and reviewer observations as expert measurements.
+- Update evidence, report artifacts, and the posterior together; do not merely
+  append sources without changing the synthesis state.
+- When `reviews/round_XX/research_state.json` is an expected output, write a
+  refs-first state object with `schema_version`, `request_id`, `round_index`,
+  `posterior_kind`, `contract_ref`, `contract_hash`, `source_packet_ref`,
+  `prior_state_refs`, `reviewer_observation_ref`, `reviewer_guidance_refs`,
+  `belief_updates`, `current_hypotheses`, `confidence_notes`, `unresolved_gaps`,
+  `next_best_actions`, `updated_artifact_refs`, and `evidence_refs`.
+- Use refs for support and risk pointers. Do not put raw transcripts, prompts,
+  provider payloads, or secrets in research state.
+
 High-quality contract bar:
 
 - Minimum source records: `{profile.min_source_records}`.
@@ -747,6 +772,9 @@ Evidence and citation contract:
 - Each source record must contain `source_id`, `title`, `source_type`, and at
   least one locator such as `url`, `doi`, `source_ref`, `github_repo`, or
   `arxiv_id`.
+- `source_ref` may be a MissionForge ref, an external URL, or a provider locator
+  label such as `web_search:query`; prefer also carrying `url` when the source is
+  externally retrievable.
 - Source records should include these provenance fields when available:
 
 {required_source_fields}

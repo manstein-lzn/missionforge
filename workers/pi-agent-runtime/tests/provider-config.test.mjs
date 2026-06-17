@@ -14,6 +14,7 @@ test("resolveProviderConfig creates a live OpenAI Responses model", () => {
     MISSIONFORGE_PI_AGENT_TOOL_TIMEOUT_SECONDS: "3",
     MISSIONFORGE_PI_AGENT_CANCEL_AFTER_TURNS: "1",
     MISSIONFORGE_PI_AGENT_COMPACT_AFTER_TURNS: "1",
+    MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW: "64000",
   });
 
   assert.equal(config.mode, "live");
@@ -26,6 +27,7 @@ test("resolveProviderConfig creates a live OpenAI Responses model", () => {
   assert.equal(config.toolTimeoutSeconds, 3);
   assert.equal(config.cancelAfterTurns, 1);
   assert.equal(config.compactAfterTurns, 1);
+  assert.equal(config.model.contextWindow, 64000);
 });
 
 test("resolveProviderConfig validates cancellation and compaction turn fields", () => {
@@ -42,6 +44,14 @@ test("resolveProviderConfig validates cancellation and compaction turn fields", 
       resolveProviderConfig({
         MISSIONFORGE_PI_AGENT_PROVIDER: "faux",
         MISSIONFORGE_PI_AGENT_COMPACT_AFTER_TURNS: "0",
+      }),
+    /Invalid positive integer/,
+  );
+  assert.throws(
+    () =>
+      resolveProviderConfig({
+        MISSIONFORGE_PI_AGENT_PROVIDER: "faux",
+        MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW: "0",
       }),
     /Invalid positive integer/,
   );
