@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from missionforge.contracts import ContractValidationError, assert_refs_only_payload, stable_json_hash, validate_ref
+from missionforge.interaction import FileInteractionPort
 from missionforge.kernel import (
     Artifact,
     ArtifactRole,
     FailurePolicy,
     Flow,
     FlowLedgerEvent,
+    FlowLedgerEventKind,
     FlowRunResult,
     Step,
     StepCompileContext,
@@ -169,7 +171,7 @@ def run_deepresearch_kernel_v2(
     profile = research_intensity_profile(request.research_intensity)
     _write_kernel_v2_workspace(request, run_root=run_root, contract=contract)
     context = StepCompileContext(
-        flow_id=f"deepresearch-v2-{request.request_id}",
+        flow_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
         contract_id=contract["contract_id"],
         contract_hash=contract_hash,
         contract_ref=KERNEL_V2_CONTRACT_REF,
@@ -185,6 +187,7 @@ def run_deepresearch_kernel_v2(
         max_steps=_kernel_v2_max_steps(profile.max_review_rounds),
         resume=resume,
         event_sink=event_sink,
+        interaction_port=FileInteractionPort(run_root),
         runtime_progress_sink=runtime_progress_sink,
     )
     _write_kernel_v2_report_html(run_root)
@@ -201,6 +204,12 @@ def run_deepresearch_kernel_v2(
     )
     write_json_ref(root, result.result_ref, result.to_dict())
     return result
+
+
+def deepresearch_kernel_v2_flow_run_id(request_id: str) -> str:
+    """Return the product flow run id used by Kernel v2 and interaction events."""
+
+    return f"deepresearch-v2-{request_id}"
 
 
 def build_deepresearch_kernel_v2_flow(
@@ -489,9 +498,18 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "Do not spend the whole PiWorker budget on source gathering. Once you have enough representative evidence, stop fetching and write the required artifacts.",
             "Reserve the final part of the step for writing. If the evidence is incomplete, write a useful report with explicit gaps instead of continuing to search until the runtime stops you.",
             "Feedback paths are `reviews/reviewer_observation.json` and `judge/judge_report.json` when those files exist.",
+            "User intervention snapshots may appear as visible refs ending in `interaction/safe_points/*-user_events.json`. Read them when visible.",
+            "Treat user events as timely guidance or interruption signals, not as frozen task authority.",
+            "If a user event changes scope, success criteria, audience, or acceptance standards, do not silently rewrite the task. Mark the issue explicitly in `state/researcher_control.json` using `blocked` or explain the needed contract revision.",
+            "If a user event is compatible with the frozen contract, incorporate it in the next safe phase and mention how it affected the research state.",
             "Required outputs: `sources/source_packet.json`, `reports/final_report.md`, `reports/evidence_index.md`, `reports/source_gaps.md`, `claims/claim_index.json`, `state/research_state.json`, and `state/researcher_control.json`.",
             "On every pass, write or update every required output ref, even when only one artifact needed a semantic change.",
             "Treat `state/research_state.json` as your working posterior: summarize source strategy, evidence coverage, current synthesis, confidence notes, unresolved gaps, and next actions with refs.",
+            "Also treat `state/research_state.json` as the user-facing project progress board. Keep it concise and current, not as a raw event log.",
+            "Include project-progress fields when possible: `project_phase`, `latest_project_update`, `project_milestones`, `coverage_map`, and `next_actions`.",
+            "`project_milestones` should be an array of compact objects with `id`, `title`, `status`, `notes`, and optional `evidence_refs`; use statuses such as `pending`, `active`, `done`, `blocked`, or `deferred`.",
+            "`coverage_map` should summarize the major research dimensions, evidence state, confidence, and gaps so a TUI can show whether the project is actually converging.",
+            "Update `state/research_state.json` after planning, after each meaningful evidence batch, before review handoff, and after repair passes.",
             "Treat `sources/source_packet.json` as the durable source authority. Include `source_records` with `source_id`, `title`, `source_type`, `year`, `locator`, `evidence_note`, and `evidence_strength` when available.",
             "Treat `claims/claim_index.json` as the claim-to-evidence audit artifact. Use schema_version `missionforge_deepresearch.kernel_v2.claim_index.v1` and a `claims` array. Each claim should include `claim_id`, `claim`, `supporting_source_ids`, `evidence_strength`, `verification_status`, and `confidence_note`.",
             "Use citations like [S1] for material claims.",
@@ -541,6 +559,9 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "# DeepResearch v2 Reviewer Rubric",
             "",
             "Review the researcher-owned workspace. Do not rewrite artifacts.",
+            "User intervention snapshots may appear as visible refs ending in `interaction/safe_points/*-user_events.json`. Read them when visible.",
+            "Treat user events as reviewer context, not as automatic contract changes.",
+            "If the user intervention materially changes scope or acceptance criteria, prefer `blocked` or `rejected` with a revision note over silently accepting a changed task.",
             "Return `ready_for_judge`, `revise_report`, `continue`, `blocked`, or `rejected` in the decision field.",
             "Prefer `ready_for_judge` when the report is usable, structurally complete, cited, and explicit about evidence gaps; do not use `continue` merely because deeper research would be valuable.",
             "Use `revise_report` for bounded report defects such as truncation, missing required sections, missing References, citation formatting gaps, or incomplete conclusion.",
@@ -579,6 +600,8 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "# DeepResearch v2 Judge Rubric",
             "",
             "Independently judge the final artifacts against the frozen contract.",
+            "User intervention snapshots may appear as visible refs ending in `interaction/safe_points/*-user_events.json`. Read them when visible.",
+            "Do not accept a package that silently follows a user intervention that conflicts with the frozen contract; require a revision instead.",
             "Return `accepted`, `repair`, `revision_required`, or `rejected` in the decision field.",
             "Use `repair` only for bounded same-contract fixes that the researcher can perform without changing the task contract.",
             "Judge the staged package as a whole: report, evidence index, source gaps, claim index, and research state must agree.",
@@ -674,6 +697,41 @@ def _fixture_research_state(source_packet: Mapping[str, Any]) -> dict[str, Any]:
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "evidence_index_ref": KERNEL_V2_EVIDENCE_INDEX_REF,
         "source_gaps_ref": KERNEL_V2_SOURCE_GAPS_REF,
+        "project_phase": "final_package_ready",
+        "latest_project_update": "Fixture mode completed the structural research package.",
+        "project_milestones": [
+            {
+                "id": "scope",
+                "title": "Scope and output contract",
+                "status": "done",
+                "notes": "Fixture request and output contract were prepared.",
+                "evidence_refs": [KERNEL_V2_OUTPUT_CONTRACT_REF],
+            },
+            {
+                "id": "evidence",
+                "title": "Evidence packet",
+                "status": "done",
+                "notes": "Fixture evidence packet was written.",
+                "evidence_refs": [KERNEL_V2_SOURCE_PACKET_REF],
+            },
+            {
+                "id": "synthesis",
+                "title": "Report synthesis",
+                "status": "done",
+                "notes": "Fixture final report and evidence index were written.",
+                "evidence_refs": [KERNEL_V2_FINAL_REPORT_REF, KERNEL_V2_EVIDENCE_INDEX_REF],
+            },
+        ],
+        "coverage_map": [
+            {
+                "dimension": "runtime wiring",
+                "status": "covered",
+                "confidence": "fixture",
+                "gaps": ["Fixture mode does not judge live research quality."],
+                "evidence_refs": [KERNEL_V2_SOURCE_PACKET_REF],
+            }
+        ],
+        "next_actions": ["Use live PiWorker mode for semantic research quality."],
         "source_count": len(source_packet.get("source_records", [])),
         "current_synthesis": "Fixture mode validates researcher-owned workspace boundaries.",
         "unresolved_gaps": ["Fixture mode does not judge live research quality."],
@@ -835,21 +893,37 @@ def _write_kernel_v2_run_status(
     run_root: Path,
     flow_result: FlowRunResult,
 ) -> str:
-    status_payload = _kernel_v2_run_status(request, flow_result=flow_result)
+    status_payload = _kernel_v2_run_status(
+        request,
+        flow_result=flow_result,
+        interaction_summary=_kernel_v2_interaction_summary(run_root, flow_result=flow_result),
+    )
     write_json_ref(run_root, KERNEL_V2_RUN_STATUS_REF, status_payload)
     return KERNEL_V2_RUN_STATUS_REF
 
 
-def _kernel_v2_run_status(request: AcademicResearchRequest, *, flow_result: FlowRunResult) -> dict[str, Any]:
+def _kernel_v2_run_status(
+    request: AcademicResearchRequest,
+    *,
+    flow_result: FlowRunResult,
+    interaction_summary: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     status = _kernel_v2_projected_status(flow_result)
     last_record = flow_result.step_results[-1].step_record if flow_result.step_results else None
     metadata = dict(last_record.metadata) if last_record is not None else {}
     failure_summary = metadata.get("failure_summary")
+    flow_stop_reason = str(flow_result.flow_result.metadata.get("stop_reason") or "")
+    interaction_stop_reason = flow_stop_reason if flow_stop_reason.startswith("user_") else ""
+    interaction = dict(interaction_summary or {})
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2.run_status.v1",
         "request_id": request.request_id,
         "status": status,
         "flow_status": flow_result.flow_result.status,
+        "flow_stop_reason": flow_stop_reason,
+        "interaction_stop_reason": interaction_stop_reason,
+        "pending_user_event_count": interaction.get("pending_user_event_count", 0),
+        "last_interaction_snapshot_ref": interaction.get("last_interaction_snapshot_ref", ""),
         "blocked_step_id": last_record.step_id if last_record is not None and status.endswith("_blocked") else "",
         "blocker_kind": _blocker_kind(metadata) if last_record is not None and status.endswith("_blocked") else "",
         "failure_summary": failure_summary if isinstance(failure_summary, str) else "",
@@ -859,6 +933,40 @@ def _kernel_v2_run_status(request: AcademicResearchRequest, *, flow_result: Flow
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
         "claim_index_validation_ref": KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
         "usage_summary_ref": KERNEL_V2_USAGE_SUMMARY_REF,
+    }
+
+
+def _kernel_v2_interaction_summary(run_root: Path, *, flow_result: FlowRunResult) -> dict[str, Any]:
+    if not flow_result.flow_result.ledger_refs:
+        return {}
+    ledger_ref = flow_result.flow_result.ledger_refs[0]
+    ledger_path = run_root / ledger_ref
+    if not ledger_path.is_file():
+        return {}
+    event_count = 0
+    last_snapshot_ref = ""
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("kind") != FlowLedgerEventKind.INTERACTION_RECORDED.value:
+            continue
+        metadata = event.get("metadata")
+        refs = event.get("refs")
+        if isinstance(metadata, Mapping):
+            count = metadata.get("event_count")
+            if isinstance(count, int):
+                event_count += count
+        if isinstance(refs, list) and refs:
+            last_ref = refs[-1]
+            if isinstance(last_ref, str):
+                last_snapshot_ref = last_ref
+    return {
+        "pending_user_event_count": event_count,
+        "last_interaction_snapshot_ref": last_snapshot_ref,
     }
 
 

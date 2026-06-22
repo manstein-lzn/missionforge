@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from missionforge.extensions import ExtensionLock
+from missionforge.interaction import FileInteractionPort, UserEventKind
 from missionforge.kernel import FlowLedgerEventKind
 from missionforge.piworker_call import PiWorkerCallRole
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
@@ -14,6 +15,7 @@ from missionforge_deepresearch.kernel_v2 import (
     AcademicResearchRequest,
     KernelV2FixtureAdapter,
     build_deepresearch_kernel_v2_flow,
+    deepresearch_kernel_v2_flow_run_id,
     run_deepresearch_kernel_v2,
 )
 from missionforge_deepresearch.product_contract import ResearchIntensity
@@ -49,6 +51,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             reviewer_observation_exists = (root / result.reviewer_observation_ref).is_file()
             judge_report_exists = (root / result.judge_report_ref).is_file()
             run_status = _read_json(root, result.run_status_ref)
+            research_state = _read_json(root, f"{result.run_workspace_ref}/state/research_state.json")
             usage_summary = _read_json(root, result.usage_summary_ref)
 
         self.assertEqual(result.status, "accepted")
@@ -61,6 +64,9 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertTrue(reviewer_observation_exists)
         self.assertTrue(judge_report_exists)
         self.assertEqual(run_status["status"], "accepted")
+        self.assertEqual(research_state["project_phase"], "final_package_ready")
+        self.assertIn("project_milestones", research_state)
+        self.assertIn("coverage_map", research_state)
         self.assertEqual([record["step_id"] for record in step_records], ["researcher", "reviewer", "judge"])
         self.assertEqual([call["role"] for call in calls], ["executor_piworker", "executor_piworker", "judge_piworker"])
         self.assertIn("sources/initial_source_packet.json", calls[0]["visible_refs"])
@@ -107,6 +113,81 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(ledger_events[-2]["route_value"], "accepted")
         self.assertEqual(ledger_events[-2]["route_target"], "accepted")
 
+    def test_runtime_user_intervention_reaches_researcher_safe_point(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-interaction",
+            topic="deep research platform survey",
+            audience="MissionForge runtime team",
+            language="zh",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_root = root / "runs/kernel-v2-interaction"
+            port = FileInteractionPort(run_root)
+            event = port.submit_text(
+                "请优先关注用户体验和进度可观测性。",
+                run_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
+                target="flow",
+            )
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+            step_record = _read_json(root / result.run_workspace_ref, flow_result["step_record_refs"][0])
+            call = _read_json(root / result.run_workspace_ref, step_record["piworker_call_ref"])
+            snapshot_ref = (
+                "kernel/deepresearch-v2-kernel-v2-interaction/runs/"
+                "deepresearch-v2-kernel-v2-interaction/executions/001/"
+                "interaction/safe_points/001-researcher-user_events.json"
+            )
+            snapshot = _read_json(root / result.run_workspace_ref, snapshot_ref)
+            acks = _read_jsonl(root / result.run_workspace_ref, "interaction/user_event_acks.jsonl")
+            ledger_events = _read_jsonl(root, result.flow_ledger_ref)
+
+        self.assertIn(snapshot_ref, step_record["input_refs"])
+        self.assertIn(snapshot_ref, call["visible_refs"])
+        self.assertEqual(snapshot["events"][0]["event_id"], event.event_id)
+        self.assertEqual(acks[0]["event_id"], event.event_id)
+        self.assertEqual(acks[0]["snapshot_ref"], snapshot_ref)
+        self.assertTrue(any(item["kind"] == FlowLedgerEventKind.INTERACTION_RECORDED.value for item in ledger_events))
+
+    def test_pause_intervention_blocks_before_researcher_call(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-pause",
+            topic="deep research platform survey",
+            audience="MissionForge runtime team",
+            language="zh",
+        )
+        adapter = CountingKernelV2FixtureAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_root = root / "runs/kernel-v2-pause"
+            port = FileInteractionPort(run_root)
+            port.submit_text(
+                "暂停。",
+                run_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
+                target="flow",
+                kind=UserEventKind.PAUSE_REQUEST,
+            )
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=adapter,
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+            run_status = _read_json(root, result.run_status_ref)
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(adapter.call_count, 0)
+        self.assertEqual(flow_result["metadata"]["stop_reason"], "user_pause_requested")
+        self.assertEqual(run_status["interaction_stop_reason"], "user_pause_requested")
+        self.assertEqual(run_status["pending_user_event_count"], 1)
+        self.assertIn("interaction/safe_points/001-researcher-user_events.json", run_status["last_interaction_snapshot_ref"])
+
     def test_researcher_brief_requires_artifacts_before_budget_exhaustion(self) -> None:
         request = AcademicResearchRequest(
             request_id="kernel-v2-brief",
@@ -122,6 +203,8 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("Prefer a reviewable partial synthesis over no artifacts.", brief)
         self.assertIn("Work in phases: plan -> evidence batch -> synthesis -> repair.", brief)
         self.assertIn("multiple tool calls in parallel", brief)
+        self.assertIn("user-facing project progress board", brief)
+        self.assertIn("project_milestones", brief)
 
     def test_reviewer_and_judge_rubrics_do_not_penalize_parallel_batches(self) -> None:
         request = AcademicResearchRequest(

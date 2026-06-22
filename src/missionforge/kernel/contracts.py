@@ -57,6 +57,7 @@ class FlowLedgerEventKind(StrEnum):
     STARTED = "started"
     STEP_STARTED = "step_started"
     STEP_RECORDED = "step_recorded"
+    INTERACTION_RECORDED = "interaction_recorded"
     ROUTED = "routed"
     PROJECTIONS_RECORDED = "projections_recorded"
     STOPPED = "stopped"

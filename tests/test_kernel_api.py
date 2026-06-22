@@ -29,6 +29,7 @@ from missionforge.kernel import (
 )
 from missionforge.contracts import stable_json_hash
 from missionforge.extensions import ExtensionLock
+from missionforge.interaction import FileInteractionPort, InteractionDelivery, UserEventKind
 from missionforge.piworker_call import PiWorkerCallResultStatus, PiWorkerCallRole
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from missionforge.task_contract import ExtensionCapability, NetworkPolicy
@@ -1019,6 +1020,164 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(ledger_events[-2]["route_value"], "invalid")
         self.assertEqual(ledger_events[-2]["route_target"], "blocked")
         self.assertEqual(ledger_events[-1]["stop_reason"], "invalid_decision_artifact")
+
+    def test_run_flow_exposes_user_intervention_at_safe_point(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(root)
+            port.submit_text(
+                "请优先关注工程可落地性。",
+                run_id="demo-flow",
+                target="flow",
+                kind=UserEventKind.MESSAGE,
+            )
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelFlowAdapter(), interaction_port=port)
+            step_record = result.step_results[0].step_record
+            call = _read_json(root, step_record.piworker_call_ref)
+            permission_manifest = _read_json(root, step_record.permission_manifest_ref)
+            snapshot_ref = "kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json"
+            snapshot = _read_json(root, snapshot_ref)
+            ledger_events = _read_jsonl(root, result.flow_result.ledger_refs[0])
+
+        self.assertIn(snapshot_ref, step_record.input_refs)
+        self.assertIn(snapshot_ref, call["visible_refs"])
+        self.assertIn(snapshot_ref, permission_manifest["readable_refs"])
+        self.assertNotIn("interaction", permission_manifest["readable_refs"])
+        self.assertNotIn("interaction", permission_manifest["writable_refs"])
+        self.assertEqual(snapshot["event_count"], 1)
+        self.assertTrue(any(event["kind"] == FlowLedgerEventKind.INTERACTION_RECORDED.value for event in ledger_events))
+
+    def test_run_flow_keeps_user_intervention_text_out_of_ledger_and_result(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+        user_text = "请优先关注工程可落地性，不要泛泛而谈。"
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(root)
+            port.submit_text(user_text, run_id="demo-flow", target="flow", kind=UserEventKind.MESSAGE)
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelFlowAdapter(), interaction_port=port)
+            snapshot_ref = "kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json"
+            event_log = (root / "interaction/user_events.jsonl").read_text(encoding="utf-8")
+            snapshot = (root / snapshot_ref).read_text(encoding="utf-8")
+            ledger = (root / result.flow_result.ledger_refs[0]).read_text(encoding="utf-8")
+            flow_result = (root / result.flow_result_ref).read_text(encoding="utf-8")
+
+        self.assertIn(user_text, event_log)
+        self.assertIn(user_text, snapshot)
+        self.assertNotIn(user_text, ledger)
+        self.assertNotIn(user_text, flow_result)
+
+    def test_run_flow_does_not_ack_user_intervention_when_step_blocks(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+            failure=FailurePolicy(retries=0, on_exhausted=StepStatus.BLOCKED),
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(root)
+            port.submit_text("这个补充不能在失败 step 后被吞掉。", run_id="demo-flow", target="flow")
+            result = run_flow(
+                flow,
+                context=_context(),
+                workspace=root,
+                adapter=_KernelFlakyAdapter(failures_before_success=1),
+                interaction_port=port,
+            )
+            pending = port.pending_user_events(run_id="demo-flow", target="reviewer")
+            acks = port.read_acks(run_id="demo-flow")
+
+        self.assertEqual(result.flow_result.status, "blocked")
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(acks, [])
+
+    def test_run_flow_blocks_on_user_pause_without_calling_adapter(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+        adapter = _KernelCountingFlowAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(tmpdir)
+            port.submit_text(
+                "暂停一下。",
+                run_id="demo-flow",
+                target="flow",
+                kind=UserEventKind.PAUSE_REQUEST,
+                delivery=InteractionDelivery.NEXT_SAFE_POINT,
+            )
+            result = run_flow(flow, context=_context(), workspace=root, adapter=adapter, interaction_port=port)
+            ledger_events = _read_jsonl(root, result.flow_result.ledger_refs[0])
+            interaction_event = next(event for event in ledger_events if event["kind"] == FlowLedgerEventKind.INTERACTION_RECORDED.value)
+
+        self.assertEqual(result.flow_result.status, "blocked")
+        self.assertEqual(result.flow_result.metadata["stop_reason"], "user_pause_requested")
+        self.assertEqual(adapter.call_count, 0)
+        self.assertEqual(result.step_results, [])
+        self.assertEqual(
+            interaction_event["refs"],
+            ["kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json"],
+        )
+        self.assertEqual(interaction_event["metadata"]["event_count"], 1)
 
     def test_run_flow_blocks_and_sanitizes_unsafe_decision_value(self) -> None:
         reviewer = Step(

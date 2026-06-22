@@ -14,8 +14,15 @@ from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
 from missionforge.piworker_progress import PiWorkerProgressSink
 from missionforge.progress_stream import DEFAULT_PROGRESS_REF, ProgressStreamWriter, stream_progress
 
+from .frontdesk import (
+    FRONTDESK_ASSISTANT_TURN_REF,
+    FrontDeskFixtureAdapter,
+    approve_frontdesk_requirements,
+    run_deepresearch_frontdesk_turn,
+)
 from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from .product_contract import AcademicResearchRequest, ResearchIntensity, research_intensity_profile
+from .tui import FrontDeskTuiConfig, run_frontdesk_tui
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -25,6 +32,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     academic_sub = academic.add_subparsers(dest="command", required=True)
     kernel_v2_parser = academic_sub.add_parser("kernel-v2-run")
     _add_kernel_v2_arguments(kernel_v2_parser)
+    frontdesk_step_parser = academic_sub.add_parser("frontdesk-step")
+    _add_frontdesk_step_arguments(frontdesk_step_parser)
+    frontdesk_run_parser = academic_sub.add_parser("frontdesk-run")
+    _add_frontdesk_run_arguments(frontdesk_run_parser)
+    frontdesk_tui_parser = academic_sub.add_parser("frontdesk-tui")
+    _add_frontdesk_tui_arguments(frontdesk_tui_parser)
     args = parser.parse_args(argv)
 
     if args.profile == "academic" and args.command == "kernel-v2-run":
@@ -50,6 +63,86 @@ def main(argv: Sequence[str] | None = None) -> int:
                 event_sink=_kernel_v2_progress_event_sink(progress),
                 runtime_progress_sink=_kernel_v2_runtime_progress_sink(progress),
             ),
+        )
+    if args.profile == "academic" and args.command == "frontdesk-step":
+        piworker_config, piworker_env = _piworker_inputs(args, args.research_intensity)
+        adapter = (
+            FrontDeskFixtureAdapter()
+            if args.frontdesk_adapter_mode == "fixture"
+            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
+        )
+        result = run_deepresearch_frontdesk_turn(
+            initial_input=args.initial_input,
+            user_message=args.message,
+            request_id=args.request_id,
+            workspace=Path(args.workspace),
+            adapter=adapter,
+            audience=args.audience,
+            language=args.language,
+            research_intensity=args.research_intensity,
+            live_extension_mode=args.live_extension_mode,
+        )
+        _emit_user_artifact_summary(args, result)
+        print(json.dumps(result.to_dict(), sort_keys=True, ensure_ascii=False))
+        return 0
+    if args.profile == "academic" and args.command == "frontdesk-run":
+        request = approve_frontdesk_requirements(
+            request_id=args.request_id,
+            workspace=Path(args.workspace),
+        )
+        piworker_config, piworker_env = _piworker_inputs(args, request.research_intensity)
+        adapter = (
+            KernelV2FixtureAdapter()
+            if args.kernel_v2_adapter_mode == "fixture"
+            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
+        )
+        return _run_and_emit_result(
+            args,
+            lambda: run_deepresearch_kernel_v2(
+                request,
+                workspace=Path(args.workspace),
+                adapter=adapter,
+                live_extension_mode=args.live_extension_mode,
+            ),
+            progress_runner=lambda progress: run_deepresearch_kernel_v2(
+                request,
+                workspace=Path(args.workspace),
+                adapter=adapter,
+                live_extension_mode=args.live_extension_mode,
+                event_sink=_kernel_v2_progress_event_sink(progress),
+                runtime_progress_sink=_kernel_v2_runtime_progress_sink(progress),
+            ),
+        )
+    if args.profile == "academic" and args.command == "frontdesk-tui":
+        frontdesk_config, frontdesk_env = _piworker_inputs(args, args.research_intensity)
+        frontdesk_adapter = (
+            FrontDeskFixtureAdapter()
+            if args.frontdesk_adapter_mode == "fixture"
+            else PiAgentRuntimeAdapter(frontdesk_config, environ=frontdesk_env)
+        )
+
+        def kernel_adapter_factory(research_intensity: ResearchIntensity | str):
+            kernel_config, kernel_env = _piworker_inputs(args, research_intensity)
+            return (
+                KernelV2FixtureAdapter()
+                if args.kernel_v2_adapter_mode == "fixture"
+                else PiAgentRuntimeAdapter(kernel_config, environ=kernel_env)
+            )
+
+        return run_frontdesk_tui(
+            config=FrontDeskTuiConfig(
+                request_id=args.request_id,
+                workspace=Path(args.workspace),
+                audience=args.audience,
+                language=args.language,
+                research_intensity=args.research_intensity,
+                live_extension_mode=args.live_extension_mode,
+                stream_progress=args.stream_progress,
+            ),
+            frontdesk_adapter=frontdesk_adapter,
+            kernel_adapter_factory=kernel_adapter_factory,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
         )
     parser.error("unsupported command")
     return 2
@@ -81,6 +174,51 @@ def _add_kernel_v2_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--progress-interval", type=float, default=0.5, help="Refresh interval for --stream-progress.")
 
 
+def _add_common_runtime_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--request-id", default="deepresearch-kernel-v2")
+    parser.add_argument("--workspace", default=".")
+    parser.add_argument("--audience", default="R&D team")
+    parser.add_argument("--language", default="zh")
+    parser.add_argument("--research-intensity", choices=[item.value for item in ResearchIntensity], default=ResearchIntensity.STANDARD.value)
+    parser.add_argument("--piworker-provider-config-source", choices=["env", "codex_current", "explicit"], default="codex_current")
+    parser.add_argument("--piworker-model", default=None)
+    parser.add_argument("--piworker-base-url", default=None)
+    parser.add_argument("--piworker-timeout-seconds", type=int, default=None)
+    parser.add_argument("--piworker-max-turns", type=int, default=None)
+    parser.add_argument("--piworker-reasoning", default=None)
+    parser.add_argument(
+        "--stream-progress",
+        "--watch-progress",
+        dest="stream_progress",
+        action="store_true",
+        help="Stream user-visible MissionForge progress events while the run executes.",
+    )
+    parser.add_argument("--progress-interval", type=float, default=0.5, help="Refresh interval for --stream-progress.")
+
+
+def _add_frontdesk_step_arguments(parser: argparse.ArgumentParser) -> None:
+    _add_common_runtime_arguments(parser)
+    parser.add_argument("--initial-input", default=None)
+    parser.add_argument("--message", default=None)
+    parser.add_argument("--live-extension-mode", action="store_true")
+    parser.add_argument("--frontdesk-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+
+
+def _add_frontdesk_run_arguments(parser: argparse.ArgumentParser) -> None:
+    _add_common_runtime_arguments(parser)
+    parser.add_argument("--live-extension-mode", action="store_true")
+    parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+
+
+def _add_frontdesk_tui_arguments(parser: argparse.ArgumentParser) -> None:
+    _add_common_runtime_arguments(parser)
+    parser.set_defaults(live_extension_mode=True)
+    parser.add_argument("--live-extension-mode", dest="live_extension_mode", action="store_true", default=True)
+    parser.add_argument("--no-live-extension-mode", dest="live_extension_mode", action="store_false")
+    parser.add_argument("--frontdesk-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+    parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+
+
 def _run_and_emit_result(
     args: argparse.Namespace,
     runner: Callable[[], Any],
@@ -96,6 +234,9 @@ def _run_and_emit_result(
 def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
     workspace = Path(args.workspace).resolve()
     refs = [
+        ("requirements", getattr(result, "requirements_ref", "")),
+        ("frontdesk_control", getattr(result, "control_ref", "")),
+        ("frontdesk_research_request", getattr(result, "research_request_ref", "")),
         ("final_report", getattr(result, "final_report_ref", "")),
         ("report_html", getattr(result, "report_html_ref", "")),
         ("source_packet", getattr(result, "source_packet_ref", "")),
@@ -123,9 +264,48 @@ def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
     usage_lines = _usage_summary_lines(workspace, getattr(result, "usage_summary_ref", ""))
     if usage_lines:
         sys.stderr.write("Token 用量：\n" + "\n".join(usage_lines) + "\n")
+    frontdesk_lines = _frontdesk_message_lines(workspace, getattr(result, "control_ref", ""))
+    if frontdesk_lines:
+        sys.stderr.write("FrontDesk：\n" + "\n".join(frontdesk_lines) + "\n")
     failure_lines = _failure_summary_lines(workspace, result)
     if failure_lines:
         sys.stderr.write("失败原因：\n" + "\n".join(failure_lines) + "\n")
+
+
+def _frontdesk_message_lines(workspace: Path, control_ref: Any) -> list[str]:
+    if not isinstance(control_ref, str) or not control_ref:
+        return []
+    assistant_turn_ref = str(Path(control_ref).parent / Path(FRONTDESK_ASSISTANT_TURN_REF).name)
+    try:
+        assistant_turn = json.loads((workspace / assistant_turn_ref).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    lines = []
+    message = assistant_turn.get("message")
+    if isinstance(message, str) and message.strip():
+        lines.append(f"  {message.strip()}")
+    questions = assistant_turn.get("questions")
+    if isinstance(questions, list) and questions:
+        lines.append("  需要你补充：")
+        for index, question in enumerate(questions, start=1):
+            question_text = _frontdesk_question_text(question)
+            if question_text:
+                lines.append(f"    {index}. {question_text}")
+    return lines
+
+
+def _frontdesk_question_text(question: Any) -> str:
+    if isinstance(question, dict):
+        text = str(question.get("question") or "").strip()
+        why = str(question.get("why") or "").strip()
+        hint = str(question.get("answer_hint") or "").strip()
+        parts = [text] if text else []
+        if why:
+            parts.append(f"为什么问：{why}")
+        if hint:
+            parts.append(f"回答示例：{hint}")
+        return " ".join(parts)
+    return str(question).strip()
 
 
 def _usage_summary_lines(workspace: Path, usage_summary_ref: Any) -> list[str]:
@@ -208,7 +388,7 @@ def _run_with_optional_progress(
         progress.emit(
             stage="start",
             state="running",
-            message=f"开始调研：{args.topic}",
+            message=f"开始调研 request_id={args.request_id}",
             detail="正在准备研究合同、工具权限和工作区。",
             progress_hint="1/7",
         )
@@ -286,6 +466,19 @@ def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
             "state": state,
             "message": f"{step_label} 路由到 {event.route_target or 'unknown'}。",
             "detail": f"decision={event.route_value or 'unknown'}；路由只读取 decision artifact。",
+            "progress_hint": progress_hint,
+            "refs": event.refs,
+        }
+    if event.kind == FlowLedgerEventKind.INTERACTION_RECORDED:
+        event_count = event.metadata.get("event_count") if isinstance(event.metadata, dict) else None
+        detail = "用户插入已在安全点投影给后续 worker。"
+        if isinstance(event_count, int):
+            detail = f"本安全点包含 {event_count} 条待处理用户事件。"
+        return {
+            "stage": f"kernel_{event.step_id or 'flow'}_interaction",
+            "state": event.status or "running",
+            "message": f"{step_label} 已记录交互安全点。",
+            "detail": detail,
             "progress_hint": progress_hint,
             "refs": event.refs,
         }
@@ -367,7 +560,12 @@ def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest
         research_intensity=args.research_intensity,
         previous_run_refs=list(args.previous_run_ref),
     )
-    intensity_profile = research_intensity_profile(request.research_intensity)
+    piworker_config, piworker_env = _piworker_inputs(args, request.research_intensity)
+    return request, piworker_config, piworker_env
+
+
+def _piworker_inputs(args: argparse.Namespace, research_intensity: ResearchIntensity | str) -> tuple[PiAgentRuntimeConfig, dict[str, str]]:
+    intensity_profile = research_intensity_profile(research_intensity)
     piworker_metadata = {}
     if args.piworker_base_url:
         piworker_metadata["base_url"] = args.piworker_base_url
@@ -385,7 +583,7 @@ def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest
         metadata=piworker_metadata,
         context_large_observation_bytes=16 * 1024,
     )
-    return request, piworker_config, piworker_env
+    return piworker_config, piworker_env
 
 
 if __name__ == "__main__":

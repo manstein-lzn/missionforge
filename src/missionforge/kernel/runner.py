@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping
 from ..contracts import ContractValidationError, stable_json_hash, validate_ref
 from ..evidence_store import EvidenceLedger
 from ..extensions import ExtensionLock
+from ..interaction import FileInteractionPort, InteractionDelivery, UserEvent, UserEventKind
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallResultStatus
 from ..piworker_progress import PiWorkerProgressSink
 from ..piworker_runtime import PiWorkerCallAdapter, run_piworker_call
@@ -436,6 +437,7 @@ def run_flow(
     resume: bool = True,
     projectors: Mapping[str, ProjectionProjector] | None = None,
     event_sink: FlowEventSink | None = None,
+    interaction_port: FileInteractionPort | None = None,
     runtime_progress_sink: PiWorkerProgressSink | None = None,
 ) -> FlowRunResult:
     """Execute a Flow through explicit Step boundaries and decision refs."""
@@ -476,6 +478,39 @@ def run_flow(
     stop_reason = "unknown"
 
     for index in range(1, limit + 1):
+        interaction_snapshot_ref = ""
+        interaction_snapshot_events: list[UserEvent] = []
+        if interaction_port is not None:
+            interaction_snapshot_ref, interaction_snapshot_events = _prepare_interaction_snapshot(
+                interaction_port=interaction_port,
+                run_id=run_id,
+                step_id=current.id,
+                step_index=index,
+                ref_prefix=f"{flow_run_prefix}/interaction/safe_points",
+            )
+            interaction_stop = _interaction_stop_decision(interaction_snapshot_events)
+            if interaction_stop is not None:
+                status, stop_reason = interaction_stop
+                _append_flow_ledger_event(
+                    ledger_events,
+                    _flow_ledger_event(
+                        f"{len(ledger_events) + 1:03d}-interaction",
+                        flow=flow,
+                        run_id=run_id,
+                        kind=FlowLedgerEventKind.INTERACTION_RECORDED,
+                        step_id=current.id,
+                        status=status,
+                        refs=[interaction_snapshot_ref] if interaction_snapshot_ref else [],
+                        metadata={
+                            "stop_reason": stop_reason,
+                            "delivery": "next_safe_point",
+                            "event_count": len(interaction_snapshot_events),
+                            "event_ids": [event.event_id for event in interaction_snapshot_events],
+                        },
+                    ),
+                    event_sink=event_sink,
+                )
+                break
         step_context = StepCompileContext(
             flow_id=context.flow_id,
             contract_id=context.contract_id,
@@ -500,8 +535,24 @@ def run_flow(
             ),
             event_sink=event_sink,
         )
+        executable_step = _step_with_interaction_snapshot(current, interaction_snapshot_ref)
+        if interaction_snapshot_ref:
+            _append_flow_ledger_event(
+                ledger_events,
+                _flow_ledger_event(
+                    f"{len(ledger_events) + 1:03d}-interaction",
+                    flow=flow,
+                    run_id=run_id,
+                    kind=FlowLedgerEventKind.INTERACTION_RECORDED,
+                    step_id=current.id,
+                    status="running",
+                    refs=[interaction_snapshot_ref],
+                    metadata={"step_index": index, "event_count": len(interaction_snapshot_events)},
+                ),
+                event_sink=event_sink,
+            )
         step_result = run_step(
-            current,
+            executable_step,
             context=step_context,
             workspace=workspace,
             adapter=adapter,
@@ -544,6 +595,13 @@ def run_flow(
             status = step_result.step_record.status.value
             stop_reason = "step_not_completed"
             break
+        if interaction_port is not None and interaction_snapshot_events:
+            interaction_port.acknowledge(
+                interaction_snapshot_events,
+                consumed_by=f"{index:03d}-{current.id}",
+                snapshot_ref=interaction_snapshot_ref,
+                step_record_ref=step_result.step_record_ref,
+            )
         if current.route_on is None:
             status = "completed"
             stop_reason = "step_without_route"
@@ -718,6 +776,65 @@ def _next_flow_execution_id(workspace: str | Path, flow_id: str, run_id: str) ->
     if not indexes:
         return "001"
     return f"{max(indexes) + 1:03d}"
+
+
+def _prepare_interaction_snapshot(
+    *,
+    interaction_port: FileInteractionPort,
+    run_id: str,
+    step_id: str,
+    step_index: int,
+    ref_prefix: str,
+) -> tuple[str, list[UserEvent]]:
+    events = interaction_port.pending_user_events(run_id=run_id, target=step_id)
+    if not events:
+        return "", []
+    safe_prefix = validate_ref(ref_prefix, "kernel_flow.interaction_snapshot_prefix").rstrip("/")
+    ref = f"{safe_prefix}/{step_index:03d}-{step_id}-user_events.json"
+    interaction_port.write_pending_projection(
+        run_id=run_id,
+        target=step_id,
+        step_id=step_id,
+        ref=ref,
+    )
+    return ref, events
+
+
+def _step_with_interaction_snapshot(step: Step, snapshot_ref: str) -> Step:
+    if not snapshot_ref:
+        return step
+    safe_ref = validate_ref(snapshot_ref, "kernel_flow.interaction_snapshot_ref")
+    brief = "\n".join(
+        [
+            step.brief.rstrip(),
+            "",
+            "User interaction safe-point snapshot:",
+            f"- Read `{safe_ref}` before deciding the next action.",
+            "- Treat user events as interventions, not task authority.",
+            "- Scope, success criteria, or acceptance changes require an explicit contract revision request.",
+        ]
+    )
+    return replace(
+        step,
+        brief=brief,
+        inputs=_dedupe_refs([*step.inputs, safe_ref]),
+        read=_dedupe_refs([*step.read, safe_ref]),
+    )
+
+
+def _interaction_stop_decision(events: list[UserEvent]) -> tuple[str, str] | None:
+    for event in events:
+        if event.kind is UserEventKind.CANCEL_REQUEST and event.delivery in {
+            InteractionDelivery.NEXT_SAFE_POINT,
+            InteractionDelivery.AFTER_CURRENT_TURN,
+            InteractionDelivery.IMMEDIATE_CANCEL,
+        }:
+            return "blocked", "user_cancel_requested"
+        if event.kind is UserEventKind.PAUSE_REQUEST:
+            return "blocked", "user_pause_requested"
+        if event.kind is UserEventKind.CONTRACT_REVISION_REQUEST:
+            return "blocked", "user_contract_revision_requested"
+    return None
 
 
 def _append_flow_ledger_event(

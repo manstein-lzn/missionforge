@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,76 @@ from missionforge_deepresearch.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_academic_frontdesk_step_and_approved_run_fixture_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            with patch("builtins.print") as first_print, patch("sys.stderr") as first_stderr:
+                first_code = main(
+                    [
+                        "academic",
+                        "frontdesk-step",
+                        "--initial-input",
+                        "我想调研 AI 模型到 FPGA 的编译框架",
+                        "--request-id",
+                        "frontdesk-cli-demo",
+                        "--workspace",
+                        str(root),
+                        "--research-intensity",
+                        "intensive",
+                        "--frontdesk-adapter-mode",
+                        "fixture",
+                    ]
+                )
+            with patch("builtins.print") as second_print, patch("sys.stderr") as second_stderr:
+                second_code = main(
+                    [
+                        "academic",
+                        "frontdesk-step",
+                        "--message",
+                        "用于工程选型和文献综述，需要覆盖 MLIR、HLS、Vitis 和开源实现。",
+                        "--request-id",
+                        "frontdesk-cli-demo",
+                        "--workspace",
+                        str(root),
+                        "--research-intensity",
+                        "intensive",
+                        "--frontdesk-adapter-mode",
+                        "fixture",
+                    ]
+                )
+            with patch("builtins.print") as run_print, patch("sys.stderr") as run_stderr:
+                run_code = main(
+                    [
+                        "academic",
+                        "frontdesk-run",
+                        "--request-id",
+                        "frontdesk-cli-demo",
+                        "--workspace",
+                        str(root),
+                        "--kernel-v2-adapter-mode",
+                        "fixture",
+                    ]
+                )
+
+        first_payload = json.loads(first_print.call_args.args[0])
+        second_payload = json.loads(second_print.call_args.args[0])
+        run_payload = json.loads(run_print.call_args.args[0])
+        first_stderr_output = "".join(call.args[0] for call in first_stderr.write.call_args_list)
+        second_stderr_output = "".join(call.args[0] for call in second_stderr.write.call_args_list)
+        run_stderr_output = "".join(call.args[0] for call in run_stderr.write.call_args_list)
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 0)
+        self.assertEqual(run_code, 0)
+        self.assertEqual(first_payload["status"], "needs_user_answer")
+        self.assertEqual(second_payload["status"], "ready_for_approval")
+        self.assertEqual(run_payload["status"], "accepted")
+        self.assertIn("FrontDesk：", first_stderr_output)
+        self.assertIn("需要你补充", first_stderr_output)
+        self.assertIn("requirements:", second_stderr_output)
+        self.assertIn("final_report:", run_stderr_output)
+
     def test_academic_kernel_v2_run_fixture_prints_accepted_result(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -162,6 +233,136 @@ class CliTests(unittest.TestCase):
         self.assertEqual(adapter_call.kwargs["environ"]["MISSIONFORGE_PI_AGENT_MAX_TURNS"], "7")
         self.assertEqual(adapter_call.kwargs["environ"]["MISSIONFORGE_PI_AGENT_REASONING"], "medium")
 
+    def test_academic_frontdesk_step_passes_live_extension_mode(self) -> None:
+        expected = type(
+            "Result",
+            (),
+            {
+                "status": "needs_user_answer",
+                "requirements_ref": "runs/frontdesk-live-cli/frontdesk/research_requirements.md",
+                "control_ref": "runs/frontdesk-live-cli/frontdesk/frontdesk_control.json",
+                "research_request_ref": "",
+                "result_ref": "runs/frontdesk-live-cli/frontdesk/frontdesk_result.json",
+                "to_dict": lambda self: {
+                    "schema_version": "missionforge_deepresearch.frontdesk_result.v1",
+                    "request_id": "frontdesk-live-cli",
+                    "status": "needs_user_answer",
+                    "result_ref": self.result_ref,
+                },
+            },
+        )()
+        adapter = object()
+
+        with (
+            tempfile.TemporaryDirectory() as tempdir,
+            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter),
+            patch("missionforge_deepresearch.cli.run_deepresearch_frontdesk_turn", return_value=expected) as run_mock,
+            patch("builtins.print") as print_mock,
+            patch("sys.stderr"),
+        ):
+            root = Path(tempdir)
+            exit_code = main(
+                [
+                    "academic",
+                    "frontdesk-step",
+                    "--initial-input",
+                    "研究一个尚未想清楚的问题",
+                    "--request-id",
+                    "frontdesk-live-cli",
+                    "--workspace",
+                    str(root),
+                    "--live-extension-mode",
+                ]
+            )
+
+        payload = json.loads(print_mock.call_args.args[0])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "needs_user_answer")
+        self.assertIs(run_mock.call_args.kwargs["adapter"], adapter)
+        self.assertTrue(run_mock.call_args.kwargs["live_extension_mode"])
+
+    def test_academic_frontdesk_run_passes_live_extension_mode_to_kernel(self) -> None:
+        expected = type(
+            "Result",
+            (),
+            {
+                "status": "accepted",
+                "result_ref": "runs/frontdesk-run-live/packages/deepresearch_kernel_v2_result.json",
+                "to_dict": lambda self: {
+                    "schema_version": "missionforge_deepresearch.kernel_v2_result.v1",
+                    "request_id": "frontdesk-run-live",
+                    "status": "accepted",
+                    "result_ref": self.result_ref,
+                },
+            },
+        )()
+        adapter = object()
+
+        with (
+            tempfile.TemporaryDirectory() as tempdir,
+            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter),
+            patch("missionforge_deepresearch.cli.approve_frontdesk_requirements") as approve_mock,
+            patch("missionforge_deepresearch.cli.run_deepresearch_kernel_v2", return_value=expected) as run_mock,
+            patch("builtins.print") as print_mock,
+            patch("sys.stderr"),
+        ):
+            root = Path(tempdir)
+            approve_mock.return_value = type(
+                "Request",
+                (),
+                {
+                    "request_id": "frontdesk-run-live",
+                    "topic": "approved topic",
+                    "research_intensity": "intensive",
+                },
+            )()
+            exit_code = main(
+                [
+                    "academic",
+                    "frontdesk-run",
+                    "--request-id",
+                    "frontdesk-run-live",
+                    "--workspace",
+                    str(root),
+                    "--live-extension-mode",
+                ]
+            )
+
+        payload = json.loads(print_mock.call_args.args[0])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertIs(run_mock.call_args.kwargs["adapter"], adapter)
+        self.assertTrue(run_mock.call_args.kwargs["live_extension_mode"])
+
+    def test_academic_frontdesk_tui_fixture_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            user_input = (
+                "我想调研 AI 模型到 FPGA 的编译框架\n"
+                "面向工程选型和文献综述，需要覆盖 MLIR、HLS、Vitis 和开源实现。\n"
+                "/approve\n"
+            )
+            with patch("sys.stdin", new=StringIO(user_input)), patch("sys.stdout", new=StringIO()):
+                exit_code = main(
+                    [
+                        "academic",
+                        "frontdesk-tui",
+                        "--request-id",
+                        "frontdesk-tui-cli",
+                        "--workspace",
+                        str(root),
+                        "--frontdesk-adapter-mode",
+                        "fixture",
+                        "--kernel-v2-adapter-mode",
+                        "fixture",
+                        "--no-live-extension-mode",
+                    ]
+                )
+                report_exists = (root / "runs/frontdesk-tui-cli/reports/final_report.md").is_file()
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(report_exists)
+
     def test_academic_kernel_v2_run_does_not_set_turn_budget_by_default(self) -> None:
         expected = type(
             "Result",
@@ -237,6 +438,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("Kernel v2 researcher 路由到 reviewer。", progress_output)
         self.assertIn("Kernel v2 judge 路由到 accepted。", progress_output)
         self.assertIn("调研流程完成。", progress_output)
+        self.assertNotIn("compiler autotuning survey", progress_output)
 
 
 if __name__ == "__main__":
