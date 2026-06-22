@@ -50,9 +50,9 @@ S7 pushes the same boundary into `workers/pi-agent-runtime`:
   refs and reject paths outside readable/writable roots;
 - denied refs override readable/writable refs at tool execution time;
 - symlink components under tool paths are rejected before filesystem access;
-- runtime-owned writes for output, session, event, metric, savepoint, and direct
-  benchmark artifacts reject symlink components before writing;
-- direct benchmark workspace and source refs use the same symlink-aware read and
+- runtime-owned writes for output, session, event, metric, and savepoint
+  artifacts reject symlink components before writing;
+- product integrations and runtime adapters use the same symlink-aware read and
   write path preparation as the main Pi runtime path;
 - bash rejects commands that are not exact `allowed_commands` entries;
 - when bash is explicitly enabled, the command executes through the

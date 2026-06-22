@@ -19,7 +19,9 @@ active model context projection plane.
 
 ## Phase 1: Baseline Audit
 
-Status: complete. See `docs/CONTEXT_MANAGEMENT_PHASE1_ADR.md`.
+Status: complete. The detailed ADR was removed during the kernel slimming
+pass; the retained contract is the runtime observation/projection boundary
+tested in the Pi agent runtime suite.
 
 - Map current Pi runtime context flow:
   - `Agent` construction

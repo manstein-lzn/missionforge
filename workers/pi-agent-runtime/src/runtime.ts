@@ -29,6 +29,12 @@ const DEFAULT_COMPLETION_RETRY_LIMIT = 2;
 
 export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot: string): Promise<void> {
   const provider = resolveProviderConfig();
+  const maxTurns = effectiveMaxTurns(input, provider.maxTurns);
+  const mainTurnLimit = mainTurnLimitWithCompletionReserve(
+    maxTurns,
+    input.call_spec.expected_outputs.length,
+    DEFAULT_COMPLETION_RETRY_LIMIT,
+  );
   const started = Date.now();
   const before = await snapshotWorkspace(workspaceRoot);
   const recorder = new EvidenceRecorder(input, workspaceRoot);
@@ -164,6 +170,16 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
           },
           onFailure: (message) => pushFailures(failures, [message]),
         });
+        if (input.call_spec.expected_outputs.length > 0) {
+          const changedAfterTurn = await changedRefs(workspaceRoot, before);
+          const missingOutputs = await collectMissingExpectedOutputRefs(input, workspaceRoot, changedAfterTurn);
+          if (missingOutputs.length === 0) {
+            return true;
+          }
+          if (turnStartCount >= mainTurnLimit) {
+            return true;
+          }
+        }
         if (checkpointRef && contextPressureExceeded(latestProjectionDiagnostics)) {
           cancelled = true;
           cancellationReason =
@@ -171,17 +187,15 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
             `${latestProjectionDiagnostics.hard_compact_ratio.toFixed(4)}`;
           return true;
         }
-        if (input.piworker_call.role !== "frontdesk_author_piworker") return false;
-        if (input.call_spec.expected_outputs.length === 0) return false;
-        return (await missingExpectedOutputRefs(input, workspaceRoot)).length === 0;
+        return false;
       },
     };
     const recordEvent = async (event: AgentEvent) => {
       if (event.type === "turn_start") {
         turnStartCount += 1;
         observations.noteTurnStart();
-        if (turnStartCount > provider.maxTurns) {
-          throw new Error(`pi-agent-runtime reached max turns: ${provider.maxTurns}`);
+        if (turnStartCount > maxTurns) {
+          throw new Error(`pi-agent-runtime reached max turns: ${maxTurns}`);
         }
       }
       await recorder.record(event);
@@ -214,13 +228,17 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       timestamp: Date.now(),
     });
     const runPrompt = async (prompt: string, currentMessages: AgentMessage[]): Promise<AgentMessage[]> =>
-      runAgentLoop(
-        [makeUserMessage(prompt)],
-        { systemPrompt, messages: currentMessages, tools },
-        loopConfig,
-        recordEvent,
-        undefined,
-        streamSimple,
+      runAgentLoopWithProviderRetry(
+        {
+          userMessages: [makeUserMessage(prompt)],
+          currentMessages,
+          systemPrompt,
+          tools,
+          loopConfig,
+          recordEvent,
+          maxRetries: provider.providerRetryLimit,
+          retryDelayMs: provider.providerRetryDelayMs,
+        },
       );
 
       transcript.push(...(await runPrompt(buildUserPrompt(input), [])));
@@ -228,9 +246,10 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     await promptForMissingExpectedOutputs({
       input,
       workspaceRoot,
-      maxTurns: provider.maxTurns,
+      maxTurns,
       maxRetries: DEFAULT_COMPLETION_RETRY_LIMIT,
       currentTurnCount: () => turnStartCount,
+      changedRefs: () => changedRefs(workspaceRoot, before),
       prompt: async (prompt) => {
         transcript.push(...(await runPrompt(prompt, transcript)));
         pushFailures(failures, collectAgentFailures(transcript));
@@ -252,6 +271,18 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
   await projector.writeDiagnostics(input, workspaceRoot);
   const changed = await changedRefs(workspaceRoot, before);
   await recorder.writeMetrics(durationMs);
+  const missingOutputs = await collectMissingExpectedOutputRefs(input, workspaceRoot, changed);
+  const cancellationShouldFail =
+    cancelled &&
+    (
+      failures.length > 0 ||
+      missingOutputs.length > 0
+    );
+  const artifactsAreCompleteAfterTransientFailure =
+    !cancelled &&
+    failures.length > 0 &&
+    missingOutputs.length === 0 &&
+    failures.every(isTransientProviderFailure);
   const output = await buildRuntimeOutput({
     input,
     workspaceRoot,
@@ -262,8 +293,8 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
     workerClaims: workerClaims.filter(Boolean),
     durationMs,
     metrics: recorder.safeMetrics() as unknown as Record<string, unknown>,
-    statusOverride: cancelled ? "cancelled" : undefined,
-    recommendedNextSteps: cancelled
+    statusOverride: cancellationShouldFail ? "cancelled" : artifactsAreCompleteAfterTransientFailure ? "completed" : undefined,
+    recommendedNextSteps: cancellationShouldFail
       ? [
           cancellationReason
             ? `Run was cancelled at a MissionForge safe point: ${cancellationReason}.`
@@ -303,6 +334,66 @@ function pushFailures(target: string[], candidates: string[]): void {
     if (!candidate || target.includes(candidate)) continue;
     target.push(candidate);
   }
+}
+
+export function isTransientProviderFailure(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("openai api error (429)") ||
+    normalized.includes("openai api error (502)") ||
+    normalized.includes("openai api error (503)") ||
+    normalized.includes("openai api error (504)") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("econnreset") ||
+    normalized.includes("econnrefused") ||
+    normalized.includes("etimedout") ||
+    normalized.includes("socket hang up") ||
+    normalized.includes("network error") ||
+    normalized.includes("origin web server returned an invalid or incomplete response") ||
+    normalized.includes("cloudflare")
+  );
+}
+
+interface RunAgentLoopWithProviderRetryOptions {
+  userMessages: AgentMessage[];
+  currentMessages: AgentMessage[];
+  systemPrompt: string;
+  tools: unknown;
+  loopConfig: unknown;
+  recordEvent: (event: AgentEvent) => Promise<void>;
+  maxRetries: number;
+  retryDelayMs: number;
+}
+
+async function runAgentLoopWithProviderRetry(
+  options: RunAgentLoopWithProviderRetryOptions,
+): Promise<AgentMessage[]> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await runAgentLoop(
+        options.userMessages,
+        { systemPrompt: options.systemPrompt, messages: options.currentMessages, tools: options.tools as any },
+        options.loopConfig as any,
+        options.recordEvent,
+        undefined,
+        streamSimple,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= options.maxRetries || !isTransientProviderFailure(message)) throw error;
+      attempt += 1;
+      if (options.retryDelayMs > 0) {
+        await sleep(options.retryDelayMs * attempt);
+      }
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface MaybeWriteContextCheckpointOptions {
@@ -376,6 +467,16 @@ export async function stripUnreplayableResponsesReasoning(messages: any[]): Prom
   });
 }
 
+export function mainTurnLimitWithCompletionReserve(
+  maxTurns: number,
+  expectedOutputCount: number,
+  completionRetryLimit = DEFAULT_COMPLETION_RETRY_LIMIT,
+): number {
+  if (expectedOutputCount <= 0 || maxTurns <= 1 || completionRetryLimit <= 0) return maxTurns;
+  const reserve = Math.min(completionRetryLimit, maxTurns - 1);
+  return Math.max(1, maxTurns - reserve);
+}
+
 function buildSystemPrompt(input: RuntimeInput): string {
   const lines = [
     "You are MissionForge's dedicated PI Agent runtime worker.",
@@ -444,9 +545,15 @@ function buildUserPrompt(input: RuntimeInput): string {
     "Complete this MissionForge PiWorker call.",
     `First read the visible refs: ${input.call_spec.visible_refs.join(", ") || "<none>"}`,
     `Write or update the expected outputs: ${input.call_spec.expected_outputs.join(", ")}`,
+    "Treat those expected outputs as the durable completion boundary. If an expected output already exists as an input template, update it for this call before claiming completion.",
     "If the visible refs include a node spec, follow its schema_hints exactly before writing artifacts.",
     "Use permitted tools to inspect, edit, and write as needed. Do not use bash unless a bash tool is present and the exact command is allowed.",
   ].join("\n");
+}
+
+function effectiveMaxTurns(input: RuntimeInput, fallback: number): number {
+  const value = input.piworker_call?.runtime_budget?.max_turns;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 export interface MissingOutputRetryOptions {
@@ -455,6 +562,7 @@ export interface MissingOutputRetryOptions {
   maxTurns: number;
   maxRetries: number;
   currentTurnCount: () => number;
+  changedRefs?: () => Promise<string[]>;
   prompt: (prompt: string) => Promise<void>;
 }
 
@@ -466,7 +574,11 @@ export interface MissingOutputRetryResult {
 export async function promptForMissingExpectedOutputs(
   options: MissingOutputRetryOptions,
 ): Promise<MissingOutputRetryResult> {
-  let missingOutputs = await missingExpectedOutputRefs(options.input, options.workspaceRoot);
+  let missingOutputs = await collectMissingExpectedOutputRefs(
+    options.input,
+    options.workspaceRoot,
+    await options.changedRefs?.(),
+  );
   let retryCount = 0;
   while (
     missingOutputs.length > 0 &&
@@ -475,7 +587,11 @@ export async function promptForMissingExpectedOutputs(
   ) {
     retryCount += 1;
     await options.prompt(buildCompletionRetryPrompt(options.input, missingOutputs, retryCount));
-    missingOutputs = await missingExpectedOutputRefs(options.input, options.workspaceRoot);
+    missingOutputs = await collectMissingExpectedOutputRefs(
+      options.input,
+      options.workspaceRoot,
+      await options.changedRefs?.(),
+    );
   }
   return { missingOutputs, retryCount };
 }
@@ -486,22 +602,37 @@ export function buildCompletionRetryPrompt(input: RuntimeInput, missingOutputs: 
     "Continue the same PiWorker call. Do not change the call_spec, packets, hard checks, evidence refs, or permission manifest.",
     `Visible refs to inspect: ${input.call_spec.visible_refs.join(", ") || "<none>"}`,
     `Writable refs: ${input.permission_manifest.writable_refs.join(", ")}`,
-    `Write only these missing expected outputs: ${missingOutputs.join(", ")}`,
-    "Do not answer in text instead of writing artifacts. Use the available file tools to create or update the missing refs.",
   ];
+  for (const missingOutput of missingOutputs) {
+    lines.push(`- ${missingOutput}: create or update this file now.`);
+  }
+  lines.push(
+    "Write only the missing expected outputs listed above.",
+    "Do not answer in text instead of writing artifacts. Use the available file tools to create or update the missing refs.",
+  );
   if (input.piworker_call?.role === "judge_piworker") {
     lines.push(
-      "As judge_piworker, write a complete JudgeReport JSON object at the missing report ref using the judge node spec and JudgePacket.",
+      "As judge_piworker, write a complete judge report JSON object at the missing report ref using the visible judge context refs.",
     );
   }
   return lines.join("\n");
 }
 
 export async function missingExpectedOutputRefs(input: RuntimeInput, workspaceRoot: string): Promise<string[]> {
+  return collectMissingExpectedOutputRefs(input, workspaceRoot, undefined);
+}
+
+async function collectMissingExpectedOutputRefs(
+  input: RuntimeInput,
+  workspaceRoot: string,
+  changedRefsSnapshot: string[] | undefined,
+): Promise<string[]> {
+  const changed = changedRefsSnapshot ? new Set(changedRefsSnapshot) : null;
   const missing: string[] = [];
   for (const ref of input.call_spec.expected_outputs) {
     try {
       await access(resolveWorkspaceRef(workspaceRoot, ref));
+      if (changed && !changed.has(ref)) missing.push(ref);
     } catch {
       missing.push(ref);
     }

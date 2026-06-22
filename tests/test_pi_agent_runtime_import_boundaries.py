@@ -25,7 +25,6 @@ ALLOWED_CORE_IMPORTS = {
     (CORE_ROOT / "piworker_runtime.py", "adapters.pi_agent_runtime"),
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
-    ADAPTER_ROOT / "cli.py",
     ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 FORBIDDEN_LIVE_IMPORT_ROOTS = {
@@ -35,7 +34,6 @@ FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "langgraph",
     "openai",
     "requests",
-    "skillfoundry",
     "socket",
     "urllib",
 }

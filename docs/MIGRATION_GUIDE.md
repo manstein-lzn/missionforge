@@ -1,44 +1,30 @@
 # Migration Guide
 
-This guide helps move older MissionIR / legacy-runtime code to the
-TaskContract-native PiWorker path. The old runtime/work-unit modules have been
-removed; migration should target the new path rather than wrapping the retired
-API.
+MissionForge has been slimmed to a PiWorker-centered kernel.
 
-## Old Shape
+## Removed Active Surfaces
 
-```text
-MissionIR -> retired MissionRuntime/work-unit runtime
-```
+- `missionforge.agent_packets`
+- `missionforge.agentic_flow`
+- `missionforge.agentic_repair`
+- `missionforge.agentic_repair_controller`
+- `missionforge.agentic_revision_controller`
+- `missionforge.adapters.task_contract_runtime`
+- `create_default_task_contract_flow`
+- `TaskContractFlowPreset`
 
-## New Default Shape
+These were replaced by the smaller `PiWorkerCall` boundary and product-level
+flows built outside core.
 
-```text
-TaskContract -> WorkspacePolicy -> PermissionManifest
-  -> AgenticFlowRunner
-  -> PiWorker executor
-  -> independent judge
-  -> refs-first result
-```
+## Replacement Pattern
 
-## Migration Steps
+Old code that asked MissionForge core to run an executor/judge flow should now:
 
-1. Move product-specific meaning into an integration package.
-2. Compile that meaning into `TaskContract`, `WorkspacePolicy`, and
-   `PermissionManifest`.
-3. Use `create_default_task_contract_flow(...)` for the normal execution path.
-4. Keep MissionIR only where compatibility data still matters.
-5. Move acceptance decisions to the judge path.
+1. Compile product meaning into a frozen `TaskContract`.
+2. Build role-specific `PiWorkerCall` objects.
+3. Run them with `run_piworker_call(...)`.
+4. Let an independent product judge artifact decide semantic acceptance.
+5. Record refs-only packages and usage metrics in the product integration.
 
-## What Not To Do
-
-- do not branch on product names in `src/missionforge`
-- do not let worker output accept itself
-- do not treat runtime evidence as the same thing as acceptance
-- do not use raw chat as durable task truth
-
-## SkillFoundry Example
-
-SkillFoundry is the external product integration example. It compiles a
-product request into TaskContract-native artifacts before running the default
-PiWorker lane.
+For new products, prefer the compact `missionforge.kernel` API or an external
+integration such as DeepResearch v2.

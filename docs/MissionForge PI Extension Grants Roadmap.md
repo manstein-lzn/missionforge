@@ -640,7 +640,7 @@ python -m missionforge.adapters.cli extensions verify
 
 ### Milestone 6：Product Integration 使用
 
-目标：让 SkillFoundry 或其他产品 shell 在编排时生成 tool_grants。
+目标：让产品 shell 在编排时生成 tool_grants。
 
 交付：
 

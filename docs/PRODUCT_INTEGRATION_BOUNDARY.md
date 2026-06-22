@@ -73,7 +73,7 @@ collectors are exceptions, but product reasoning should stay inspectable.
 
 `src/missionforge` must not contain:
 
-- SkillFoundry, Codexarium, benchmark, finance, customer, or other product
+- Codexarium, benchmark, finance, customer, or other product
   branches;
 - deterministic if/else logic that infers product intent;
 - product-specific acceptance semantics;
@@ -116,8 +116,8 @@ Boundary tests should assert:
 - product execution enters core through `TaskContract`/`PiWorkerCall`, not a
   product-specific runtime branch.
 
-Run the SkillFoundry integration checks with:
+Run active integration checks with:
 
 ```bash
-./scripts/validate_integrations.sh skillfoundry
+./scripts/validate_integrations.sh deepresearch
 ```

@@ -11,9 +11,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping
 
-from .agentic_repair_controller import RepairExecutionDirective
-from .agentic_revision_controller import RevisionPendingRecord
-from .agent_packets import AgentExecutionPacket, JudgePacket
 from .contracts import (
     ContractValidationError,
     assert_refs_only_payload,
@@ -23,7 +20,6 @@ from .contracts import (
     require_mapping,
     require_non_empty_str,
     require_str_list,
-    stable_json_hash,
     validate_ref,
 )
 from .runtime_results import WorkerAdapterResult
@@ -112,212 +108,6 @@ class PiWorkerCall:
             ),
             runtime_budget=_runtime_budget(data.get("runtime_budget", {})),
             metadata=_metadata(data.get("metadata", {})),
-        )
-        call.validate()
-        return call
-
-    @classmethod
-    def from_execution_packet(
-        cls,
-        packet: AgentExecutionPacket,
-        *,
-        packet_ref: str,
-        objective: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> "PiWorkerCall":
-        """Build an executor call from a role-separated execution packet."""
-
-        packet.validate()
-        packet_hash = stable_json_hash(packet.to_dict())
-        call = cls(
-            call_id=packet.packet_id,
-            role=PiWorkerCallRole.EXECUTOR,
-            contract_id=packet.contract_id,
-            contract_hash=packet.contract_hash,
-            contract_ref=packet.contract_ref,
-            objective=objective or f"Produce expected artifacts for {packet.contract_id}.",
-            visible_refs=_dedupe_refs(
-                [
-                    packet.contract_ref,
-                    packet.worker_brief_ref,
-                    packet.workspace_policy_ref,
-                    packet.permission_manifest_ref,
-                    *packet.allowed_input_refs,
-                ]
-            ),
-            writable_refs=list(packet.writable_refs),
-            expected_output_refs=list(packet.expected_artifact_refs),
-            permission_manifest_ref=packet.permission_manifest_ref,
-            source_packet_ref=packet_ref,
-            source_packet_hash=packet_hash,
-            output_schema_ref="schemas/agent_execution_report.json",
-            validation_policy_ref="validation/piworker_executor_policy.json",
-            metadata=metadata or {},
-        )
-        call.validate()
-        return call
-
-    @classmethod
-    def from_judge_packet(
-        cls,
-        packet: JudgePacket,
-        *,
-        packet_ref: str,
-        spec_ref: str,
-        packet_hash: str | None = None,
-        objective: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> "PiWorkerCall":
-        """Build a judge call from a role-separated judge packet."""
-
-        packet.validate()
-        effective_packet_hash = packet_hash or stable_json_hash(packet.to_dict())
-        call = cls(
-            call_id=packet.packet_id,
-            role=PiWorkerCallRole.JUDGE,
-            contract_id=packet.contract_id,
-            contract_hash=packet.contract_hash,
-            contract_ref=packet.contract_ref,
-            objective=objective or f"Judge execution evidence for {packet.contract_id} and write JudgeReport JSON only.",
-            visible_refs=_dedupe_refs(
-                [
-                    validate_ref(spec_ref, "piworker_call.spec_ref"),
-                    packet_ref,
-                    packet.contract_ref,
-                    packet.judge_rubric_ref,
-                    packet.execution_packet_ref,
-                    packet.execution_report_ref,
-                    *packet.artifact_refs,
-                    *packet.evidence_refs,
-                    *packet.hard_check_refs,
-                ]
-            ),
-            writable_refs=_dedupe_refs(
-                [
-                    packet.report_ref,
-                    "reports/judge_rationale.md",
-                    "projections/repair_brief.json",
-                    "revisions/request.json",
-                ]
-            ),
-            expected_output_refs=[packet.report_ref],
-            source_packet_ref=packet_ref,
-            source_packet_hash=effective_packet_hash,
-            output_schema_ref="schemas/judge_report.json",
-            validation_policy_ref="validation/piworker_judge_policy.json",
-            metadata=metadata or {"hard_check_status": packet.hard_check_status.value},
-        )
-        call.validate()
-        return call
-
-    @classmethod
-    def from_repair_directive(
-        cls,
-        directive: RepairExecutionDirective,
-        *,
-        directive_ref: str,
-        contract_ref: str,
-        permission_manifest_ref: str,
-        writable_refs: list[str],
-        objective: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> "PiWorkerCall":
-        """Build a repair call from a frozen same-contract repair directive."""
-
-        directive.validate()
-        directive_hash = stable_json_hash(directive.to_dict())
-        call = cls(
-            call_id=directive.directive_id,
-            role=PiWorkerCallRole.REPAIR,
-            contract_id=directive.contract_id,
-            contract_hash=directive.contract_hash,
-            contract_ref=validate_ref(contract_ref, "piworker_call.contract_ref"),
-            objective=objective or f"Repair artifacts for {directive.contract_id} without changing the frozen contract.",
-            visible_refs=_dedupe_refs(
-                [
-                    validate_ref(directive_ref, "piworker_call.directive_ref"),
-                    contract_ref,
-                    directive.repair_ticket_ref,
-                    directive.source_result_ref,
-                    directive.source_repair_brief_ref,
-                    directive.worker_brief_ref,
-                    permission_manifest_ref,
-                    *directive.context_refs,
-                ]
-            ),
-            writable_refs=list(writable_refs),
-            expected_output_refs=list(directive.target_artifact_refs),
-            permission_manifest_ref=permission_manifest_ref,
-            source_packet_ref=directive_ref,
-            source_packet_hash=directive_hash,
-            evidence_refs=_dedupe_refs(
-                [
-                    directive.source_result_ref,
-                    directive.source_repair_brief_ref,
-                    directive.repair_ticket_ref,
-                ]
-            ),
-            output_schema_ref="schemas/agent_execution_report.json",
-            validation_policy_ref="validation/piworker_repair_policy.json",
-            metadata=metadata or {"repair_ticket_ref": directive.repair_ticket_ref},
-        )
-        call.validate()
-        return call
-
-    @classmethod
-    def from_revision_pending_record(
-        cls,
-        pending: RevisionPendingRecord,
-        *,
-        pending_ref: str,
-        permission_manifest_ref: str,
-        writable_refs: list[str],
-        expected_output_ref: str,
-        objective: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-    ) -> "PiWorkerCall":
-        """Build a revision-drafting call from an explicit revision request."""
-
-        pending.validate()
-        pending_hash = stable_json_hash(pending.to_dict())
-        call = cls(
-            call_id=pending.pending_id,
-            role=PiWorkerCallRole.REVISION_DRAFTER,
-            contract_id=pending.contract_id,
-            contract_hash=pending.contract_hash,
-            contract_ref=pending.contract_ref,
-            objective=objective or f"Draft a revised TaskContract proposal for {pending.contract_id}.",
-            visible_refs=_dedupe_refs(
-                [
-                    validate_ref(pending_ref, "piworker_call.pending_ref"),
-                    pending.contract_ref,
-                    pending.source_result_ref,
-                    pending.source_judge_report_ref,
-                    pending.source_revision_request_ref,
-                    pending.execution_packet_ref,
-                    pending.execution_report_ref,
-                    pending.judge_packet_ref,
-                    pending.judge_report_ref,
-                    permission_manifest_ref,
-                    *pending.evidence_refs,
-                ]
-            ),
-            writable_refs=list(writable_refs),
-            expected_output_refs=[validate_ref(expected_output_ref, "piworker_call.expected_output_ref")],
-            permission_manifest_ref=permission_manifest_ref,
-            source_packet_ref=pending_ref,
-            source_packet_hash=pending_hash,
-            evidence_refs=_dedupe_refs(
-                [
-                    pending.source_result_ref,
-                    pending.source_judge_report_ref,
-                    pending.source_revision_request_ref,
-                    *pending.evidence_refs,
-                ]
-            ),
-            output_schema_ref="schemas/task_contract_revision_draft.json",
-            validation_policy_ref="validation/piworker_revision_policy.json",
-            metadata=metadata or {"authority_required": pending.authority_required.value},
         )
         call.validate()
         return call
@@ -474,7 +264,10 @@ class PiWorkerCallResult:
             metric_refs=metric_refs,
             validation_report_ref=validation_report_ref,
             error_ref=error_ref,
-            metadata=metadata or {},
+            metadata={
+                **_adapter_diagnostic_metadata(worker_result),
+                **dict(metadata or {}),
+            },
         )
         result.validate_against_call(call)
         return result
@@ -707,6 +500,18 @@ def _call_result_status(status: str) -> PiWorkerCallResultStatus:
         return PiWorkerCallResultStatus(normalized)
     except ValueError:
         return PiWorkerCallResultStatus.FAILED
+
+
+def _adapter_diagnostic_metadata(worker_result: WorkerAdapterResult) -> dict[str, Any]:
+    metrics = worker_result.execution_report.metrics
+    result: dict[str, Any] = {}
+    failure_summary = metrics.get("failure_summary")
+    if isinstance(failure_summary, str) and failure_summary:
+        result["failure_summary"] = failure_summary[:500]
+    non_retryable = metrics.get("non_retryable_provider_error")
+    if isinstance(non_retryable, bool):
+        result["non_retryable_provider_error"] = non_retryable
+    return result
 
 
 def _metric_refs_from_mapping(metrics: Mapping[str, Any]) -> list[str]:

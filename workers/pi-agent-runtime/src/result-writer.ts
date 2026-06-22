@@ -21,11 +21,12 @@ export interface BuildOutputOptions {
 
 export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<RuntimeOutput> {
   const changedRefs = options.changedRefs.filter((ref) => !isContextRawRef(options.input, ref));
+  const changed = new Set(changedRefs);
   const producedArtifacts: string[] = [];
   const missingOutputs: string[] = [];
   const produced = new Set<string>();
   for (const ref of options.input.call_spec.expected_outputs) {
-    if (await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref))) {
+    if (changed.has(ref) && await fileExists(resolveWorkspaceRef(options.workspaceRoot, ref))) {
       producedArtifacts.push(ref);
       produced.add(ref);
     } else {
@@ -45,6 +46,8 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
       ? [...options.failures]
       : [...options.failures, ...missingOutputs.map((ref) => `expected output was not produced: ${ref}`)];
   const status: RuntimeOutput["status"] = options.statusOverride ?? (failures.length === 0 ? "completed" : "failed");
+  const verificationStatus: RuntimeOutput["verification_status"] =
+    status === "completed" && failures.length === 0 ? "not_run" : "failed";
   const output: RuntimeOutput = {
     schema_version: OUTPUT_SCHEMA_VERSION,
     call_id: options.input.call_id,
@@ -75,7 +78,7 @@ export async function buildRuntimeOutput(options: BuildOutputOptions): Promise<R
     new_unknowns: status === "completed" ? [] : missingOutputs,
     recommended_next_steps:
       options.recommendedNextSteps ?? (status === "completed" ? [] : ["Inspect pi-agent-runtime artifacts before retrying."]),
-    verification_status: status === "completed" ? "not_run" : "failed",
+    verification_status: verificationStatus,
     input_ref: options.input.input_ref,
     output_ref: options.input.output_ref,
     session_ref: options.input.session_ref,

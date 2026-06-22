@@ -14,10 +14,10 @@ ALLOWED_CORE_ADAPTER_IMPORTS = {
 FORBIDDEN_PRODUCT_ADAPTER_MODULES = {
     "codexarium.py",
     "frontdesk.py",
-    "skillfoundry.py",
+    "example_product.py",
 }
 FORBIDDEN_PRODUCT_IMPORT_ROOTS = {
-    "missionforge_skillfoundry",
+    "missionforge_example_product",
 }
 
 

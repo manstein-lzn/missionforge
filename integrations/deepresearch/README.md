@@ -1,481 +1,101 @@
-# MissionForge DeepResearch Integration
+# MissionForge DeepResearch v2
 
-Phase 1 is a single-agent academic research baseline. Live mode now uses an
-extension-driven source acquisition path with an explicit search-intent layer.
+DeepResearch is a product integration built on MissionForge Kernel v2. It is
+not part of core.
 
-This package intentionally starts small:
-
-- compile an academic research request into MissionForge primitives;
-- write a compact research manual, search intent, source packet, source
-  collection report, and output contract as refs;
-- call one researcher PiWorker;
-- run structural checks over the expected draft files, structured source
-  packet, and citation refs;
-- return `draft_ready`, not `accepted`.
-
-The primary source path lives directly under
-`missionforge_deepresearch`: contracts, compiler, runtime, evidence checks,
-source collection, search intent, and the independent judge. Phase-style
-diagnostics and larger workflows live under
-`missionforge_deepresearch.experimental`:
-
-- paper-review-style update rounds before final judging;
-- Phase 3 quality comparisons against a direct skill-like baseline;
-- live tool health checks.
-
-The CLI still exposes those experimental commands for convenience, but they are
-not part of the minimal DeepResearch runtime path.
-
-The default path remains offline fixture mode. Live mode declares extension
-grants, compiles an extension lock, and lets the researcher use mounted Pi
-tools to explore the topic. The system can preserve the original topic,
-execute externally supplied queries, or ask a PiWorker to author
-`sources/search_intent.json` before the live run. It does not contain
-domain-specific fallback terms or multi-agent orchestration.
-
-Research intensity:
-
-- `--research-intensity quick` runs a concise scan with smaller source/query
-  and PiWorker budgets, with one review round by default.
-- `--research-intensity standard` is the default balanced deep research mode.
-- `--research-intensity intensive` raises source/query and PiWorker budgets
-  and asks the researcher to cross-check more aggressively, with more review
-  rounds available.
-
-Intensity changes budget and rubric guidance only. It does not add
-domain-specific source ranking, query terms, or Python research logic. Advanced
-flags such as `--max-sources`, `--max-search-queries`,
-`--piworker-max-turns`, and `--piworker-timeout-seconds` can still override
-the preset when needed.
-
-Live runs use a thin install step in the declared extension root. By default
-the extension compiler verifies preinstalled packages; live DeepResearch passes
-an installer into that compile step so the lock is produced from declared
-`local:` and `npm:` packages, not from a custom Python collector.
-
-The academic live tool surface currently declares:
-
-- `local:extensions/pi-academic-sources`, which registers `academic_search`,
-  `academic_fetch`, `citation_lookup`, and `repo_search`;
-- `npm:pi-web-access`, for general web search/fetch;
-- `npm:@juicesharp/rpiv-web-tools`, for code and repository search.
-
-`pi-academic-sources` normalizes provider APIs for arXiv, OpenAlex, Semantic
-Scholar, Crossref, and GitHub. It is mechanical source acquisition glue, not a
-research planner or semantic ranker.
-
-Research loop direction:
-
-DeepResearch should converge toward a state-driven research loop. The initial
-topic and previous run refs are the prior, source packets and fetched evidence
-are observations, `research_state.json` is the posterior, the reviewer is an
-expert measurement of that posterior, and the independent judge is the final
-acceptance authority.
-
-The researcher should update evidence, reports, and research state as its view
-of the field improves. The reviewer should decide whether the state needs
-another research step, is ready for judge, is blocked by tools/evidence, or
-requires contract revision. Python should only route those explicit decisions
-within hard budgets; it should not infer domain concepts, rank papers, or
-decide semantic sufficiency.
-
-Reviewer and Judge PiWorkers are expected to give complete one-pass feedback.
-They should batch material blockers and repair guidance rather than drip-feeding
-small issues across loops. Residual risks should be disclosed without forcing
-endless iteration.
-
-Offline quick start:
-
-Minimal prompt-first path:
+The active public command is:
 
 ```bash
 PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic minimal-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-minimal \
-  --workspace /tmp/mf-dr-minimal
-```
-
-`minimal-run` is the recommended shape for validating the product direction:
-Python freezes a small contract, writes a skill-like manual, calls one
-researcher PiWorker, and records boundary validation for files, source ids,
-citations, and required refs. Boundary validation is not semantic acceptance:
-the result separates `worker_status`, `boundary_status`, and the product-facing
-draft status. It intentionally avoids live collectors, review loops, quality
-A/B, and semantic route logic.
-
-Minimal live extension run:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic minimal-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-minimal-live \
-  --workspace /tmp/mf-dr-minimal-live \
-  --researcher-mode piworker \
+python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
+  --topic "调研主题" \
+  --request-id research-001 \
+  --workspace /tmp/mf-dr \
+  --research-intensity standard \
   --live-extension-mode \
-  --piworker-provider-config-source codex_current
-```
-
-`--live-extension-mode` keeps the same minimal orchestration shape. It declares
-Pi extension grants in the permission manifest, compiles them into
-`compiled/extension_lock.json`, and passes that lock to the PiWorker runtime.
-The researcher still decides how to search, triage, and synthesize.
-
-Minimal researcher-reviewer loop:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic minimal-loop-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-minimal-loop \
-  --workspace /tmp/mf-dr-minimal-loop \
-  --researcher-mode piworker \
-  --reviewer-mode piworker \
-  --review-rounds 2 \
-  --live-extension-mode \
-  --piworker-provider-config-source codex_current
-```
-
-`minimal-loop-run` adds one independent reviewer PiWorker role. The reviewer
-writes `reviews/review_round_N.json` with `accepted`, `continue`,
-`tool_blocked`, or `rejected`. Python only follows that decision and updates
-refs; it does not infer research gaps or search terms.
-
-Full Phase 1 path:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-research \
-  --workspace /tmp/mf-dr-phase1
-```
-
-`single-agent-run` can explicitly opt into the provider-neutral MissionForge
-long-memory packet boundary. The default remains off; without a provider the
-Pi runtime reports degraded long-memory diagnostics and relies on refs,
-checkpoints, segment catalogs, and recent context. With Mem0 installed through
-the optional `mem0` extra and a `MISSIONFORGE_MEM0_API_KEY` or `MEM0_API_KEY`,
-the researcher run can request a bounded advisory packet:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-research-memory \
-  --workspace /tmp/mf-dr-memory \
-  --researcher-mode piworker \
-  --piworker-provider-config-source codex_current \
-  --long-memory-provider mem0 \
-  --long-memory-budget-tokens 2000 \
-  --long-memory-limit 8
-```
-
-The packet is written under the PiWorker attempt context directory and cited as
-evidence. It is advisory only: frozen contracts, explicit revisions, source
-packets, and judge evidence remain authoritative.
-
-The run package is written under:
-
-```text
-runs/{request_id}/packages/deepresearch_run_result.json
-```
-
-Reviewer-guided research updates:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic reviewed-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-reviewed \
-  --workspace /tmp/mf-dr-reviewed \
-  --reviewer-mode piworker \
-  --review-rounds 2 \
-  --researcher-mode piworker \
-  --piworker-provider-config-source codex_current
-```
-
-`reviewed-run` adds a process-internal paper reviewer before final judging. In
-each round the reviewer writes:
-
-```text
-reviews/round_XX/reviewer_report.md
-reviews/round_XX/next_research_directive.md
-reviews/round_XX/reviewer_observation.json
-```
-
-`reviewer_observation.json` is the state-loop control artifact. It is small
-and refs-first, with a `decision` of `continue`, `ready_for_judge`,
-`tool_blocked`, `revision_required`, or `rejected`. Python routes only on that
-structured decision and the hard review-round budget; it does not read the
-review prose to infer research quality.
-
-`--review-rounds` is a maximum budget, not a requirement to run every round.
-The reviewer PiWorker decides whether another research step is worthwhile by
-writing `continue` or `ready_for_judge`; the controller only enforces the cap so
-the loop cannot run unbounded.
-
-When the observation decision is `continue`, the researcher updates the
-evidence packet and report artifacts, and records the posterior state at:
-
-```text
-reviews/round_XX/research_state.json
-```
-
-`research_state.json` is authored by the researcher, not by Python. It should
-summarize the current posterior with refs: prior state refs, the reviewer
-observation ref, belief updates, current hypotheses, confidence notes,
-unresolved gaps, next best actions, updated artifact refs, and evidence refs.
-Python treats this as a durable state artifact for later roles; it does not
-score the hypotheses or infer semantic sufficiency from the state body.
-
-When the decision is `ready_for_judge`, the review loop stops without another
-researcher revision and returns `draft_ready`. `tool_blocked` and
-`revision_required` stop as `blocked`; `rejected` stops as `failed`.
-
-The reviewer is a strict academic critique role. It may guide the next research
-step, but it cannot accept the product. The command returns
-`packages/deepresearch_reviewed_run_result.json` with `draft_ready`,
-`blocked`, or `failed`.
-
-Reviewer feedback is expected to be complete in one pass. The reviewer should
-batch material blockers, evidence gaps, stale claims, and concrete repair
-directions into the current round instead of drip-feeding critique across
-future rounds. Minor polish and residual risks should be disclosed without
-forcing endless iteration.
-
-Each revision round also writes a round-local permission manifest under
-`reviews/round_XX/revision_permission_manifest.json` so the researcher can
-write the review-state artifact without broadening the frozen base manifest.
-
-Reviewer-guided updates followed by the independent judge:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic reviewed-judged-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-reviewed-judged \
-  --workspace /tmp/mf-dr-reviewed-judged \
-  --reviewer-mode piworker \
-  --review-rounds 2 \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode piworker \
-  --researcher-mode piworker \
-  --judge-mode piworker \
+  --kernel-v2-adapter-mode piworker \
   --piworker-provider-config-source codex_current \
   --stream-progress
 ```
 
-Only `reviewed-judged-run` can produce the final package, and only when the
-separate Judge PiWorker returns `accepted`. The judge sees the review and
-research-state trail as evidence refs when present, but reviewer readiness is
-guidance only and is not final acceptance.
-
-`--stream-progress` renders MissionForge user-visible progress events in the
-same terminal while the command runs. Progress goes to stderr and the final JSON
-result still prints to stdout, so scripts can keep parsing command output.
-
-Live source collection with the fixture researcher:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-live-sources \
-  --workspace /tmp/mf-dr-live \
-  --source-mode live \
-  --live-extension-mode \
-  --since-year 2023 \
-  --max-sources 24
-```
-
-Live source collection with externally supplied search queries:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "编译自动调优领域近3年综述" \
-  --request-id demo-live-external-intent \
-  --workspace /tmp/mf-dr-live-external-intent \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode external \
-  --search-query "compiler autotuning survey" \
-  --search-query "auto tuning compilers recent survey" \
-  --search-query "machine learning based compiler autotuning" \
-  --since-year 2023 \
-  --max-sources 24
-```
-
-Live source collection with a PiWorker-authored search intent:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "编译自动调优领域近3年综述" \
-  --request-id demo-live-piworker-intent \
-  --workspace /tmp/mf-dr-live-piworker-intent \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode piworker \
-  --since-year 2023 \
-  --max-sources 24 \
-  --piworker-provider-config-source codex_current
-```
-
-Live source collection with a live PiWorker researcher:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic single-agent-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-live-piworker \
-  --workspace /tmp/mf-dr-live-piworker \
-  --research-intensity standard \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode piworker \
-  --researcher-mode piworker \
-  --piworker-provider-config-source codex_current \
-  --piworker-max-turns 20 \
-  --piworker-reasoning medium
-```
-
-The live search intent is written to `sources/search_intent.json`. The
-structured evidence sink is `sources/source_packet.json`, with an extension
-lock at `compiled/extension_lock.json` and acquisition diagnostics at
-`sources/source_collection_report.json`. In live extension mode the researcher
-must overwrite `sources/source_packet.json` with non-empty `source_records`
-before writing the report artifacts that cite those source ids.
-
-Evidence and citation contract:
-
-- source ids use `S1`, `S2`, ... style identifiers;
-- `sources/source_packet.json` is the first machine-readable evidence ledger;
-- `reports/final_report.md` cites material claims with `[S1]` or `[S1, S2]`;
-- `reports/final_report.md` includes `## References`;
-- `reports/evidence_index.md` maps every source id from the source packet;
-- structural checks reject unknown citations or empty source records, but do
-  not rank source importance.
-
-High-quality output contract:
-
-- `product_contract/output_contract.json` now carries a `quality_contract`
-  derived from `--research-intensity`.
-- The contract requires first-class report sections for scope/method, evidence
-  base, major lines of work, comparison matrix, counterevidence/failure modes,
-  research delta, source gaps, and references.
-- Report sections have stable `section_id` values plus localized display
-  titles. For example, a Chinese request can require `## 对比矩阵` while the
-  contract still records `section_id: comparison_matrix`.
-- The source packet declares mechanical minimums for source count, distinct
-  source types, recent sources, and provenance fields such as `accessed_at`,
-  `evidence_note`, and `evidence_strength`.
-- The same contract exposes judge-facing quality dimensions for coverage,
-  freshness, citation integrity, synthesis, delta clarity, and
-  gaps/counterevidence.
-- Structural checks enforce this shape mechanically. They do not decide which
-  sources are important or whether the synthesis is semantically good; that
-  remains the researcher and independent judge's responsibility.
-
-Tool healthcheck:
-
-```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic tool-healthcheck \
-  --topic "compiler autotuning survey" \
-  --request-id demo-tool-health \
-  --workspace /tmp/mf-dr-tool-health \
-  --search-query "compiler autotuning survey" \
-  --search-query "automatic compiler tuning recent survey" \
-  --since-year 2023 \
-  --max-sources 5
-```
-
-The healthcheck writes:
+## Product Shape
 
 ```text
-runs/{request_id}/health/tool_healthcheck.json
-runs/{request_id}/health/tool_healthcheck.md
+academic request
+  -> frozen contract, role briefs, rubrics, permissions, extension lock
+  -> researcher PiWorker
+  -> reviewer PiWorker
+  -> judge PiWorker
+  -> accepted | repair/research continuation | blocked | failed
 ```
 
-It probes public academic indexes, GitHub repository search, and the declared
-Pi extension packages. Google Scholar is recorded as unsupported instead of
-scraped because it has no stable official API. This command checks whether the
-product's source-acquisition hands can produce structured records; it does not
-judge final research quality. If `--search-query` is omitted, the original topic
-is used as the only query; passing explicit queries is the recommended way to
-test whether the tools are usable independent of prompt-language noise.
+Python owns hard boundaries: refs, schemas, permission manifests, extension
+locks, route decisions, flow ledgers, progress projection, final path printing,
+and token usage summaries.
 
-Phase 3 quality comparison:
+PiWorker owns semantic research: search planning, source triage, repository and
+documentation inspection, synthesis, gap tracking, reviewer critique response,
+and final judgment.
+
+## Intensities
+
+- `standard`: web, paper, documentation, and repository-metadata survey.
+- `intensive`: deeper repository/code-audit-backed survey when the topic
+  involves software systems. The researcher may inspect README, docs, examples,
+  tests, configs, source layout, entrypoints, and workflow/tool definitions. It
+  must not require installing projects, executing repository code, running
+  benchmarks, or experimental reproduction.
+
+There is no active `experimental` intensity.
+
+## Outputs
+
+The CLI prints absolute paths for files that exist:
+
+- `final_report`
+- `source_packet`
+- `result_package`
+- `judge_report`
+- `usage_summary`
+
+If an expected file is missing, it is printed under `缺失输出`.
+
+The main package lives at:
+
+```text
+runs/{request_id}/packages/deepresearch_kernel_v2_result.json
+```
+
+The final markdown report normally lives at:
+
+```text
+runs/{request_id}/reports/final_report.md
+```
+
+The product-level token summary lives at:
+
+```text
+runs/{request_id}/metrics/usage_summary.json
+```
+
+## Fixture Smoke
+
+Use fixture mode only to test wiring without a live PiWorker:
 
 ```bash
 PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic quality-eval \
+python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
   --topic "compiler autotuning survey" \
-  --request-id demo-quality-eval \
-  --workspace /tmp/mf-dr-quality \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode piworker \
-  --researcher-mode piworker \
-  --direct-baseline-mode piworker \
-  --evaluator-mode heuristic \
-  --piworker-provider-config-source codex_current \
-  --piworker-max-turns 20
+  --request-id demo-kernel-v2-fixture \
+  --workspace /tmp/mf-dr-kernel-v2-fixture \
+  --kernel-v2-adapter-mode fixture
 ```
 
-The quality comparison writes:
-
-```text
-runs/{request_id}/packages/deepresearch_quality_evaluation_result.json
-runs/{request_id}/evaluation/quality_comparison_report.md
-runs/{request_id}/evaluation/quality_scorecard.json
-```
-
-The comparison is diagnostic. It compares visible output quality signals
-against a direct skill-like baseline; it does not produce `accepted`.
-The direct baseline and optional PiWorker evaluator inherit the compiled
-workspace policy ref instead of creating a separate permission boundary.
-
-Phase 4 judged run:
+## Validate
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic judged-run \
-  --topic "compiler autotuning survey" \
-  --request-id demo-judged \
-  --workspace /tmp/mf-dr-judged \
-  --source-mode live \
-  --live-extension-mode \
-  --search-intent-mode piworker \
-  --researcher-mode piworker \
-  --judge-mode piworker \
-  --piworker-provider-config-source codex_current \
-  --piworker-max-turns 20
+PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest \
+  integrations.deepresearch.tests.test_kernel_v2 \
+  integrations.deepresearch.tests.test_cli \
+  integrations.deepresearch.tests.test_deepresearch_import_boundaries
 ```
-
-The independent judge writes:
-
-```text
-runs/{request_id}/judge/judge_spec.json
-runs/{request_id}/reports/judge_report.json
-runs/{request_id}/reports/judge_rationale.md
-runs/{request_id}/packages/deepresearch_judged_run_result.json
-```
-
-`packages/deepresearch_final_package.json` is written only when the separate
-Judge PiWorker returns `accepted`. `repair`, `revision_required`, and
-`rejected` are recorded without running a repair loop.
-
-The judge is also instructed to judge in one complete pass. If the decision is
-`repair`, the repair brief should batch every visible same-contract blocker so
-one repair attempt has enough information to fix the draft. Non-blocking
-limitations should be recorded as residual risk rather than used to force
-another loop.
-
-The judge report uses a strict refs-first JSON schema. The runtime may normalize
-mechanical field aliases from live Judge PiWorker output, but it does not change
-the judge's decision or infer semantic acceptance in Python.

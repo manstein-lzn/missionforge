@@ -18,10 +18,6 @@ class ContractValidationError(ValueError, MissionForgeError):
     """Raised when a MissionForge contract is malformed."""
 
 
-class MissionValidationError(ContractValidationError):
-    """Raised when Mission IR is malformed."""
-
-
 class EvidenceTrustLevel(StrEnum):
     """Trust levels for evidence and observations."""
 
@@ -31,60 +27,8 @@ class EvidenceTrustLevel(StrEnum):
     COMMAND_RESULT = "command_result"
     TEST_RESULT = "test_result"
     SCHEMA_VALIDATION = "schema_validation"
-    VERIFIER_RESULT = "verifier_result"
     REVIEWER_DECISION = "reviewer_decision"
     HUMAN_ACCEPTANCE = "human_acceptance"
-
-
-class ValidatorMode(StrEnum):
-    """Execution mode for a validator."""
-
-    EXECUTABLE = "executable"
-    MANUAL = "manual"
-    UNSUPPORTED = "unsupported"
-
-
-class ValidatorSeverity(StrEnum):
-    """Completion impact of a validator result."""
-
-    BLOCKING = "blocking"
-    ADVISORY = "advisory"
-
-
-class VerificationStatus(StrEnum):
-    """Canonical verification statuses."""
-
-    COMPLETED_VERIFIED = "completed_verified"
-    FAILED = "failed"
-    REVIEW_REQUIRED = "review_required"
-    HUMAN_ACCEPTANCE_REQUIRED = "human_acceptance_required"
-    UNSUPPORTED_VERIFICATION_SPEC = "unsupported_verification_spec"
-    MISSING_VERIFICATION_PLAN = "missing_verification_plan"
-    EXECUTION_INCOMPLETE = "execution_incomplete"
-    INVALID_CONTRACT = "invalid_contract"
-
-
-class AdaptiveDecision(StrEnum):
-    """Mission-generic adaptive decision vocabulary."""
-
-    COMPLETE = "complete"
-    CONTINUE = "continue"
-    REPAIR = "repair"
-    REDESIGN = "redesign"
-    PIVOT = "pivot"
-    REVIEW = "review"
-    STOP = "stop"
-    ESCALATE = "escalate"
-    FAIL = "fail"
-
-
-class AuthorityRequirement(StrEnum):
-    """Authority required for manual, review, or redesign decisions."""
-
-    HARNESS = "harness"
-    REVIEWER = "reviewer"
-    HUMAN = "human"
-    REDESIGN = "redesign"
 
 
 FORBIDDEN_RAW_FIELDS = {

@@ -606,6 +606,8 @@ def _lock_entry_from_grant(
         or package_metadata.get("version")
         or _exact_version_from_spec(grant.version_spec)
     )
+    install_metadata = _safe_mapping(install_info.get("metadata", {}), "extension_lock_entry.metadata")
+    grant_metadata = _safe_mapping(grant.metadata, "extension_grant.metadata")
     return ExtensionLockEntry(
         grant_id=grant.grant_id,
         package=grant.package,
@@ -626,7 +628,7 @@ def _lock_entry_from_grant(
             "extension_lock_entry.integrity",
         ),
         package_hash=package_hash,
-        metadata=_safe_mapping(install_info.get("metadata", {}), "extension_lock_entry.metadata"),
+        metadata={**install_metadata, **grant_metadata},
     )
 
 

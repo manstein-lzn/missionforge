@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import math
 import unittest
+from enum import StrEnum
 
 from missionforge.contracts import (
-    AdaptiveDecision,
     ContractValidationError,
     EvidenceTrustLevel,
     Ref,
-    ValidatorMode,
     require_enum,
     stable_json_hash,
     validate_ref,
 )
+
+
+class ExampleDecision(StrEnum):
+    CONTINUE = "continue"
+    REPAIR = "repair"
 
 
 class ContractPrimitiveTests(unittest.TestCase):
@@ -38,9 +42,9 @@ class ContractPrimitiveTests(unittest.TestCase):
             stable_json_hash({"metric": math.nan})
 
     def test_require_enum_fails_closed(self) -> None:
-        self.assertEqual(require_enum("repair", AdaptiveDecision, "decision"), AdaptiveDecision.REPAIR)
+        self.assertEqual(require_enum("repair", ExampleDecision, "decision"), ExampleDecision.REPAIR)
         with self.assertRaises(ContractValidationError):
-            require_enum("done", AdaptiveDecision, "decision")
+            require_enum("done", ExampleDecision, "decision")
 
     def test_ref_round_trip(self) -> None:
         ref = Ref.from_dict({"value": "evidence/result.json"})
@@ -50,7 +54,7 @@ class ContractPrimitiveTests(unittest.TestCase):
 
     def test_public_enums_keep_expected_wire_values(self) -> None:
         self.assertEqual(EvidenceTrustLevel.UNTRUSTED_WORKER_CLAIM.value, "untrusted_worker_claim")
-        self.assertEqual(ValidatorMode.EXECUTABLE.value, "executable")
+        self.assertEqual(EvidenceTrustLevel.SCHEMA_VALIDATION.value, "schema_validation")
 
 
 if __name__ == "__main__":

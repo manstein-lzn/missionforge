@@ -8,9 +8,7 @@ from typing import Any, Mapping
 
 from missionforge.contracts import (
     ContractValidationError,
-    assert_refs_only_payload,
     require_enum,
-    require_int_at_least,
     require_mapping,
     require_non_empty_str,
     require_str_list,
@@ -19,8 +17,6 @@ from missionforge.contracts import (
 
 
 RESEARCH_REQUEST_SCHEMA_VERSION = "missionforge_deepresearch.research_request.v1"
-RUN_RESULT_SCHEMA_VERSION = "missionforge_deepresearch.run_result.v1"
-REVIEWED_RUN_RESULT_SCHEMA_VERSION = "missionforge_deepresearch.reviewed_run_result.v1"
 
 
 _REPORT_SECTION_DEFINITIONS = [
@@ -60,18 +56,11 @@ _REPORT_SECTION_DEFINITIONS = [
         "purpose": "Surface negative evidence, weak claims, failed assumptions, competing interpretations, and risks.",
     },
     {
-        "section_id": "research_delta",
-        "canonical_title": "Research Delta",
-        "localized_titles": {"zh": "研究变化"},
-        "aliases": ["Delta", "变化分析"],
-        "purpose": "Compare with previous run refs when present, or clearly mark the run as a baseline.",
-    },
-    {
         "section_id": "source_gaps",
-        "canonical_title": "Source Gaps",
-        "localized_titles": {"zh": "证据缺口"},
-        "aliases": ["Evidence Gaps", "信息缺口"],
-        "purpose": "Record missing sources, unresolved questions, inaccessible evidence, and follow-up searches.",
+        "canonical_title": "Limitations And Evidence Gaps",
+        "localized_titles": {"zh": "局限与证据缺口"},
+        "aliases": ["Source Gaps", "Evidence Gaps", "Limitations", "证据缺口", "信息缺口", "局限"],
+        "purpose": "State reader-facing limitations, unresolved questions, inaccessible evidence, and follow-up checks.",
     },
     {
         "section_id": "references",
@@ -105,8 +94,8 @@ _QUALITY_DIMENSIONS = [
     },
     {
         "dimension_id": "delta",
-        "standard": "Compare with previous run refs or explicitly state that the run is a baseline.",
-        "user_visible_value": "clearer changes over time",
+        "standard": "Keep run-to-run changes in research_delta.md and do not leak loop language into the reader report.",
+        "user_visible_value": "cleaner reader-facing report boundaries",
     },
     {
         "dimension_id": "gaps_and_counterevidence",
@@ -119,25 +108,8 @@ _QUALITY_DIMENSIONS = [
 class ResearchIntensity(StrEnum):
     """User-facing research depth budget for DeepResearch runs."""
 
-    QUICK = "quick"
     STANDARD = "standard"
     INTENSIVE = "intensive"
-
-
-class DeepResearchRunStatus(StrEnum):
-    """Product facade status for the single-agent baseline."""
-
-    DRAFT_READY = "draft_ready"
-    FAILED = "failed"
-    BLOCKED = "blocked"
-
-
-class DeepResearchReviewedRunStatus(StrEnum):
-    """Product facade status for reviewer-guided draft runs."""
-
-    DRAFT_READY = "draft_ready"
-    FAILED = "failed"
-    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True)
@@ -146,40 +118,22 @@ class ResearchIntensityProfile:
 
     intensity: ResearchIntensity
     max_sources: int
-    max_search_queries: int
     min_source_records: int
-    min_distinct_source_types: int
-    min_recent_source_records: int
-    required_report_sections: list[str]
-    required_source_record_fields: list[str]
-    default_review_rounds: int
     max_review_rounds: int
-    search_intent_max_turns: int
-    researcher_max_turns: int
-    reviewer_max_turns: int
-    judge_max_turns: int
     piworker_timeout_seconds: int
     piworker_reasoning: str
+    min_final_report_chars: int
     guidance: str
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "intensity": self.intensity.value,
             "max_sources": self.max_sources,
-            "max_search_queries": self.max_search_queries,
             "min_source_records": self.min_source_records,
-            "min_distinct_source_types": self.min_distinct_source_types,
-            "min_recent_source_records": self.min_recent_source_records,
-            "required_report_sections": list(self.required_report_sections),
-            "required_source_record_fields": list(self.required_source_record_fields),
-            "default_review_rounds": self.default_review_rounds,
             "max_review_rounds": self.max_review_rounds,
-            "search_intent_max_turns": self.search_intent_max_turns,
-            "researcher_max_turns": self.researcher_max_turns,
-            "reviewer_max_turns": self.reviewer_max_turns,
-            "judge_max_turns": self.judge_max_turns,
             "piworker_timeout_seconds": self.piworker_timeout_seconds,
             "piworker_reasoning": self.piworker_reasoning,
+            "min_final_report_chars": self.min_final_report_chars,
             "guidance": self.guidance,
         }
 
@@ -188,82 +142,39 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
     """Return the product-layer budget preset for a research intensity."""
 
     intensity = require_enum(value, ResearchIntensity, "research_intensity")
-    required_report_sections = [item["canonical_title"] for item in _REPORT_SECTION_DEFINITIONS]
-    required_source_record_fields = [
-        "source_id",
-        "title",
-        "source_type",
-        "year",
-        "accessed_at",
-        "evidence_note",
-        "evidence_strength",
-    ]
     profiles = {
-        ResearchIntensity.QUICK: ResearchIntensityProfile(
-            intensity=ResearchIntensity.QUICK,
-            max_sources=10,
-            max_search_queries=3,
-            min_source_records=3,
-            min_distinct_source_types=1,
-            min_recent_source_records=1,
-            required_report_sections=required_report_sections,
-            required_source_record_fields=required_source_record_fields,
-            default_review_rounds=1,
-            max_review_rounds=1,
-            search_intent_max_turns=3,
-            researcher_max_turns=12,
-            reviewer_max_turns=4,
-            judge_max_turns=4,
-            piworker_timeout_seconds=600,
-            piworker_reasoning="medium",
-            guidance=(
-                "Produce a concise scan. Prioritize the most central sources, "
-                "state uncertainty clearly, and avoid exhaustive coverage claims."
-            ),
-        ),
         ResearchIntensity.STANDARD: ResearchIntensityProfile(
             intensity=ResearchIntensity.STANDARD,
             max_sources=24,
-            max_search_queries=6,
             min_source_records=8,
-            min_distinct_source_types=2,
-            min_recent_source_records=3,
-            required_report_sections=required_report_sections,
-            required_source_record_fields=required_source_record_fields,
-            default_review_rounds=2,
             max_review_rounds=2,
-            search_intent_max_turns=4,
-            researcher_max_turns=20,
-            reviewer_max_turns=6,
-            judge_max_turns=6,
             piworker_timeout_seconds=900,
             piworker_reasoning="medium",
+            min_final_report_chars=4500,
             guidance=(
-                "Produce a balanced deep research report with representative "
-                "coverage, current evidence, citations, deltas, and explicit gaps."
+                "Produce a serious web, paper, and repository-metadata survey. "
+                "Use public pages, papers, docs, release notes, and repository "
+                "metadata to build a useful synthesis, taxonomy, comparison, "
+                "limitations, and citations. Do not claim code-level audit "
+                "unless repository files were actually inspected."
             ),
         ),
         ResearchIntensity.INTENSIVE: ResearchIntensityProfile(
             intensity=ResearchIntensity.INTENSIVE,
-            max_sources=48,
-            max_search_queries=12,
-            min_source_records=16,
-            min_distinct_source_types=3,
-            min_recent_source_records=6,
-            required_report_sections=required_report_sections,
-            required_source_record_fields=required_source_record_fields,
-            default_review_rounds=3,
+            max_sources=64,
+            min_source_records=24,
             max_review_rounds=4,
-            search_intent_max_turns=6,
-            researcher_max_turns=40,
-            reviewer_max_turns=8,
-            judge_max_turns=8,
             piworker_timeout_seconds=1800,
             piworker_reasoning="high",
+            min_final_report_chars=25000,
             guidance=(
-                "Produce a higher-recall investigation. Use broader query "
-                "coverage, cross-check claims across source types, surface "
-                "competing evidence, and make gaps explicit instead of compressing them away."
+                "Produce a repository/code-audit-backed technical report when "
+                "the topic involves software systems. Inspect repository files "
+                "such as README, docs, examples, tests, configs, source layout, "
+                "and entrypoints when tools permit. Classify claims by evidence "
+                "type, surface competing evidence, and make gaps explicit. Do "
+                "not install projects, run benchmarks, execute untrusted code, "
+                "or treat experimental execution as required."
             ),
         ),
     }
@@ -410,260 +321,6 @@ class AcademicResearchRequest:
             "constraints": list(self.constraints),
             "non_goals": list(self.non_goals),
         }
-
-
-@dataclass(frozen=True)
-class DeepResearchRunResult:
-    """Refs-first product run result for Phase 1."""
-
-    request_id: str
-    status: DeepResearchRunStatus
-    run_workspace_ref: str
-    run_result_ref: str
-    task_contract_ref: str
-    manual_ref: str
-    source_packet_ref: str
-    output_contract_ref: str
-    researcher_call_ref: str
-    researcher_call_result_ref: str
-    structural_check_ref: str
-    draft_artifact_refs: list[str]
-    evidence_refs: list[str]
-    metric_refs: list[str]
-    contract_hash: str
-    schema_version: str = RUN_RESULT_SCHEMA_VERSION
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "DeepResearchRunResult":
-        data = require_mapping(payload, "deepresearch_run_result")
-        result = cls(
-            schema_version=require_non_empty_str(
-                data.get("schema_version", RUN_RESULT_SCHEMA_VERSION),
-                "deepresearch_run_result.schema_version",
-            ),
-            request_id=require_non_empty_str(data.get("request_id"), "deepresearch_run_result.request_id"),
-            status=require_enum(data.get("status"), DeepResearchRunStatus, "deepresearch_run_result.status"),
-            run_workspace_ref=validate_ref(data.get("run_workspace_ref"), "deepresearch_run_result.run_workspace_ref"),
-            run_result_ref=validate_ref(data.get("run_result_ref"), "deepresearch_run_result.run_result_ref"),
-            task_contract_ref=validate_ref(data.get("task_contract_ref"), "deepresearch_run_result.task_contract_ref"),
-            manual_ref=validate_ref(data.get("manual_ref"), "deepresearch_run_result.manual_ref"),
-            source_packet_ref=validate_ref(data.get("source_packet_ref"), "deepresearch_run_result.source_packet_ref"),
-            output_contract_ref=validate_ref(
-                data.get("output_contract_ref"),
-                "deepresearch_run_result.output_contract_ref",
-            ),
-            researcher_call_ref=validate_ref(
-                data.get("researcher_call_ref"),
-                "deepresearch_run_result.researcher_call_ref",
-            ),
-            researcher_call_result_ref=validate_ref(
-                data.get("researcher_call_result_ref"),
-                "deepresearch_run_result.researcher_call_result_ref",
-            ),
-            structural_check_ref=validate_ref(
-                data.get("structural_check_ref"),
-                "deepresearch_run_result.structural_check_ref",
-            ),
-            draft_artifact_refs=_ref_list(data.get("draft_artifact_refs", []), "deepresearch_run_result.draft_artifact_refs"),
-            evidence_refs=_ref_list(data.get("evidence_refs", []), "deepresearch_run_result.evidence_refs"),
-            metric_refs=_ref_list(data.get("metric_refs", []), "deepresearch_run_result.metric_refs"),
-            contract_hash=require_non_empty_str(data.get("contract_hash"), "deepresearch_run_result.contract_hash"),
-        )
-        result.validate()
-        return result
-
-    def validate(self) -> None:
-        if self.schema_version != RUN_RESULT_SCHEMA_VERSION:
-            raise ContractValidationError("deepresearch_run_result.schema_version is unsupported")
-        require_non_empty_str(self.request_id, "deepresearch_run_result.request_id")
-        require_enum(self.status, DeepResearchRunStatus, "deepresearch_run_result.status")
-        for field_name in (
-            "run_workspace_ref",
-            "run_result_ref",
-            "task_contract_ref",
-            "manual_ref",
-            "source_packet_ref",
-            "output_contract_ref",
-            "researcher_call_ref",
-            "researcher_call_result_ref",
-            "structural_check_ref",
-        ):
-            validate_ref(getattr(self, field_name), f"deepresearch_run_result.{field_name}")
-        _validate_unique_refs(self.draft_artifact_refs, "deepresearch_run_result.draft_artifact_refs")
-        _validate_unique_refs(self.evidence_refs, "deepresearch_run_result.evidence_refs")
-        _validate_unique_refs(self.metric_refs, "deepresearch_run_result.metric_refs")
-        require_non_empty_str(self.contract_hash, "deepresearch_run_result.contract_hash")
-        assert_refs_only_payload(self.to_dict_without_validation(), "deepresearch_run_result")
-
-    def to_dict_without_validation(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "request_id": self.request_id,
-            "status": self.status.value,
-            "run_workspace_ref": self.run_workspace_ref,
-            "run_result_ref": self.run_result_ref,
-            "task_contract_ref": self.task_contract_ref,
-            "manual_ref": self.manual_ref,
-            "source_packet_ref": self.source_packet_ref,
-            "output_contract_ref": self.output_contract_ref,
-            "researcher_call_ref": self.researcher_call_ref,
-            "researcher_call_result_ref": self.researcher_call_result_ref,
-            "structural_check_ref": self.structural_check_ref,
-            "draft_artifact_refs": list(self.draft_artifact_refs),
-            "evidence_refs": list(self.evidence_refs),
-            "metric_refs": list(self.metric_refs),
-            "contract_hash": self.contract_hash,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return self.to_dict_without_validation()
-
-
-@dataclass(frozen=True)
-class DeepResearchReviewedRunResult:
-    """Refs-first product result for reviewer-guided research updates."""
-
-    request_id: str
-    status: DeepResearchReviewedRunStatus
-    run_workspace_ref: str
-    reviewed_run_result_ref: str
-    final_run_result_ref: str
-    review_round_count: int
-    reviewer_report_refs: list[str]
-    reviewer_observation_refs: list[str]
-    research_state_refs: list[str]
-    reviewer_call_refs: list[str]
-    reviewer_call_result_refs: list[str]
-    revision_call_refs: list[str]
-    revision_call_result_refs: list[str]
-    evidence_refs: list[str]
-    metric_refs: list[str]
-    contract_hash: str
-    schema_version: str = REVIEWED_RUN_RESULT_SCHEMA_VERSION
-
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "DeepResearchReviewedRunResult":
-        data = require_mapping(payload, "deepresearch_reviewed_run_result")
-        result = cls(
-            schema_version=require_non_empty_str(
-                data.get("schema_version", REVIEWED_RUN_RESULT_SCHEMA_VERSION),
-                "deepresearch_reviewed_run_result.schema_version",
-            ),
-            request_id=require_non_empty_str(data.get("request_id"), "deepresearch_reviewed_run_result.request_id"),
-            status=require_enum(
-                data.get("status"),
-                DeepResearchReviewedRunStatus,
-                "deepresearch_reviewed_run_result.status",
-            ),
-            run_workspace_ref=validate_ref(
-                data.get("run_workspace_ref"),
-                "deepresearch_reviewed_run_result.run_workspace_ref",
-            ),
-            reviewed_run_result_ref=validate_ref(
-                data.get("reviewed_run_result_ref"),
-                "deepresearch_reviewed_run_result.reviewed_run_result_ref",
-            ),
-            final_run_result_ref=validate_ref(
-                data.get("final_run_result_ref"),
-                "deepresearch_reviewed_run_result.final_run_result_ref",
-            ),
-            review_round_count=require_int_at_least(
-                data.get("review_round_count"),
-                "deepresearch_reviewed_run_result.review_round_count",
-                0,
-            ),
-            reviewer_report_refs=_ref_list(
-                data.get("reviewer_report_refs", []),
-                "deepresearch_reviewed_run_result.reviewer_report_refs",
-            ),
-            reviewer_observation_refs=_ref_list(
-                data.get("reviewer_observation_refs", []),
-                "deepresearch_reviewed_run_result.reviewer_observation_refs",
-            ),
-            research_state_refs=_ref_list(
-                data.get("research_state_refs", []),
-                "deepresearch_reviewed_run_result.research_state_refs",
-            ),
-            reviewer_call_refs=_ref_list(
-                data.get("reviewer_call_refs", []),
-                "deepresearch_reviewed_run_result.reviewer_call_refs",
-            ),
-            reviewer_call_result_refs=_ref_list(
-                data.get("reviewer_call_result_refs", []),
-                "deepresearch_reviewed_run_result.reviewer_call_result_refs",
-            ),
-            revision_call_refs=_ref_list(
-                data.get("revision_call_refs", []),
-                "deepresearch_reviewed_run_result.revision_call_refs",
-            ),
-            revision_call_result_refs=_ref_list(
-                data.get("revision_call_result_refs", []),
-                "deepresearch_reviewed_run_result.revision_call_result_refs",
-            ),
-            evidence_refs=_ref_list(data.get("evidence_refs", []), "deepresearch_reviewed_run_result.evidence_refs"),
-            metric_refs=_ref_list(data.get("metric_refs", []), "deepresearch_reviewed_run_result.metric_refs"),
-            contract_hash=require_non_empty_str(
-                data.get("contract_hash"),
-                "deepresearch_reviewed_run_result.contract_hash",
-            ),
-        )
-        result.validate()
-        return result
-
-    def validate(self) -> None:
-        if self.schema_version != REVIEWED_RUN_RESULT_SCHEMA_VERSION:
-            raise ContractValidationError("deepresearch_reviewed_run_result.schema_version is unsupported")
-        require_non_empty_str(self.request_id, "deepresearch_reviewed_run_result.request_id")
-        require_enum(self.status, DeepResearchReviewedRunStatus, "deepresearch_reviewed_run_result.status")
-        for field_name in ("run_workspace_ref", "reviewed_run_result_ref", "final_run_result_ref"):
-            validate_ref(getattr(self, field_name), f"deepresearch_reviewed_run_result.{field_name}")
-        require_int_at_least(self.review_round_count, "deepresearch_reviewed_run_result.review_round_count", 0)
-        _validate_unique_refs(self.reviewer_report_refs, "deepresearch_reviewed_run_result.reviewer_report_refs")
-        _validate_unique_refs(
-            self.reviewer_observation_refs,
-            "deepresearch_reviewed_run_result.reviewer_observation_refs",
-        )
-        _validate_unique_refs(self.research_state_refs, "deepresearch_reviewed_run_result.research_state_refs")
-        _validate_unique_refs(self.reviewer_call_refs, "deepresearch_reviewed_run_result.reviewer_call_refs")
-        _validate_unique_refs(
-            self.reviewer_call_result_refs,
-            "deepresearch_reviewed_run_result.reviewer_call_result_refs",
-        )
-        _validate_unique_refs(self.revision_call_refs, "deepresearch_reviewed_run_result.revision_call_refs")
-        _validate_unique_refs(
-            self.revision_call_result_refs,
-            "deepresearch_reviewed_run_result.revision_call_result_refs",
-        )
-        _validate_unique_refs(self.evidence_refs, "deepresearch_reviewed_run_result.evidence_refs")
-        _validate_unique_refs(self.metric_refs, "deepresearch_reviewed_run_result.metric_refs")
-        require_non_empty_str(self.contract_hash, "deepresearch_reviewed_run_result.contract_hash")
-        assert_refs_only_payload(self.to_dict_without_validation(), "deepresearch_reviewed_run_result")
-
-    def to_dict_without_validation(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "request_id": self.request_id,
-            "status": self.status.value,
-            "run_workspace_ref": self.run_workspace_ref,
-            "reviewed_run_result_ref": self.reviewed_run_result_ref,
-            "final_run_result_ref": self.final_run_result_ref,
-            "review_round_count": self.review_round_count,
-            "reviewer_report_refs": list(self.reviewer_report_refs),
-            "reviewer_observation_refs": list(self.reviewer_observation_refs),
-            "research_state_refs": list(self.research_state_refs),
-            "reviewer_call_refs": list(self.reviewer_call_refs),
-            "reviewer_call_result_refs": list(self.reviewer_call_result_refs),
-            "revision_call_refs": list(self.revision_call_refs),
-            "revision_call_result_refs": list(self.revision_call_result_refs),
-            "evidence_refs": list(self.evidence_refs),
-            "metric_refs": list(self.metric_refs),
-            "contract_hash": self.contract_hash,
-        }
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return self.to_dict_without_validation()
 
 
 def _strict_mapping(payload: Mapping[str, Any], field_name: str, allowed: set[str]) -> dict[str, Any]:

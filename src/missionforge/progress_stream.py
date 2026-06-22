@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
 
@@ -128,6 +129,7 @@ class ProgressStreamWriter:
         self.workspace = Path(workspace).resolve()
         self.stream_ref = validate_ref(stream_ref, "progress_stream.stream_ref")
         self._counter = 0
+        self._lock = threading.Lock()
 
     def emit(
         self,
@@ -139,18 +141,19 @@ class ProgressStreamWriter:
         progress_hint: str = "",
         refs: Sequence[str] = (),
     ) -> ProgressEvent:
-        self._counter += 1
-        event = ProgressEvent(
-            event_id=f"progress-{self._counter:06d}",
-            stage=stage,
-            state=state,
-            message=message,
-            detail=detail,
-            progress_hint=progress_hint,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            refs=list(refs),
-        )
-        append_progress_event(self.workspace, self.stream_ref, event)
+        with self._lock:
+            self._counter += 1
+            event = ProgressEvent(
+                event_id=f"progress-{self._counter:06d}",
+                stage=stage,
+                state=state,
+                message=message,
+                detail=detail,
+                progress_hint=progress_hint,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                refs=list(refs),
+            )
+            append_progress_event(self.workspace, self.stream_ref, event)
         return event
 
 

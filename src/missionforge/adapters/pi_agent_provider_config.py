@@ -46,7 +46,7 @@ class PiAgentProviderEnvironment:
 def resolve_pi_agent_provider_environment(
     *,
     provider_mode: str,
-    provider_config_source: str = "env",
+    provider_config_source: str = "codex_current",
     model: str | None = None,
     metadata: Mapping[str, object] | None = None,
     environ: Mapping[str, str] | None = None,
@@ -83,9 +83,9 @@ def resolve_pi_agent_provider_environment(
         codex = load_codex_current_provider(codex_home=codex_home, environ=current_env)
         if codex.get("wire_api") != "responses":
             raise ContractValidationError("Codex current provider must use responses wire_api for PI Agent runtime")
-        env.setdefault("MISSIONFORGE_PI_AGENT_MODEL", require_non_empty_str(codex.get("model"), "codex.model"))
-        env.setdefault("MISSIONFORGE_PI_AGENT_BASE_URL", require_non_empty_str(codex.get("base_url"), "codex.base_url"))
-        env.setdefault("MISSIONFORGE_PI_AGENT_API_KEY", require_non_empty_str(codex.get("api_key"), "codex.api_key"))
+        env["MISSIONFORGE_PI_AGENT_MODEL"] = require_non_empty_str(codex.get("model"), "codex.model")
+        env["MISSIONFORGE_PI_AGENT_BASE_URL"] = require_non_empty_str(codex.get("base_url"), "codex.base_url")
+        env["MISSIONFORGE_PI_AGENT_API_KEY"] = require_non_empty_str(codex.get("api_key"), "codex.api_key")
     elif normalized_source == "explicit":
         if "MISSIONFORGE_PI_AGENT_BASE_URL" not in env and "base_url" not in metadata_map:
             raise ContractValidationError("explicit live PI Agent config requires base URL")
@@ -119,7 +119,7 @@ def load_codex_current_provider(
     codex_home: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
-    """Load current Codex provider config and auth key."""
+    """Load the current Codex provider config and auth key."""
 
     current_env = dict(os.environ if environ is None else environ)
     home = _codex_home(codex_home=codex_home, environ=current_env)
@@ -136,14 +136,12 @@ def load_codex_current_provider(
     if not isinstance(provider, Mapping):
         raise ContractValidationError(f"Codex provider is not configured: {provider_name}")
 
-    api_key = current_env.get("MISSIONFORGE_PI_AGENT_API_KEY")
-    if not api_key:
-        if not auth_path.is_file():
-            raise ContractValidationError(f"Codex auth not found: {auth_path}")
-        auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        if not isinstance(auth, Mapping):
-            raise ContractValidationError("Codex auth must be a JSON object")
-        api_key = auth.get("OPENAI_API_KEY")
+    if not auth_path.is_file():
+        raise ContractValidationError(f"Codex auth not found: {auth_path}")
+    auth = json.loads(auth_path.read_text(encoding="utf-8"))
+    if not isinstance(auth, Mapping):
+        raise ContractValidationError("Codex auth must be a JSON object")
+    api_key = auth.get("OPENAI_API_KEY")
 
     return {
         "model_provider": provider_name,
@@ -183,6 +181,16 @@ def _normalize_choice(value: str, allowed: set[str], field_name: str) -> str:
     if normalized not in allowed:
         raise ContractValidationError(f"{field_name} must be one of {sorted(allowed)}")
     return normalized
+
+
+def _first_non_empty_str(environ: Mapping[str, str], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = environ.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                return stripped
+    return None
 
 
 def _is_secret_env_key(key: str) -> bool:

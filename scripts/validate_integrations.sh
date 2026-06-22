@@ -6,12 +6,6 @@ cd "$ROOT"
 
 TARGET="${1:-all}"
 
-run_skillfoundry() {
-  echo "==> Testing SkillFoundry integration"
-  PYTHONPATH=src:integrations/skillfoundry/src \
-    python3 -m unittest discover -s integrations/skillfoundry/tests
-}
-
 run_deepresearch() {
   echo "==> Testing DeepResearch integration"
   PYTHONPATH=src:integrations/deepresearch/src \
@@ -20,11 +14,7 @@ run_deepresearch() {
 
 case "$TARGET" in
   all)
-    run_skillfoundry
     run_deepresearch
-    ;;
-  skillfoundry)
-    run_skillfoundry
     ;;
   deepresearch)
     run_deepresearch

@@ -8,6 +8,8 @@ export interface RuntimeProviderConfig {
   apiKey?: string;
   reasoning: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   maxTurns: number;
+  providerRetryLimit: number;
+  providerRetryDelayMs: number;
   toolTimeoutSeconds: number;
   cancelAfterTurns: number | null;
   compactAfterTurns: number | null;
@@ -16,7 +18,9 @@ export interface RuntimeProviderConfig {
 export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): RuntimeProviderConfig {
   const mode = normalizeMode(env.MISSIONFORGE_PI_AGENT_PROVIDER ?? "faux");
   const reasoning = normalizeReasoning(env.MISSIONFORGE_PI_AGENT_REASONING ?? "off");
-  const maxTurns = positiveInt(env.MISSIONFORGE_PI_AGENT_MAX_TURNS, 12);
+  const maxTurns = positiveInt(env.MISSIONFORGE_PI_AGENT_MAX_TURNS, 500);
+  const providerRetryLimit = nonNegativeInt(env.MISSIONFORGE_PI_AGENT_PROVIDER_RETRY_LIMIT, mode === "live" ? 2 : 0);
+  const providerRetryDelayMs = nonNegativeInt(env.MISSIONFORGE_PI_AGENT_PROVIDER_RETRY_DELAY_MS, 1000);
   const toolTimeoutSeconds = positiveInt(env.MISSIONFORGE_PI_AGENT_TOOL_TIMEOUT_SECONDS, 60);
   const cancelAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_CANCEL_AFTER_TURNS);
   const compactAfterTurns = optionalPositiveInt(env.MISSIONFORGE_PI_AGENT_COMPACT_AFTER_TURNS);
@@ -26,6 +30,8 @@ export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): Run
       mode,
       reasoning,
       maxTurns,
+      providerRetryLimit,
+      providerRetryDelayMs,
       toolTimeoutSeconds,
       cancelAfterTurns,
       compactAfterTurns,
@@ -52,6 +58,8 @@ export function resolveProviderConfig(env: NodeJS.ProcessEnv = process.env): Run
     apiKey,
     reasoning,
     maxTurns,
+    providerRetryLimit,
+    providerRetryDelayMs,
     toolTimeoutSeconds,
     cancelAfterTurns,
     compactAfterTurns,
@@ -92,6 +100,13 @@ function positiveInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`Invalid positive integer: ${value}`);
+  return parsed;
+}
+
+function nonNegativeInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`Invalid non-negative integer: ${value}`);
   return parsed;
 }
 

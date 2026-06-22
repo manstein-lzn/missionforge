@@ -101,7 +101,7 @@ Names should be capability-oriented:
 
 Names should not be product-oriented:
 
-- `skillfoundry_pack`
+- `product_specific_pack`
 - `customer_x_contract`
 - `benchmark_y_policy`
 

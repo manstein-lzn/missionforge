@@ -106,6 +106,35 @@ class ExtensionTests(unittest.TestCase):
             self.assertTrue((root / ".missionforge/extensions/node_modules/@juicesharp/rpiv-web-tools/package.json").is_file())
             self.assertEqual(len(lock.extensions), 2)
 
+    def test_compile_extension_lock_preserves_grant_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            manifest = sample_manifest(
+                extension_grants=[
+                    {
+                        "grant_id": "web-search",
+                        "package": "npm:pi-web-access",
+                        "version_spec": "0.10.7",
+                        "capability": "web",
+                        "requires_network": True,
+                        "required_env": ["SEARCH_API_KEY"],
+                        "metadata": {"tool_names": ["web_search"], "profile": "test"},
+                    },
+                ],
+            )
+
+            lock = compile_extension_lock(
+                manifest,
+                source_permission_manifest_ref="policy/permission_manifest.json",
+                workspace_root=root,
+                mode="install",
+                installer=_fake_npm_install,
+                compiled_at="2026-06-15T00:00:00Z",
+            )
+
+            self.assertEqual(lock.extensions[0].metadata["tool_names"], ["web_search"])
+            self.assertEqual(lock.extensions[0].metadata["profile"], "test")
+
     def test_compile_extension_lock_install_mode_copies_local_package(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -2,11 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge.agent_packets import AgentExecutionPacket, JudgePacket
-from missionforge.agentic_repair import TaskRevisionAuthority
-from missionforge.agentic_repair_controller import RepairExecutionDirective
-from missionforge.agentic_revision_controller import RevisionPendingRecord
-from missionforge.contracts import ContractValidationError, stable_json_hash
+from missionforge.contracts import ContractValidationError
 from missionforge.piworker_call import (
     PIWORKER_CALL_RESULT_SCHEMA_VERSION,
     PIWORKER_CALL_SCHEMA_VERSION,
@@ -49,47 +45,6 @@ def piworker_call_payload() -> dict[str, object]:
     }
 
 
-def execution_packet() -> AgentExecutionPacket:
-    return AgentExecutionPacket.from_dict(
-        {
-            "packet_id": "WU-000001",
-            "schema_version": "agent_execution_packet.v1",
-            "role": "executor_piworker",
-            "contract_id": "contract-001",
-            "contract_hash": HASH_A,
-            "contract_ref": "contract/task_contract.json",
-            "worker_brief_ref": "projections/worker_brief.json",
-            "workspace_policy_ref": "policy/workspace_policy.json",
-            "permission_manifest_ref": "policy/permission_manifest.json",
-            "report_ref": "reports/execution_report.json",
-            "expected_artifact_refs": ["artifacts/final.md"],
-            "allowed_input_refs": ["contract/task_contract.json", "frontdesk/intent_bundle.json"],
-            "writable_refs": ["artifacts", "reports"],
-        }
-    )
-
-
-def judge_packet() -> JudgePacket:
-    return JudgePacket.from_dict(
-        {
-            "packet_id": "judge-packet-001",
-            "schema_version": "judge_packet.v1",
-            "role": "judge_piworker",
-            "contract_id": "contract-001",
-            "contract_hash": HASH_A,
-            "contract_ref": "contract/task_contract.json",
-            "judge_rubric_ref": "projections/judge_rubric.json",
-            "execution_packet_ref": "packets/execution_packet.json",
-            "execution_report_ref": "reports/execution_report.json",
-            "report_ref": "reports/judge_report.json",
-            "hard_check_status": "passed",
-            "artifact_refs": ["artifacts/final.md"],
-            "evidence_refs": ["evidence/tool_events.jsonl"],
-            "hard_check_refs": ["reports/hard_checks.json"],
-        }
-    )
-
-
 def piworker_call_result_payload() -> dict[str, object]:
     return {
         "result_id": "call-001-result",
@@ -112,75 +67,6 @@ def piworker_call_result_payload() -> dict[str, object]:
         "error_ref": None,
         "metadata": {"runtime_config_ref": "runtime/pi_agent_runtime.json"},
     }
-
-
-def repair_directive() -> RepairExecutionDirective:
-    repair_ticket_ref = "repairs/repair-ticket-001/repair_ticket.json"
-    repair_ticket_hash = "sha256:" + "c" * 64
-    directive_id = "repair-execution-" + stable_json_hash(
-        {
-            "schema_version": "repair_execution_directive.v1",
-            "repair_ticket_ref": repair_ticket_ref,
-            "repair_ticket_hash": repair_ticket_hash,
-        }
-    ).split(":", 1)[1]
-    payload = {
-        "schema_version": "repair_execution_directive.v1",
-        "directive_id": directive_id,
-        "run_id": "run-001",
-        "contract_id": "contract-001",
-        "contract_hash": HASH_A,
-        "repair_ticket_ref": repair_ticket_ref,
-        "repair_ticket_hash": repair_ticket_hash,
-        "source_result_ref": "results/result-run-001.json",
-        "source_repair_brief_ref": "repairs/repair-ticket-001/repair_brief.json",
-        "worker_brief_ref": "projections/worker_brief.json",
-        "execution_packet_ref": "repairs/repair-ticket-001/execution_packet.json",
-        "execution_report_ref": "reports/repair_execution_report.json",
-        "target_artifact_refs": ["artifacts/final.md"],
-        "context_refs": [
-            "repairs/repair-ticket-001/repair_ticket.json",
-            "repairs/repair-ticket-001/repair_brief.json",
-        ],
-        "status": "ready",
-    }
-    payload["directive_hash"] = stable_json_hash(payload)
-    return RepairExecutionDirective.from_dict(payload)
-
-
-def revision_pending_record() -> RevisionPendingRecord:
-    source_result_ref = "results/result-run-001.json"
-    source_revision_request_ref = "revisions/revision-request-001/request.json"
-    pending_id = "revision-pending-" + stable_json_hash(
-        {
-            "schema_version": "revision_pending_record.v1",
-            "run_id": "run-001",
-            "contract_hash": HASH_A,
-            "source_result_ref": source_result_ref,
-            "source_revision_request_ref": source_revision_request_ref,
-        }
-    ).split(":", 1)[1]
-    payload = {
-        "schema_version": "revision_pending_record.v1",
-        "pending_id": pending_id,
-        "run_id": "run-001",
-        "contract_id": "contract-001",
-        "contract_hash": HASH_A,
-        "contract_ref": "contract/task_contract.json",
-        "request_id": "revision-request-001",
-        "source_result_ref": source_result_ref,
-        "source_judge_report_ref": "reports/judge_report.json",
-        "source_revision_request_ref": source_revision_request_ref,
-        "execution_packet_ref": "packets/execution_packet.json",
-        "execution_report_ref": "reports/execution_report.json",
-        "judge_packet_ref": "packets/judge_packet.json",
-        "judge_report_ref": "reports/judge_report.json",
-        "authority_required": TaskRevisionAuthority.PRODUCT_INTEGRATION.value,
-        "evidence_refs": ["reports/execution_report.json"],
-        "status": "pending",
-    }
-    payload["pending_hash"] = stable_json_hash(payload)
-    return RevisionPendingRecord.from_dict(payload)
 
 
 def worker_adapter_result(*, status: str = "completed", produced_refs: list[str] | None = None) -> WorkerAdapterResult:
@@ -261,83 +147,6 @@ class PiWorkerCallTests(unittest.TestCase):
         payload["runtime_budget"] = {"max_turns": 0}
         with self.assertRaises(ContractValidationError):
             PiWorkerCall.from_dict(payload)
-
-    def test_execution_packet_projection_binds_source_packet_hash(self) -> None:
-        packet = execution_packet()
-
-        call = PiWorkerCall.from_execution_packet(
-            packet,
-            packet_ref="packets/execution_packet.json",
-        )
-
-        self.assertEqual(call.call_id, "WU-000001")
-        self.assertEqual(call.role, PiWorkerCallRole.EXECUTOR)
-        self.assertEqual(call.source_packet_hash, stable_json_hash(packet.to_dict()))
-        self.assertEqual(call.expected_output_refs, ["artifacts/final.md"])
-        self.assertEqual(call.writable_refs, ["artifacts", "reports"])
-        self.assertEqual(call.visible_refs.count("contract/task_contract.json"), 1)
-
-    def test_judge_packet_projection_uses_exact_judge_authored_writable_refs(self) -> None:
-        packet = judge_packet()
-
-        call = PiWorkerCall.from_judge_packet(
-            packet,
-            packet_ref="packets/judge_packet.json",
-            spec_ref="attempts/judge-packet-001/judge_node_spec.json",
-        )
-
-        self.assertEqual(call.role, PiWorkerCallRole.JUDGE)
-        self.assertEqual(call.metadata, {"hard_check_status": "passed"})
-        self.assertEqual(
-            call.writable_refs,
-            [
-                "reports/judge_report.json",
-                "reports/judge_rationale.md",
-                "projections/repair_brief.json",
-                "revisions/request.json",
-            ],
-        )
-        self.assertEqual(call.expected_output_refs, ["reports/judge_report.json"])
-        self.assertEqual(call.visible_refs[0], "attempts/judge-packet-001/judge_node_spec.json")
-
-    def test_repair_directive_projection_uses_same_piworker_call_boundary(self) -> None:
-        directive = repair_directive()
-
-        call = PiWorkerCall.from_repair_directive(
-            directive,
-            directive_ref="repairs/repair-ticket-001/repair_execution_directive.json",
-            contract_ref="contract/task_contract.json",
-            permission_manifest_ref="policy/permission_manifest.json",
-            writable_refs=["artifacts", "reports"],
-        )
-
-        self.assertEqual(call.role, PiWorkerCallRole.REPAIR)
-        self.assertEqual(call.contract_hash, HASH_A)
-        self.assertEqual(call.expected_output_refs, ["artifacts/final.md"])
-        self.assertEqual(call.source_packet_hash, stable_json_hash(directive.to_dict()))
-        self.assertIn("repairs/repair-ticket-001/repair_brief.json", call.visible_refs)
-        self.assertEqual(call.output_schema_ref, "schemas/agent_execution_report.json")
-        self.assertEqual(call.validation_policy_ref, "validation/piworker_repair_policy.json")
-
-    def test_revision_pending_projection_uses_same_piworker_call_boundary(self) -> None:
-        pending = revision_pending_record()
-
-        call = PiWorkerCall.from_revision_pending_record(
-            pending,
-            pending_ref="revisions/revision-request-001/revision_pending.json",
-            permission_manifest_ref="policy/permission_manifest.json",
-            writable_refs=["revisions/revision-request-001"],
-            expected_output_ref="revisions/revision-request-001/revised_task_contract.json",
-        )
-
-        self.assertEqual(call.role, PiWorkerCallRole.REVISION_DRAFTER)
-        self.assertEqual(call.contract_ref, "contract/task_contract.json")
-        self.assertEqual(call.expected_output_refs, ["revisions/revision-request-001/revised_task_contract.json"])
-        self.assertEqual(call.source_packet_hash, stable_json_hash(pending.to_dict()))
-        self.assertIn("revisions/revision-request-001/request.json", call.visible_refs)
-        self.assertEqual(call.metadata, {"authority_required": "product_integration"})
-        self.assertEqual(call.output_schema_ref, "schemas/task_contract_revision_draft.json")
-        self.assertEqual(call.validation_policy_ref, "validation/piworker_revision_policy.json")
 
     def test_result_round_trip_and_call_binding(self) -> None:
         call = PiWorkerCall.from_dict(piworker_call_payload())

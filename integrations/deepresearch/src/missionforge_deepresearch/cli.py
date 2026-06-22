@@ -6,27 +6,16 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 from typing import Any, Callable, Sequence
 
-from missionforge.adapters.long_memory import Mem0LongMemoryProvider
-from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeConfig
+from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
+from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
+from missionforge.piworker_progress import PiWorkerProgressSink
 from missionforge.progress_stream import DEFAULT_PROGRESS_REF, ProgressStreamWriter, stream_progress
 
-from .experimental import (
-    FixtureDirectBaselineAdapter,
-    FixturePeerReviewerAdapter,
-    FixtureQualityEvaluatorAdapter,
-    run_deepresearch_academic_reviewed,
-    run_deepresearch_academic_reviewed_judged,
-    run_deepresearch_quality_evaluation,
-    run_deepresearch_tool_healthcheck,
-)
-from .judging import FixtureDeepResearchJudgeAdapter, run_deepresearch_academic_judged
-from .minimal import run_deepresearch_minimal, run_deepresearch_minimal_loop
+from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from .product_contract import AcademicResearchRequest, ResearchIntensity, research_intensity_profile
-from .runtime import run_deepresearch_academic_single_agent
-from .search_intent import AcademicSearchIntent
-from .source_collector import AcademicSourceCollectionConfig
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -34,258 +23,54 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="profile", required=True)
     academic = subparsers.add_parser("academic")
     academic_sub = academic.add_subparsers(dest="command", required=True)
-    minimal_parser = academic_sub.add_parser("minimal-run")
-    _add_run_arguments(minimal_parser)
-    minimal_loop_parser = academic_sub.add_parser("minimal-loop-run")
-    _add_run_arguments(minimal_loop_parser)
-    minimal_loop_parser.add_argument("--reviewer-mode", choices=["fixture", "piworker"], default="piworker")
-    minimal_loop_parser.add_argument("--review-rounds", type=int, default=None, help="Maximum reviewer-guided rounds.")
-    run_parser = academic_sub.add_parser("single-agent-run")
-    _add_run_arguments(run_parser)
-    reviewed_parser = academic_sub.add_parser("reviewed-run")
-    _add_run_arguments(reviewed_parser)
-    reviewed_parser.add_argument("--reviewer-mode", choices=["fixture", "piworker"], default="piworker")
-    reviewed_parser.add_argument("--review-rounds", type=int, default=None, help="Maximum reviewer-guided rounds.")
-    reviewed_judged_parser = academic_sub.add_parser("reviewed-judged-run")
-    _add_run_arguments(reviewed_judged_parser)
-    reviewed_judged_parser.add_argument("--reviewer-mode", choices=["fixture", "piworker"], default="piworker")
-    reviewed_judged_parser.add_argument("--review-rounds", type=int, default=None, help="Maximum reviewer-guided rounds.")
-    reviewed_judged_parser.add_argument("--judge-mode", choices=["fixture", "piworker"], default="piworker")
-    reviewed_judged_parser.add_argument(
-        "--fixture-judge-decision",
-        choices=["accepted", "repair", "revision_required", "rejected"],
-        default="accepted",
-    )
-    judged_parser = academic_sub.add_parser("judged-run")
-    _add_run_arguments(judged_parser)
-    judged_parser.add_argument("--judge-mode", choices=["fixture", "piworker"], default="piworker")
-    judged_parser.add_argument(
-        "--fixture-judge-decision",
-        choices=["accepted", "repair", "revision_required", "rejected"],
-        default="accepted",
-    )
-    eval_parser = academic_sub.add_parser("quality-eval")
-    _add_run_arguments(eval_parser)
-    eval_parser.add_argument("--direct-baseline-mode", choices=["fixture", "piworker"], default="piworker")
-    eval_parser.add_argument("--evaluator-mode", choices=["heuristic", "piworker", "fixture"], default="heuristic")
-    health_parser = academic_sub.add_parser("tool-healthcheck")
-    _add_healthcheck_arguments(health_parser)
+    kernel_v2_parser = academic_sub.add_parser("kernel-v2-run")
+    _add_kernel_v2_arguments(kernel_v2_parser)
     args = parser.parse_args(argv)
 
-    if args.profile == "academic" and args.command == "minimal-run":
-        request, _source_config, piworker_config, piworker_env = _run_inputs(args)
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_minimal(
-                request,
-                workspace=Path(args.workspace),
-                researcher_mode=args.researcher_mode,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
-                live_extension_mode=args.live_extension_mode,
-            ),
-        )
-    if args.profile == "academic" and args.command == "minimal-loop-run":
-        request, _source_config, piworker_config, piworker_env = _run_inputs(args)
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_minimal_loop(
-                request,
-                workspace=Path(args.workspace),
-                researcher_mode=args.researcher_mode,
-                reviewer_mode=args.reviewer_mode,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
-                live_extension_mode=args.live_extension_mode,
-                review_rounds=args.review_rounds,
-            ),
-        )
-    if args.profile == "academic" and args.command == "single-agent-run":
-        request, source_config, piworker_config, piworker_env = _run_inputs(args)
-        long_memory_provider = _long_memory_provider(args)
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_academic_single_agent(
-                request,
-                workspace=Path(args.workspace),
-                source_mode=args.source_mode,
-                researcher_mode=args.researcher_mode,
-                search_intent_mode=args.search_intent_mode,
-                search_queries=list(args.search_query),
-                search_intent_ref=args.search_intent_ref,
-                source_config=source_config,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
-                live_extension_mode=args.live_extension_mode,
-                long_memory_provider=long_memory_provider,
-                long_memory_budget_tokens=args.long_memory_budget_tokens,
-                long_memory_limit=args.long_memory_limit,
-            ),
-        )
-    if args.profile == "academic" and args.command == "reviewed-run":
-        request, source_config, piworker_config, piworker_env = _run_inputs(args)
-        reviewer_adapter = FixturePeerReviewerAdapter() if args.reviewer_mode == "fixture" else None
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_academic_reviewed(
-                request,
-                workspace=Path(args.workspace),
-                source_mode=args.source_mode,
-                researcher_mode=args.researcher_mode,
-                reviewer_mode=args.reviewer_mode,
-                search_intent_mode=args.search_intent_mode,
-                search_queries=list(args.search_query),
-                search_intent_ref=args.search_intent_ref,
-                source_config=source_config,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
-                live_extension_mode=args.live_extension_mode,
-                reviewer_adapter=reviewer_adapter,
-                review_rounds=args.review_rounds,
-            ),
-        )
-    if args.profile == "academic" and args.command == "reviewed-judged-run":
-        request, source_config, piworker_config, piworker_env = _run_inputs(args)
-        reviewer_adapter = FixturePeerReviewerAdapter() if args.reviewer_mode == "fixture" else None
-        judge_adapter = (
-            FixtureDeepResearchJudgeAdapter(args.fixture_judge_decision) if args.judge_mode == "fixture" else None
+    if args.profile == "academic" and args.command == "kernel-v2-run":
+        request, piworker_config, piworker_env = _kernel_v2_inputs(args)
+        adapter = (
+            KernelV2FixtureAdapter()
+            if args.kernel_v2_adapter_mode == "fixture"
+            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
         )
         return _run_and_emit_result(
             args,
-            lambda: run_deepresearch_academic_reviewed_judged(
+            lambda: run_deepresearch_kernel_v2(
                 request,
                 workspace=Path(args.workspace),
-                source_mode=args.source_mode,
-                researcher_mode=args.researcher_mode,
-                reviewer_mode=args.reviewer_mode,
-                search_intent_mode=args.search_intent_mode,
-                search_queries=list(args.search_query),
-                search_intent_ref=args.search_intent_ref,
-                source_config=source_config,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
+                adapter=adapter,
                 live_extension_mode=args.live_extension_mode,
-                reviewer_adapter=reviewer_adapter,
-                judge_adapter=judge_adapter,
-                review_rounds=args.review_rounds,
             ),
-        )
-    if args.profile == "academic" and args.command == "judged-run":
-        request, source_config, piworker_config, piworker_env = _run_inputs(args)
-        judge_adapter = (
-            FixtureDeepResearchJudgeAdapter(args.fixture_judge_decision) if args.judge_mode == "fixture" else None
-        )
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_academic_judged(
+            progress_runner=lambda progress: run_deepresearch_kernel_v2(
                 request,
                 workspace=Path(args.workspace),
-                source_mode=args.source_mode,
-                researcher_mode=args.researcher_mode,
-                search_intent_mode=args.search_intent_mode,
-                search_queries=list(args.search_query),
-                search_intent_ref=args.search_intent_ref,
-                source_config=source_config,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
+                adapter=adapter,
                 live_extension_mode=args.live_extension_mode,
-                judge_adapter=judge_adapter,
+                event_sink=_kernel_v2_progress_event_sink(progress),
+                runtime_progress_sink=_kernel_v2_runtime_progress_sink(progress),
             ),
         )
-    if args.profile == "academic" and args.command == "quality-eval":
-        request, source_config, piworker_config, piworker_env = _run_inputs(args)
-        direct_adapter = FixtureDirectBaselineAdapter() if args.direct_baseline_mode == "fixture" else None
-        evaluator_mode = "piworker" if args.evaluator_mode == "fixture" else args.evaluator_mode
-        evaluator_adapter = FixtureQualityEvaluatorAdapter() if args.evaluator_mode == "fixture" else None
-        return _run_and_emit_result(
-            args,
-            lambda: run_deepresearch_quality_evaluation(
-                request,
-                workspace=Path(args.workspace),
-                source_mode=args.source_mode,
-                researcher_mode=args.researcher_mode,
-                search_intent_mode=args.search_intent_mode,
-                search_queries=list(args.search_query),
-                search_intent_ref=args.search_intent_ref,
-                source_config=source_config,
-                piworker_config=piworker_config,
-                piworker_environ=piworker_env,
-                live_extension_mode=args.live_extension_mode,
-                direct_adapter=direct_adapter,
-                evaluator_mode=evaluator_mode,
-                evaluator_adapter=evaluator_adapter,
-            ),
-        )
-    if args.profile == "academic" and args.command == "tool-healthcheck":
-        request = AcademicResearchRequest(
-            request_id=args.request_id,
-            topic=args.topic,
-            audience=args.audience,
-            language=args.language,
-            research_intensity=args.research_intensity,
-        )
-        providers = tuple(args.academic_provider) if args.academic_provider else ("semantic_scholar", "crossref", "openalex", "arxiv")
-        intensity_profile = research_intensity_profile(request.research_intensity)
-        source_config = AcademicSourceCollectionConfig(
-            max_records=args.max_sources or intensity_profile.max_sources,
-            provider_timeout_seconds=args.source_timeout_seconds,
-            since_year=args.since_year,
-            providers=providers,
-            max_search_queries=args.max_search_queries or intensity_profile.max_search_queries,
-            max_concurrent_requests=args.source_concurrency,
-        )
-        search_intent = (
-            AcademicSearchIntent.from_queries(
-                request,
-                list(args.search_query),
-                created_by="external",
-                notes=["CLI supplied explicit healthcheck search queries."],
-            )
-            if args.search_query
-            else None
-        )
-        result = run_deepresearch_tool_healthcheck(
-            request,
-            workspace=Path(args.workspace),
-            source_config=source_config,
-            academic_providers=providers,
-            github_query=args.github_query,
-            search_intent=search_intent,
-        )
-        print(json.dumps(result, sort_keys=True, ensure_ascii=False))
-        return 0
     parser.error("unsupported command")
     return 2
 
 
-def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_kernel_v2_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--topic", required=True)
-    parser.add_argument("--request-id", default="deepresearch-phase1")
+    parser.add_argument("--request-id", default="deepresearch-kernel-v2")
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--audience", default="R&D team")
     parser.add_argument("--language", default="zh")
     parser.add_argument("--research-intensity", choices=[item.value for item in ResearchIntensity], default=ResearchIntensity.STANDARD.value)
     parser.add_argument("--previous-run-ref", action="append", default=[])
-    parser.add_argument("--source-mode", choices=["fixture", "live"], default="fixture")
-    parser.add_argument("--researcher-mode", choices=["fixture", "piworker"], default="fixture")
-    parser.add_argument("--search-intent-mode", choices=["none", "external", "piworker"], default="none")
-    parser.add_argument("--search-query", action="append", default=[])
-    parser.add_argument("--search-intent-ref", default=None)
     parser.add_argument("--live-extension-mode", action="store_true")
-    parser.add_argument("--max-sources", type=int, default=None)
-    parser.add_argument("--since-year", type=int, default=None)
-    parser.add_argument("--source-timeout-seconds", type=float, default=20.0)
-    parser.add_argument("--max-search-queries", type=int, default=None)
-    parser.add_argument("--source-concurrency", type=int, default=8)
-    parser.add_argument("--piworker-provider-config-source", choices=["env", "codex_current", "explicit"], default="env")
+    parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+    parser.add_argument("--piworker-provider-config-source", choices=["env", "codex_current", "explicit"], default="codex_current")
     parser.add_argument("--piworker-model", default=None)
     parser.add_argument("--piworker-base-url", default=None)
     parser.add_argument("--piworker-timeout-seconds", type=int, default=None)
     parser.add_argument("--piworker-max-turns", type=int, default=None)
     parser.add_argument("--piworker-reasoning", default=None)
-    parser.add_argument("--long-memory-provider", choices=["none", "mem0"], default="none")
-    parser.add_argument("--long-memory-budget-tokens", type=int, default=2000)
-    parser.add_argument("--long-memory-limit", type=int, default=8)
     parser.add_argument(
         "--stream-progress",
         "--watch-progress",
@@ -296,35 +81,124 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--progress-interval", type=float, default=0.5, help="Refresh interval for --stream-progress.")
 
 
-def _add_healthcheck_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--topic", required=True)
-    parser.add_argument("--request-id", default="deepresearch-tool-healthcheck")
-    parser.add_argument("--workspace", default=".")
-    parser.add_argument("--audience", default="R&D team")
-    parser.add_argument("--language", default="zh")
-    parser.add_argument("--research-intensity", choices=[item.value for item in ResearchIntensity], default=ResearchIntensity.STANDARD.value)
-    parser.add_argument(
-        "--academic-provider",
-        action="append",
-        choices=["semantic_scholar", "crossref", "openalex", "arxiv"],
-        default=[],
-    )
-    parser.add_argument("--search-query", action="append", default=[])
-    parser.add_argument("--github-query", default=None)
-    parser.add_argument("--max-sources", type=int, default=None)
-    parser.add_argument("--since-year", type=int, default=None)
-    parser.add_argument("--source-timeout-seconds", type=float, default=20.0)
-    parser.add_argument("--max-search-queries", type=int, default=None)
-    parser.add_argument("--source-concurrency", type=int, default=4)
-
-
-def _run_and_emit_result(args: argparse.Namespace, runner: Callable[[], Any]) -> int:
-    result = _run_with_optional_progress(args, runner)
+def _run_and_emit_result(
+    args: argparse.Namespace,
+    runner: Callable[[], Any],
+    *,
+    progress_runner: Callable[[ProgressStreamWriter], Any] | None = None,
+) -> int:
+    result = _run_with_optional_progress(args, runner, progress_runner=progress_runner)
+    _emit_user_artifact_summary(args, result)
     print(json.dumps(result.to_dict(), sort_keys=True, ensure_ascii=False))
     return 0
 
 
-def _run_with_optional_progress(args: argparse.Namespace, runner: Callable[[], Any]) -> Any:
+def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
+    workspace = Path(args.workspace).resolve()
+    refs = [
+        ("final_report", getattr(result, "final_report_ref", "")),
+        ("report_html", getattr(result, "report_html_ref", "")),
+        ("source_packet", getattr(result, "source_packet_ref", "")),
+        ("claim_index", getattr(result, "claim_index_ref", "")),
+        ("result_package", getattr(result, "result_ref", "") or getattr(result, "run_result_ref", "")),
+        ("run_status", getattr(result, "run_status_ref", "")),
+        ("judge_report", getattr(result, "judge_report_ref", "")),
+        ("usage_summary", getattr(result, "usage_summary_ref", "")),
+    ]
+    lines = []
+    missing_lines = []
+    for label, ref in refs:
+        if isinstance(ref, str) and ref:
+            path = workspace / ref
+            if path.exists():
+                lines.append(f"  {label}: {path}")
+            else:
+                missing_lines.append(f"  {label}: {path}")
+    if not lines and not missing_lines:
+        return
+    if lines:
+        sys.stderr.write("输出文件：\n" + "\n".join(lines) + "\n")
+    if missing_lines:
+        sys.stderr.write("缺失输出：\n" + "\n".join(missing_lines) + "\n")
+    usage_lines = _usage_summary_lines(workspace, getattr(result, "usage_summary_ref", ""))
+    if usage_lines:
+        sys.stderr.write("Token 用量：\n" + "\n".join(usage_lines) + "\n")
+    failure_lines = _failure_summary_lines(workspace, result)
+    if failure_lines:
+        sys.stderr.write("失败原因：\n" + "\n".join(failure_lines) + "\n")
+
+
+def _usage_summary_lines(workspace: Path, usage_summary_ref: Any) -> list[str]:
+    if not isinstance(usage_summary_ref, str) or not usage_summary_ref:
+        return []
+    try:
+        payload = json.loads((workspace / usage_summary_ref).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    totals = payload.get("totals")
+    if not isinstance(totals, dict):
+        return []
+    lines = [
+        f"  input_tokens: {_format_metric(totals.get('input_tokens'))}",
+        f"  cached_input_tokens: {_format_metric(totals.get('cached_input_tokens'))}",
+        f"  total_input_tokens: {_format_metric(totals.get('total_input_tokens'))}",
+        f"  output_tokens: {_format_metric(totals.get('output_tokens'))}",
+        f"  total_tokens: {_format_metric(totals.get('total_tokens'))}",
+    ]
+    provider_cost = totals.get("provider_reported_cost_usd")
+    if isinstance(provider_cost, (int, float)) and provider_cost > 0:
+        lines.append(f"  provider_reported_cost_usd: {provider_cost:.6f}")
+    return lines
+
+
+def _failure_summary_lines(workspace: Path, result: Any) -> list[str]:
+    status = getattr(result, "status", "")
+    if status in {"accepted", "completed", "draft_ready"}:
+        return []
+    run_workspace_ref = getattr(result, "run_workspace_ref", "")
+    flow_result_ref = getattr(result, "flow_result_ref", "")
+    if not isinstance(run_workspace_ref, str) or not run_workspace_ref:
+        return []
+    if not isinstance(flow_result_ref, str) or not flow_result_ref:
+        return []
+    try:
+        flow_result = json.loads((workspace / flow_result_ref).read_text(encoding="utf-8"))
+        step_refs = flow_result.get("step_record_refs")
+        if not isinstance(step_refs, list) or not step_refs:
+            return []
+        last_ref = step_refs[-1]
+        if not isinstance(last_ref, str):
+            return []
+        step_record = json.loads((workspace / run_workspace_ref / last_ref).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    metadata = step_record.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    summary = metadata.get("failure_summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return []
+    step_id = step_record.get("step_id")
+    prefix = f"{step_id}: " if isinstance(step_id, str) and step_id else ""
+    return [f"  {prefix}{summary.strip()}"]
+
+
+def _format_metric(value: Any) -> str:
+    if isinstance(value, bool):
+        return "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    return "0"
+
+
+def _run_with_optional_progress(
+    args: argparse.Namespace,
+    runner: Callable[[], Any],
+    *,
+    progress_runner: Callable[[ProgressStreamWriter], Any] | None = None,
+) -> Any:
     if not args.stream_progress:
         return runner()
     workspace = Path(args.workspace) / "runs" / args.request_id
@@ -338,7 +212,7 @@ def _run_with_optional_progress(args: argparse.Namespace, runner: Callable[[], A
             detail="正在准备研究合同、工具权限和工作区。",
             progress_hint="1/7",
         )
-        result = runner()
+        result = progress_runner(progress) if progress_runner is not None else runner()
         state, message, detail = _progress_completion(result)
         progress.emit(
             stage="complete",
@@ -356,6 +230,94 @@ def _run_with_optional_progress(args: argparse.Namespace, runner: Callable[[], A
         stream_ref=DEFAULT_PROGRESS_REF,
         interval_seconds=args.progress_interval,
     )
+
+
+def _kernel_v2_progress_event_sink(progress: ProgressStreamWriter) -> Callable[[FlowLedgerEvent], None]:
+    def emit(event: FlowLedgerEvent) -> None:
+        progress_event = _kernel_v2_progress_event(event)
+        if progress_event is None:
+            return
+        progress.emit(**progress_event)
+
+    return emit
+
+
+def _kernel_v2_runtime_progress_sink(progress: ProgressStreamWriter) -> PiWorkerProgressSink:
+    def emit(event: dict[str, Any]) -> None:
+        state = event.get("state") if event.get("state") in {"pending", "running", "completed", "failed", "blocked"} else "running"
+        progress.emit(
+            stage=str(event.get("stage") or "piworker_runtime"),
+            state=state,
+            message=str(event.get("message") or "PiWorker runtime is running."),
+            detail=str(event.get("detail") or ""),
+            progress_hint=str(event.get("progress_hint") or "piworker"),
+            refs=[ref for ref in event.get("refs", []) if isinstance(ref, str)],
+        )
+
+    return emit
+
+
+def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
+    step_label = _kernel_v2_step_label(event.step_id)
+    progress_hint = f"kernel {event.metadata.get('step_index')}" if event.metadata.get("step_index") else "kernel"
+    if event.kind == FlowLedgerEventKind.STEP_STARTED:
+        return {
+            "stage": f"kernel_{event.step_id or 'step'}",
+            "state": "running",
+            "message": f"{step_label} 正在执行。",
+            "detail": "Kernel 已冻结 step 输入、输出 refs 和权限边界。",
+            "progress_hint": progress_hint,
+            "refs": event.refs,
+        }
+    if event.kind == FlowLedgerEventKind.STEP_RECORDED:
+        state = _progress_state_from_kernel_status(event.status)
+        return {
+            "stage": f"kernel_{event.step_id or 'step'}",
+            "state": state,
+            "message": f"{step_label} 已记录：status={event.status or 'unknown'}。",
+            "detail": "Step record、PiWorker call result、metrics refs 已写入。",
+            "progress_hint": progress_hint,
+            "refs": event.refs,
+        }
+    if event.kind == FlowLedgerEventKind.ROUTED:
+        state = _progress_state_from_kernel_status(event.status)
+        return {
+            "stage": f"kernel_{event.step_id or 'route'}_route",
+            "state": state,
+            "message": f"{step_label} 路由到 {event.route_target or 'unknown'}。",
+            "detail": f"decision={event.route_value or 'unknown'}；路由只读取 decision artifact。",
+            "progress_hint": progress_hint,
+            "refs": event.refs,
+        }
+    if event.kind == FlowLedgerEventKind.PROJECTIONS_RECORDED:
+        return {
+            "stage": "kernel_projections",
+            "state": "completed",
+            "message": "Kernel runtime projections 已完成。",
+            "detail": "机械投影 artifacts 和 projection records 已写入。",
+            "progress_hint": "kernel",
+            "refs": event.refs,
+        }
+    return None
+
+
+def _progress_state_from_kernel_status(status: str | None) -> str:
+    if status in {"completed", "skipped", "accepted"}:
+        return "completed"
+    if status == "blocked":
+        return "blocked"
+    if status == "failed":
+        return "failed"
+    return "running"
+
+
+def _kernel_v2_step_label(step_id: str | None) -> str:
+    labels = {
+        "researcher": "Kernel v2 researcher",
+        "reviewer": "Kernel v2 reviewer",
+        "judge": "Kernel v2 judge",
+    }
+    return labels.get(step_id or "", f"Kernel step {step_id or 'unknown'}")
 
 
 def _progress_completion(result: Any) -> tuple[str, str, str]:
@@ -396,7 +358,7 @@ def _progress_result_refs(result: Any) -> list[str]:
     return refs
 
 
-def _run_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, AcademicSourceCollectionConfig, PiAgentRuntimeConfig, dict[str, str]]:
+def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, PiAgentRuntimeConfig, dict[str, str]]:
     request = AcademicResearchRequest(
         request_id=args.request_id,
         topic=args.topic,
@@ -406,21 +368,14 @@ def _run_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, Acad
         previous_run_refs=list(args.previous_run_ref),
     )
     intensity_profile = research_intensity_profile(request.research_intensity)
-    source_config = AcademicSourceCollectionConfig(
-        max_records=args.max_sources or intensity_profile.max_sources,
-        provider_timeout_seconds=args.source_timeout_seconds,
-        since_year=args.since_year,
-        max_search_queries=args.max_search_queries or intensity_profile.max_search_queries,
-        max_concurrent_requests=args.source_concurrency,
-    )
     piworker_metadata = {}
     if args.piworker_base_url:
         piworker_metadata["base_url"] = args.piworker_base_url
     piworker_env = dict(os.environ)
-    effective_max_turns = args.piworker_max_turns or intensity_profile.researcher_max_turns
     effective_timeout = args.piworker_timeout_seconds or intensity_profile.piworker_timeout_seconds
     effective_reasoning = args.piworker_reasoning or intensity_profile.piworker_reasoning
-    piworker_env["MISSIONFORGE_PI_AGENT_MAX_TURNS"] = str(effective_max_turns)
+    if args.piworker_max_turns is not None:
+        piworker_env["MISSIONFORGE_PI_AGENT_MAX_TURNS"] = str(args.piworker_max_turns)
     piworker_env["MISSIONFORGE_PI_AGENT_REASONING"] = effective_reasoning
     piworker_config = PiAgentRuntimeConfig(
         timeout_seconds=effective_timeout,
@@ -430,15 +385,7 @@ def _run_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, Acad
         metadata=piworker_metadata,
         context_large_observation_bytes=16 * 1024,
     )
-    return request, source_config, piworker_config, piworker_env
-
-
-def _long_memory_provider(args: argparse.Namespace) -> Any | None:
-    if args.long_memory_provider == "none":
-        return None
-    if args.long_memory_provider == "mem0":
-        return Mem0LongMemoryProvider.from_environment()
-    raise ValueError(f"unsupported long memory provider: {args.long_memory_provider}")
+    return request, piworker_config, piworker_env
 
 
 if __name__ == "__main__":

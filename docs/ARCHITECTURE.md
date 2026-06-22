@@ -14,9 +14,7 @@ inside one outer run.
 The architecture is:
 
 ```text
-FrontDesk
-  -> FrontDeskIntentBundle
-  -> ProductIntegration
+ProductIntegration
   -> TaskContract
   -> WorkerBrief + JudgeRubric + WorkspacePolicy + PermissionManifest
   -> PiWorkerCall(role=executor_piworker)
@@ -28,8 +26,8 @@ FrontDesk
 
 ## Product Boundary
 
-MissionForge core is product-neutral. It must not contain SkillFoundry,
-Codexarium, benchmark, finance, customer, or task-family branches.
+MissionForge core is product-neutral. It must not contain Codexarium, benchmark,
+finance, customer, or task-family branches.
 
 Product-specific meaning belongs in external product integrations:
 
@@ -49,14 +47,14 @@ Core code treats product ids and check ids as data. It does not branch on them.
 Raw chat is not operational task truth. A frozen `TaskContract`, or an explicit
 revision of that contract, is the durable task authority.
 
-`MissionIR` remains only as a high-detail compatibility data shape for older
-mapping paths. It is not the first-class runtime contract for new work.
+The old MissionIR/Profile/Verifier/Operator stack has been removed from the
+active package. Historical FrontDesk code is frozen under `frozen/frontdesk/`
+until it is rewritten against the TaskContract-native kernel.
 
 ## Role Separation
 
 MissionForge keeps four roles separate:
 
-- FrontDesk discovers and structures requirements.
 - ProductIntegration compiles product meaning into MissionForge primitives.
 - Executor PiWorker produces artifacts inside the frozen boundary.
 - Judge PiWorker evaluates artifacts against the frozen contract and rubric.

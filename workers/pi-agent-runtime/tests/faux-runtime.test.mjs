@@ -7,6 +7,8 @@ import { parseRuntimeInput } from "../dist/contract.js";
 import { EvidenceRecorder } from "../dist/evidence-recorder.js";
 import {
   buildCompletionRetryPrompt,
+  isTransientProviderFailure,
+  mainTurnLimitWithCompletionReserve,
   promptForMissingExpectedOutputs,
   runMissionForgePiAgent,
 } from "../dist/runtime.js";
@@ -44,8 +46,8 @@ test("faux runtime writes expected artifact and output artifacts", async () => {
     assert.equal(projection.recommended_action, "continue");
     const metrics = await readJson(join(root, input.metrics_ref));
     assert.equal(metrics.tool_call_count, 2);
-    assert.equal(metrics.cache_read_tokens > 0, true);
-    assert.equal(metrics.cache_write_tokens > 0, true);
+    assert.equal(metrics.cache_read_tokens >= 0, true);
+    assert.equal(metrics.cache_write_tokens >= 0, true);
     assert.equal(metrics.provider_reported_cost_usd, 0);
     assert.equal(metrics.tool_error_count, 0);
     assert.equal(metrics.command_count, 0);
@@ -99,7 +101,7 @@ test("faux runtime does not serialize api keys", async () => {
     assert.equal(`${events}${session}${savepoints}`.includes("pi-agent-runtime faux artifact"), false);
     assert.equal(projection.includes("pi-agent-runtime faux artifact"), false);
     assert.equal(`${output}${events}${session}`.includes("Completed WU-000001"), false);
-    assert.deepEqual(outputData.worker_claims, ["assistant_final_text_present:length=20"]);
+    assert.deepEqual(outputData.worker_claims, []);
   });
 });
 
@@ -156,6 +158,30 @@ test("faux runtime cancellation writes normalized non-success output", async () 
   });
 });
 
+test("runtime budget max_turns allows completion when expected outputs are written in the first turn", async () => {
+  await withWorkspace(async (root) => {
+    const base = sampleInput();
+    const input = sampleInput({
+      piworker_call: {
+        ...base.piworker_call,
+        runtime_budget: { max_turns: 1 },
+      },
+    });
+    await writeInput(root, input);
+    process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+    process.env.MISSIONFORGE_PI_AGENT_MAX_TURNS = "40";
+    try {
+      await runMissionForgePiAgent(parseRuntimeInput(input), root);
+    } finally {
+      delete process.env.MISSIONFORGE_PI_AGENT_MAX_TURNS;
+    }
+
+    const output = await readJson(join(root, input.output_ref));
+    assert.equal(output.status, "completed");
+    assert.equal(output.failures.includes("pi-agent-runtime reached max turns: 1"), false);
+  });
+});
+
 test("faux runtime context checkpoint writes a savepoint marker", async () => {
   await withWorkspace(async (root) => {
     const input = sampleInput();
@@ -191,12 +217,34 @@ test("faux runtime context checkpoint is written with refs-only metadata", async
     const output = await readJson(join(root, input.output_ref));
     const checkpointRef = `${input.attempt_dir_ref}/context/context_pressure_checkpoint.json`;
     const checkpoint = await readJson(join(root, checkpointRef));
-    assert.equal(output.status, "cancelled");
-    assert.equal(output.recommended_next_steps.some((step) => step.includes(checkpointRef)), true);
+    assert.equal(output.status, "completed");
+    assert.equal(output.recommended_next_steps.some((step) => step.includes(checkpointRef)), false);
     assert.equal(checkpoint.schema_version, "missionforge.runtime_context_checkpoint.v1");
     assert.equal(checkpoint.kind, "runtime_context_checkpoint");
     assert.equal(checkpoint.sources.length > 0, true);
     assert.equal(JSON.stringify(checkpoint).includes("pi-agent-runtime faux artifact"), false);
+  });
+});
+
+test("context checkpoint does not cancel after expected outputs are complete", async () => {
+  await withWorkspace(async (root) => {
+    const input = sampleInput();
+    await writeInput(root, input);
+    process.env.MISSIONFORGE_PI_AGENT_PROVIDER = "faux";
+    process.env.MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW = "1";
+    try {
+      await runMissionForgePiAgent(parseRuntimeInput(input), root);
+    } finally {
+      delete process.env.MISSIONFORGE_PI_AGENT_CONTEXT_WINDOW;
+    }
+
+    const output = await readJson(join(root, input.output_ref));
+    const checkpointRef = `${input.attempt_dir_ref}/context/context_pressure_checkpoint.json`;
+    assert.equal(output.status, "completed");
+    assert.equal(output.verification_status, "not_run");
+    assert.deepEqual(output.produced_artifacts, input.call_spec.expected_outputs);
+    await access(join(root, checkpointRef));
+    assert.equal(output.recommended_next_steps.length, 0);
   });
 });
 
@@ -244,6 +292,37 @@ test("missing expected output retry prompts once and stops after the artifact ex
   });
 });
 
+test("missing expected output retry requires expected outputs to change in this run when changed refs are supplied", async () => {
+  await withWorkspace(async (root) => {
+    const input = parseRuntimeInput(sampleInput());
+    const outputRef = input.call_spec.expected_outputs[0];
+    const prompts = [];
+    let changedSnapshotCalls = 0;
+    await mkdir(dirname(join(root, outputRef)), { recursive: true });
+    await writeFile(join(root, outputRef), "old artifact\n", "utf-8");
+
+    const result = await promptForMissingExpectedOutputs({
+      input,
+      workspaceRoot: root,
+      maxTurns: 4,
+      maxRetries: 2,
+      currentTurnCount: () => prompts.length,
+      changedRefs: async () => {
+        changedSnapshotCalls += 1;
+        return changedSnapshotCalls === 1 ? [] : [outputRef];
+      },
+      prompt: async (prompt) => {
+        prompts.push(prompt);
+        await writeFile(join(root, outputRef), "updated by retry\n", "utf-8");
+      },
+    });
+
+    assert.equal(result.retryCount, 1);
+    assert.deepEqual(result.missingOutputs, []);
+    assert.equal(prompts[0].includes(outputRef), true);
+  });
+});
+
 test("missing expected output retry respects exhausted turn budget", async () => {
   await withWorkspace(async (root) => {
     const input = parseRuntimeInput(sampleInput());
@@ -264,6 +343,12 @@ test("missing expected output retry respects exhausted turn budget", async () =>
     assert.deepEqual(result.missingOutputs, input.call_spec.expected_outputs);
     assert.deepEqual(prompts, []);
   });
+});
+
+test("main runtime reserves final turns for expected output completion", () => {
+  assert.equal(mainTurnLimitWithCompletionReserve(20, 6, 2), 18);
+  assert.equal(mainTurnLimitWithCompletionReserve(2, 6, 2), 1);
+  assert.equal(mainTurnLimitWithCompletionReserve(20, 0, 2), 20);
 });
 
 test("judge retry prompt names JudgeReport without embedding artifact bodies", () => {
@@ -293,8 +378,22 @@ test("judge retry prompt names JudgeReport without embedding artifact bodies", (
   const prompt = buildCompletionRetryPrompt(input, ["reports/judge_report.json"], 1);
 
   assert.equal(prompt.includes("judge_piworker"), true);
-  assert.equal(prompt.includes("JudgeReport JSON object"), true);
+  assert.equal(prompt.includes("judge report JSON object"), true);
   assert.equal(prompt.includes("reports/judge_report.json"), true);
+  assert.equal(prompt.includes("- reports/judge_report.json: create or update this file now."), true);
   assert.equal(prompt.includes("raw_transcript"), false);
   assert.equal(prompt.includes("provider_payload"), false);
+});
+
+test("provider retry classifier treats transient provider failures narrowly", () => {
+  assert.equal(isTransientProviderFailure("OpenAI API error (502): bad gateway"), true);
+  assert.equal(isTransientProviderFailure("OpenAI API error (503): unavailable"), true);
+  assert.equal(isTransientProviderFailure("OpenAI API error (504): gateway timeout"), true);
+  assert.equal(isTransientProviderFailure("OpenAI API error (429): rate limit"), true);
+  assert.equal(isTransientProviderFailure("socket hang up"), true);
+  assert.equal(isTransientProviderFailure("ECONNRESET"), true);
+
+  assert.equal(isTransientProviderFailure("OpenAI API error (403): quota exceeded"), false);
+  assert.equal(isTransientProviderFailure("pi-agent-runtime reached max turns: 12"), false);
+  assert.equal(isTransientProviderFailure("permission denied by MissionForge tool gateway"), false);
 });

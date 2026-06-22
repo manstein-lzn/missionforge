@@ -25,7 +25,7 @@ ProductIntegration
 - Keep old runtime, harness, work-unit, runner, fake-worker, and old PiWorker
   adapter modules deleted.
 - Keep top-level CLI/RPC `run` and `resume` deleted.
-- Keep SkillFoundry on `run_skillfoundry_task_contract_bundle_build(...)`.
+- Keep deleted product integrations out of the active public examples.
 - Keep README, manual, primitive reference, architecture, and API boundary aligned
   with TaskContract/PiWorker.
 
@@ -42,7 +42,7 @@ runtime path.
 - Add focused tests for examples that the manual promises.
 
 Exit condition: a programmer can build a standalone product integration from
-docs and public primitives without copying SkillFoundry internals.
+docs and public primitives without copying integration internals.
 
 ## Phase 3: FrontDesk To TaskContract
 
@@ -66,8 +66,8 @@ registry complexity.
 
 ## Phase 5: Product Integration Pressure
 
-- Keep SkillFoundry as an external product proof.
-- Preserve product-grade checks under `integrations/skillfoundry`.
+- Keep DeepResearch as an external product proof.
+- Preserve product-grade checks under product integration packages.
 - Add a second small example integration only if it exposes missing primitives,
   not to create product methodology in core.
 
@@ -78,9 +78,9 @@ architecture.
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
-PYTHONPATH=src:integrations/skillfoundry/src python3 -m unittest discover -s integrations/skillfoundry/tests
+PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest discover -s integrations/deepresearch/tests
 npm test --prefix workers/pi-agent-runtime
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
-./scripts/validate_integrations.sh skillfoundry
+./scripts/validate_integrations.sh deepresearch
 git diff --check
 ```

@@ -1,317 +1,51 @@
 # Primitive Reference
 
-This is the field-level reference for the main programmer-facing primitives.
+## Task Authority
 
-## TaskContract
+- `TaskContract`: frozen task truth.
+- `TaskContractRevision`: explicit task truth change.
+- `WorkspacePolicy`: workspace boundary.
+- `PermissionManifest`: readable refs, writable refs, denied refs, commands,
+  network policy, and extension grants.
 
-Frozen task authority. It holds:
+## Projections
 
-- `contract_id`
-- `contract_hash`
-- `objective`
-- `required_outputs`
-- `hard_constraints`
-- `semantic_acceptance`
-- `workspace_policy_ref`
-- `permission_manifest_ref`
-- `judge_rubric_ref`
+- `WorkerBrief`: role-specific worker brief projected from the contract.
+- `JudgeRubric`: role-specific judge rubric projected from the contract.
 
-## WorkspacePolicy
+## PiWorker Boundary
 
-Declares the filesystem layout:
+- `PiWorkerCall`: one bounded intelligence RPC.
+- `PiWorkerCallRole`: frontdesk author, executor, judge, repair, or revision
+  drafter role.
+- `PiWorkerCallResult`: refs-first runtime result.
+- `run_piworker_call(...)`: default execution helper.
 
-- `workspace_root_ref`
-- `input_refs`
-- `artifact_root_refs`
-- `scratch_root_refs`
-- `denied_refs`
+`PiWorkerCallResult` records boundary status and refs. It does not grant
+semantic acceptance.
 
-## PermissionManifest
+## Runtime Adapter
 
-Declares read/write authority:
+`missionforge.adapters.pi_agent_runtime` contains the Pi sidecar adapter and
+configuration:
 
-- `readable_refs`
-- `writable_refs`
-- `denied_refs`
-- `allowed_commands`
-- `network_policy`
-- `env_allowlist`
+- `PiAgentRuntimeAdapter`
+- `PiAgentRuntimeConfig`
+- `PiAgentCallSpec`
 
-## CapabilityGrant
+These are explicit adapter internals, not package-root exports.
 
-Short-lived runtime authority for one agent role in one sandbox:
+## Evidence And Progress
 
-- `grant_id`
-- `grant_hash`
-- `role`
-- `contract_hash`
-- `workspace_policy_ref`
-- `permission_manifest_ref`
-- `workspace_view_ref`
-- `sandbox_profile_ref`
-- `expires_at`
-- `revoked_at`
-- `issued_by`
-- `issued_at`
-- `parent_grant_ref`
+- `EvidenceLedger`, `EvidenceRecord`, `ArtifactRef`, `EvidenceRef`
+- `ProgressEvent`, `ProgressStreamWriter`, `stream_progress`
+- `ContextSummaryArtifact`
 
-In the Pi runtime input envelope, this grant is paired with
-`SandboxProfile` and validated against the permission manifest before tools run.
+Durable records should cite refs and hashes. They should not embed raw prompts,
+provider payloads, stdout/stderr bodies, artifact bodies, or secrets.
 
-## SandboxProfile
+## Kernel API
 
-Declarative execution view for one sandboxed agent:
-
-- `profile_id`
-- `mode`
-- `workspace_root_ref`
-- `readable_refs`
-- `writable_refs`
-- `denied_refs`
-- `network_enabled`
-- `env_allowlist`
-- `command_allowlist`
-- `resource_budget`
-
-## ToolGateway
-
-Runtime front door for tool requests:
-
-- `tool_name`
-- `operation`
-- `ref`
-- `command_hash`
-- `cwd_ref`
-- `env_names`
-- `status`
-- `reason`
-
-It authorizes requests against the permission boundary and records refs-first
-decisions. It must not record artifact bodies, raw commands, stdout/stderr
-bodies, environment values, provider payloads, or secrets.
-
-## PiWorkerCall
-
-The bounded intelligence RPC:
-
-- `call_id`
-- `role`
-- `contract_id`
-- `contract_hash`
-- `contract_ref`
-- `objective`
-- `visible_refs`
-- `writable_refs`
-- `expected_output_refs`
-- `permission_manifest_ref`
-- `evidence_refs`
-
-## PiWorkerCallAdapter
-
-The runtime adapter boundary for one bounded PiWorker call:
-
-- `adapter_family`
-- `run_call(call, workspace, evidence_store, exit_criteria, stop_conditions)`
-
-## PiWorkerCallResult
-
-Boundary evidence for one call:
-
-- `result_id`
-- `call_id`
-- `role`
-- `status`
-- `execution_report_ref`
-- `output_refs`
-- `runtime_refs`
-- `evidence_refs`
-- `metric_refs`
-
-## ContextSummaryArtifact
-
-Explicit semantic context produced by a PiWorker or Judge. MissionForge validates
-the artifact shape but does not synthesize or rank semantic memory.
-
-It holds:
-
-- `summary_id`
-- `call_id`
-- `role`
-- `kind`
-- `summary_text`
-- `sources`
-- `permission_manifest_ref`
-- `created_by`
-- `metadata`
-
-Each `ContextSummarySource` cites:
-
-- `source_id`
-- `observation_id`
-- `ref`
-- `content_hash`
-- `source_role`
-- `permission_manifest_ref`
-- optional `range_hint`
-- refs-only `metadata`
-
-The artifact rejects hidden raw bodies, prompts, transcripts, and provider
-payloads. It is a durable artifact that cites evidence refs; it is not hidden
-runtime memory and does not grant read access.
-
-## RepairTicket
-
-Durable same-contract repair authority:
-
-- `ticket_id`
-- `ticket_hash`
-- `contract_hash`
-- `source_result_ref`
-- `source_repair_brief_ref`
-- `target_artifact_refs`
-- `worker_brief_ref`
-
-## RepairExecutionDirective
-
-The next repair execution input:
-
-- `directive_id`
-- `directive_hash`
-- `repair_ticket_ref`
-- `repair_ticket_hash`
-- `execution_packet_ref`
-- `execution_report_ref`
-- `target_artifact_refs`
-- `context_refs`
-
-## Repair Rejudge Packet
-
-`build_repair_rejudge_packet(...)` converts a completed repair
-`PiWorkerCallResult` into:
-
-- a repair `AgentExecutionReport` at the directive's `execution_report_ref`
-- a new `JudgePacket` under `packets/repairs/{ticket_id}/judge_packet.json`
-- a new judge report target under `reports/repairs/{ticket_id}/judge_report.json`
-
-It preserves the same `contract_hash` and does not emit acceptance.
-
-## RevisionPendingRecord
-
-Durable record that a judge requested explicit contract revision:
-
-- `pending_id`
-- `pending_hash`
-- `source_result_ref`
-- `source_revision_request_ref`
-- `authority_required`
-- `contract_hash`
-
-## RevisionAppliedRecord
-
-Durable record that an approved revision changed task authority:
-
-- `applied_id`
-- `previous_contract_hash`
-- `revised_contract_hash`
-- `task_revision_decision_ref`
-- `task_contract_revision_ref`
-- `revised_contract_ref`
-
-## RevisionExecutionDirective
-
-The first execution entry after explicit revised task authority:
-
-- `directive_id`
-- `directive_hash`
-- `previous_contract_hash`
-- `contract_hash`
-- `revision_applied_ref`
-- `revision_applied_hash`
-- `task_revision_decision_ref`
-- `task_contract_revision_ref`
-- `revised_contract_ref`
-- `worker_brief_ref`
-- `execution_packet_ref`
-- `execution_report_ref`
-- `expected_artifact_refs`
-- `context_refs`
-
-`build_revision_execution_directive(...)` writes the revised-contract
-`WorkerBrief` and `AgentExecutionPacket` under `revisions/{request_id}/...`. It
-does not invoke the executor and does not emit acceptance.
-
-## Revision Rejudge Packet
-
-`build_revision_rejudge_packet(...)` converts a revised-contract executor
-`PiWorkerCallResult` into:
-
-- a revised `AgentExecutionReport` at the directive's `execution_report_ref`
-- a revised `JudgeRubric` under `revisions/{request_id}/projections/`
-- a new `JudgePacket` under `revisions/{request_id}/packets/judge_packet.json`
-- a new judge report target under `revisions/{request_id}/reports/judge_report.json`
-
-It binds the packet to the revised contract hash and cites the applied,
-decision, contract-revision, and source request refs. It does not emit
-acceptance.
-
-## Revision Judge Result
-
-`build_revision_judge_result(...)` records the independent judge result after a
-revised-contract execution. It takes:
-
-- `RevisionExecutionDirective`
-- revised-contract `JudgePacket`
-- independent `JudgeReport`
-- `RunWorkspace`
-- optional directive, packet, and ledger refs
-
-It validates:
-
-- the directive and judge packet still match the artifacts on disk
-- the applied revision hash matches the directive
-- the revised execution packet and execution report match the judge packet
-- the judge report was authored for that packet
-- accepted revised work has completed execution and accepted expected artifacts
-- repair decisions include a valid `repair_brief_ref`
-- revision-required decisions include a valid `revision_request_ref`
-
-It writes:
-
-- revised `AgenticFlowResult`
-- revised checkpoint
-- revised judge report
-- revised final package when the judge accepts
-- refs-only decision ledger entries
-
-It appends `revision_applied` before revised judge/final events when needed.
-That event is the only ledger event allowed to change `contract_hash`. The
-function does not invoke an executor, invoke a judge, or let the executor
-self-accept.
-
-## Revision Draft Contract
-
-`load_revision_draft_contract(...)` validates the output of
-`revision_drafter_piworker`:
-
-- the call result role is `revision_drafter_piworker`
-- the call result is bound to the `RevisionPendingRecord`
-- the expected revised contract ref is present in `output_refs`
-- the revised `TaskContract` loads and validates
-- the revised contract hash differs from the pending contract hash
-
-It returns a `TaskContract` proposal. It does not produce a
-`TaskRevisionDecision` and does not apply the revision.
-
-## AgenticFlowRunner
-
-The default TaskContract-native orchestration path. It runs:
-
-```text
-contract -> worker brief -> execution packet -> executor -> judge packet ->
-judge report -> refs-only result
-```
-
-## SkillFoundry Boundary
-
-SkillFoundry compiles into MissionForge contracts outside core. It should not
-be reimplemented by reading MissionForge internals.
+The compact `missionforge.kernel` package builds on the same primitives with
+`Step` and `Flow` descriptors for product integrations that need multi-role
+coordination without reimplementing orchestration.

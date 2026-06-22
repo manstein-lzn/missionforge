@@ -74,17 +74,42 @@ class PiAgentProviderConfigTests(unittest.TestCase):
         self.assertEqual(redacted["CUSTOM_TOKEN"], "<redacted>")
         self.assertEqual(redacted["MISSIONFORGE_PI_AGENT_MODEL"], "gpt-5.5")
 
-    def test_load_codex_current_provider_uses_pi_agent_env_key_before_auth_file(self) -> None:
+    def test_load_codex_current_provider_uses_auth_file_key(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             codex_home = Path(tempdir)
             _write_codex_config(codex_home, wire_api="responses")
+            (codex_home / "auth.json").write_text('{"OPENAI_API_KEY": "codex-secret"}\n', encoding="utf-8")
 
             provider = load_codex_current_provider(
                 codex_home=codex_home,
                 environ={"MISSIONFORGE_PI_AGENT_API_KEY": "env-secret"},
             )
 
-        self.assertEqual(provider["api_key"], "env-secret")
+        self.assertEqual(provider["api_key"], "codex-secret")
+
+    def test_codex_current_ignores_shell_pi_agent_overrides_in_favor_of_codex_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = Path(tempdir)
+            _write_codex_config(codex_home, wire_api="responses")
+            (codex_home / "auth.json").write_text('{"OPENAI_API_KEY": "codex-secret"}\n', encoding="utf-8")
+
+            result = resolve_pi_agent_provider_environment(
+                provider_mode="live",
+                provider_config_source="codex_current",
+                environ={
+                    "MISSIONFORGE_PI_AGENT_MODEL": "shell-model",
+                    "MISSIONFORGE_PI_AGENT_BASE_URL": "https://shell.example/v1",
+                    "MISSIONFORGE_PI_AGENT_API_KEY": "shell-secret",
+                    "OPENAI_MODEL": "shell-openai-model",
+                    "OPENAI_BASE_URL": "https://shell-openai.example/v1",
+                    "OPENAI_API_KEY": "shell-openai-secret",
+                },
+                codex_home=codex_home,
+            )
+
+        self.assertEqual(result.env["MISSIONFORGE_PI_AGENT_MODEL"], "gpt-5.5")
+        self.assertEqual(result.env["MISSIONFORGE_PI_AGENT_BASE_URL"], "https://right.codes/codex/v1")
+        self.assertEqual(result.env["MISSIONFORGE_PI_AGENT_API_KEY"], "codex-secret")
 
     def test_codex_current_rejects_missing_auth_key(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

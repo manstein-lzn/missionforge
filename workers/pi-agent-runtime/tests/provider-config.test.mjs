@@ -91,5 +91,5 @@ test("resolveProviderConfig defaults to enough turns for multi-artifact live wor
     MISSIONFORGE_PI_AGENT_API_KEY: "sk-live-secret",
   });
 
-  assert.equal(config.maxTurns, 12);
+  assert.equal(config.maxTurns, 500);
 });

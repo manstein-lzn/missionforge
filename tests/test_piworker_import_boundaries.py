@@ -25,12 +25,10 @@ FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "langgraph",
     "openai",
     "requests",
-    "skillfoundry",
     "socket",
     "urllib",
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
-    ADAPTER_ROOT / "cli.py",
     ADAPTER_ROOT / "pi_agent_runtime.py",
 }
 

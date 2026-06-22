@@ -2,12 +2,11 @@
 
 The package root intentionally exposes only the small, orthogonal surface a
 programmer needs to embed bounded PiWorker/LLM calls in ordinary Python
-systems. Higher-level flows, FrontDesk authoring, repair/revision controllers,
-stores, profiles, and adapter internals remain available from their explicit
-modules.
+systems. Product integrations, host shells, and frozen legacy tools live
+outside the root surface.
 """
 
-from .agentic_ledger import FinalPackage, replay_decision_ledger
+from .decision_ledger import FinalPackage, replay_decision_ledger
 from .contracts import (
     ContractValidationError,
     MissionForgeError,
@@ -54,16 +53,13 @@ from .piworker_call import (
 )
 from .piworker_runtime import (
     PiWorkerCallAdapter,
-    TaskContractFlowPreset,
     create_default_piworker_adapter,
-    create_default_task_contract_flow,
     run_piworker_call,
 )
 from .product_integration import (
     ProductCompileStatus,
     ProductIntegration,
     ProductTaskContractCompileResult,
-    TaskContractProductIntegration,
 )
 from .progress_stream import (
     DEFAULT_PROGRESS_REF,
@@ -143,8 +139,6 @@ __all__ = [
     "ToolGatewayRequest",
     "ToolGatewayResult",
     "TaskContract",
-    "TaskContractFlowPreset",
-    "TaskContractProductIntegration",
     "TaskContractRevision",
     "WorkerBrief",
     "WorkspacePolicy",
@@ -155,7 +149,6 @@ __all__ = [
     "compile_extension_lock",
     "create_capability_grant",
     "create_default_piworker_adapter",
-    "create_default_task_contract_flow",
     "create_sandbox_profile_from_workspace",
     "project_judge_rubric",
     "project_worker_brief",

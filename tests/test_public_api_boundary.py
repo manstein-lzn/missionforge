@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-from tempfile import TemporaryDirectory
 import unittest
 
 import missionforge
-from missionforge.adapters.pi_agent_runtime import PiAgentExecutorNode, PiAgentJudgeNode, PiAgentRuntimeConfig
-from missionforge.agentic_flow import AgenticFlowRunner
 
 
 class PublicApiBoundaryTests(unittest.TestCase):
@@ -58,8 +54,6 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "ToolGatewayRequest",
             "ToolGatewayResult",
             "TaskContract",
-            "TaskContractFlowPreset",
-            "TaskContractProductIntegration",
             "TaskContractRevision",
             "WorkerBrief",
             "WorkspacePolicy",
@@ -70,7 +64,6 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "compile_extension_lock",
             "create_capability_grant",
             "create_default_piworker_adapter",
-            "create_default_task_contract_flow",
             "create_sandbox_profile_from_workspace",
             "project_judge_rubric",
             "project_worker_brief",
@@ -123,7 +116,6 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "RevisionPendingRecord",
             "RuntimeContractView",
             "RuntimeEngine",
-            "SkillFoundryMissionCompiler",
             "TaskRevisionDecision",
             "TaskRevisionRequest",
             "Verifier",
@@ -140,25 +132,13 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "piworker",
             "run_repair_directive_with_default_piworker",
             "run_revision_draft_with_default_piworker",
-            "skillfoundry",
+            "TaskContractFlowPreset",
+            "create_default_task_contract_flow",
         }
 
         for symbol in forbidden:
             self.assertNotIn(symbol, missionforge.__all__)
             self.assertFalse(hasattr(missionforge, symbol), symbol)
-
-    def test_package_root_exposes_task_contract_default_flow_factory_only(self) -> None:
-        with TemporaryDirectory() as tmpdir:
-            preset = missionforge.create_default_task_contract_flow(
-                tmpdir,
-                piworker_config=PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
-            )
-
-            self.assertIsInstance(preset, missionforge.TaskContractFlowPreset)
-            self.assertIsInstance(preset.runner, AgenticFlowRunner)
-            self.assertIsInstance(preset.executor, PiAgentExecutorNode)
-            self.assertIsInstance(preset.judge, PiAgentJudgeNode)
-            self.assertEqual(Path(preset.runner.root), Path(tmpdir))
 
 
 if __name__ == "__main__":

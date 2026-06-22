@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-12
 
-Status: current branch audit.
+Status: current branch audit after core slimming.
 
 ## Executive Position
 
@@ -35,10 +35,10 @@ removed from the active codebase.
 | Revision controller | Explicit TaskContract revision path implemented |
 | Decision ledger and replay | Implemented |
 | Workspace and permission primitives | Implemented |
-| FrontDesk | Authoring surface; fails closed when required PiWorker-authored artifacts are unavailable |
-| SkillFoundry | External product integration, TaskContract facade active |
-| MissionIR | Compatibility/high-detail data shape only |
-| Operator CLI | Inspect/diagnose/control/review/validate/frontdesk shell only |
+| FrontDesk | Frozen outside active core under `frozen/frontdesk/`; pending TaskContract-native rewrite |
+| DeepResearch | External product integration, TaskContract facade active |
+| MissionIR/Profile/Verifier | Removed from active core |
+| Operator CLI/RPC/TUI | Removed from active core |
 
 ## Removed Surfaces
 
@@ -52,6 +52,22 @@ These are no longer importable active modules:
 - `missionforge.fake_worker`
 - `missionforge.adapters.piworker`
 - `missionforge.mission`
+- `missionforge.ir`
+- `missionforge.freeze`
+- `missionforge.profiles`
+- `missionforge.verification`
+- `missionforge.verifier`
+- `missionforge.validators`
+- `missionforge.state`
+- `missionforge.json_store`
+- `missionforge.stores`
+- `missionforge.metrics`
+- `missionforge.metric_store`
+- `missionforge.run_audit`
+- `missionforge.tui`
+- `missionforge.adapters.cli`
+- `missionforge.adapters.rpc`
+- `missionforge.adapters.observation`
 
 These are no longer active product/runtime facades:
 
@@ -59,22 +75,18 @@ These are no longer active product/runtime facades:
 - top-level CLI `resume`;
 - JSONL RPC `run`;
 - JSONL RPC `resume`;
-- `run_skillfoundry_bundle_build(...)`.
+- deleted product-specific bundle-build facades.
 
 ## What Still Exists
 
-Some older data modules remain because they preserve product-neutral invariants
-or support FrontDesk/operator state:
+The active package now keeps only product-neutral kernel primitives, PiWorker
+boundaries, runtime adapter code, extension grants, permission/sandbox
+contracts, progress streaming, evidence refs, product integration contracts,
+and the compact kernel flow API.
 
-- `missionforge.ir`;
-- `missionforge.freeze`;
-- `missionforge.state`;
-- `missionforge.run_audit`;
-- metrics and stores;
-- steering proposal data contracts.
-
-They are not the conceptual runtime center and should not be expanded into a
-parallel execution path.
+Historical FrontDesk source and tests remain in `frozen/frontdesk/` as a
+non-active tool snapshot. They are not imported by `src/missionforge` and are
+not part of the active validation suite.
 
 ## Next Work
 

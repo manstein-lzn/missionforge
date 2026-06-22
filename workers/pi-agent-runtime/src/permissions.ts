@@ -90,27 +90,6 @@ export function derivePermissionManifestFromCallSpec(call_spec: PiAgentCallSpec)
   };
 }
 
-export function deriveDirectPermissionManifest(
-  taskId: string,
-  expectedOutputRefs: string[],
-): PermissionManifest {
-  const outputRoots = uniqueRefs(expectedOutputRefs.map(parentRef));
-  return {
-    manifest_id: `${taskId}-direct-piworker-permissions`,
-    workspace_policy_ref: null,
-    readable_refs: outputRoots,
-    writable_refs: outputRoots,
-    denied_refs: [],
-    allowed_commands: [],
-    network_policy: "disabled",
-    env_allowlist: [],
-    secret_ref: null,
-    unsupported_hard_policies: [],
-    extension_grants: [],
-    schema_version: PERMISSION_MANIFEST_SCHEMA_VERSION,
-  };
-}
-
 export function assertSupportedHardPolicies(manifest: PermissionManifest): void {
   const unsupported = manifest.unsupported_hard_policies.filter(
     (name) => !SUPPORTED_HARD_POLICIES.has(name),

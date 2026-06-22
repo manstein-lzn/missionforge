@@ -8,12 +8,6 @@ import unittest
 CORE_ROOT = Path("src/missionforge")
 ADAPTER_ROOT = CORE_ROOT / "adapters"
 DEEPRESEARCH_MODULE = "missionforge_deepresearch"
-EXPERIMENTAL_EXPORTS = {
-    "run_deepresearch_academic_reviewed",
-    "run_deepresearch_academic_reviewed_judged",
-    "run_deepresearch_quality_evaluation",
-    "run_deepresearch_tool_healthcheck",
-}
 
 
 class DeepResearchImportBoundaryTests(unittest.TestCase):
@@ -35,13 +29,6 @@ class DeepResearchImportBoundaryTests(unittest.TestCase):
 
     def test_missionforge_package_does_not_contain_deepresearch_adapter(self) -> None:
         self.assertFalse((ADAPTER_ROOT / "deepresearch.py").exists())
-
-    def test_deepresearch_primary_exports_exclude_experimental_workflows(self) -> None:
-        import missionforge_deepresearch
-
-        exported = set(missionforge_deepresearch.__all__)
-
-        self.assertFalse(EXPERIMENTAL_EXPORTS & exported)
 
 
 if __name__ == "__main__":

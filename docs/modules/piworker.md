@@ -1,75 +1,20 @@
 # Module: PiWorker
 
-## Goal
+PiWorker is MissionForge's only first-class intelligent worker direction.
 
-PiWorker is MissionForge's single first-class intelligent worker direction.
 MissionForge treats one PiWorker call as an unreliable intelligence RPC:
 deterministic code declares refs, write scope, expected outputs, contract
-binding, role, and permission boundary; the PiWorker decides how to do the
-semantic work inside those boundaries.
+binding, role, and permission boundary; PiWorker decides how to do semantic
+work inside those boundaries.
 
-Current production lane:
+## Runtime Lane
 
 ```text
-PiWorkerCall -> PiAgentRuntimeInput -> workers/pi-agent-runtime -> PiWorkerCallResult
+PiWorkerCall
+  -> PiAgentRuntimeInput
+  -> workers/pi-agent-runtime
+  -> PiWorkerCallResult
 ```
-
-## Current Status
-
-TaskContract-native execution constructs role-separated
-`AgentExecutionPacket` and `JudgePacket` objects, projects each runtime call
-through `PiWorkerCall`, then writes a direct `PiAgentRuntimeInput` for
-`PiAgentRuntimeAdapter`.
-
-The Node sidecar still receives a small field named `contract` for runtime
-compatibility, but MissionForge authority is the `PiWorkerCall` boundary:
-
-- packets carry role-specific semantic context and hash bindings;
-- `PiWorkerCall` carries the shared invocation boundary;
-- `PiAgentRuntimeInput` carries call id, refs, expected outputs, permission
-  manifest, runtime metadata, repair/resume envelope, and the minimal sidecar
-  projection;
-- PI Agent runtime owns the inner loop, tools, hooks, session artifacts, and
-  model calls.
-
-FrontDesk authoring, executor, judge, repair, and revision-drafting nodes all
-use the same direct boundary with role-specific `PiWorkerCallRole` values. Call
-results are persisted under `attempts/<call_id>/piworker_call_result.json` and
-can be cited by ledgers and repair/revision controllers without reading PI chat
-memory.
-
-The adapter rejects raw prompt/transcript/payload/body/stdout/stderr/secret
-fields, validates safe refs and hashes, requires expected outputs, and rejects
-outputs outside writable refs.
-
-The Pi agent runtime also owns a product-neutral context pressure boundary.
-Projection diagnostics report estimated input tokens, model context window,
-pressure ratio, budget diagnostics, memory-layer diagnostics, and cache
-read/write tokens. At the soft boundary the runtime writes an explicit
-refs-only `missionforge.runtime_context_checkpoint.v1` artifact under the
-attempt context directory. At the hard boundary it stops at a completed-turn
-safe point before the next provider request and recommends resume with that
-checkpoint ref. This mechanism records refs and hashes only; it does not create
-hidden memory, run automatic compaction, or decide semantic sufficiency.
-
-The same boundary can accept an optional
-`missionforge.long_memory_packet.v1` artifact through
-`long_memory_packet_ref`. The ref must stay under the attempt directory, and
-the runtime validates that the packet is advisory-only, scoped to the current
-mission and PiWorker role, source-ref backed, and budgeted before injecting it
-ahead of archived and projected history. If no valid packet is configured, the
-runtime reports degraded long-memory diagnostics and continues with refs,
-checkpoints, segment catalogs, and recent context only. Provider-specific
-memory systems such as Mem0 must live outside runtime core and map into this
-packet contract. The default Mem0 mapping lives in
-`missionforge.adapters.long_memory` and is available only when the optional
-`mem0` extra is installed.
-
-Default tests run the PI Agent runtime in faux provider mode. Live provider
-execution is opt-in through `provider_mode="live"` and current Codex config
-resolution when requested. Provider credentials are passed only through child
-process environment variables and are never serialized into MissionForge input
-artifacts, evidence, execution reports, metrics, docs, or logs.
 
 ## Public Contracts
 
@@ -79,91 +24,24 @@ artifacts, evidence, execution reports, metrics, docs, or logs.
 - `PiWorkerCallResultStatus`
 - `PiWorkerCallAdapter`
 - `create_default_piworker_adapter`
-- `create_default_task_contract_flow`
 - `run_piworker_call`
 
-`PiWorkerRuntimeFactory`, repair helpers, and revision helpers live under
-`missionforge.piworker_runtime` for explicit advanced composition. Adapter
-internals such as `PiAgentRuntimeAdapter`, `PiAgentRuntimeConfig`,
-`PiAgentExecutorNode`, and `PiAgentJudgeNode` live under
-`missionforge.adapters.pi_agent_runtime` and are intentionally not exported
-from the package root.
+Adapter internals such as `PiAgentRuntimeAdapter` and
+`PiAgentRuntimeConfig` live under `missionforge.adapters.pi_agent_runtime`.
+They are not exported from the package root.
 
-## Contract Sketch
+## Boundary Guarantees
 
-```json
-{
-  "call_id": "WU-000001",
-  "schema_version": "piworker_call.v1",
-  "role": "executor_piworker",
-  "contract_id": "contract-001",
-  "contract_hash": "sha256:...",
-  "contract_ref": "contract/task_contract.json",
-  "objective": "Produce expected artifacts for contract-001.",
-  "visible_refs": [
-    "contract/task_contract.json",
-    "projections/worker_brief.json",
-    "policy/workspace_policy.json",
-    "policy/permission_manifest.json"
-  ],
-  "writable_refs": ["artifacts", "reports"],
-  "expected_output_refs": ["artifacts/final.md"],
-  "permission_manifest_ref": "policy/permission_manifest.json",
-  "source_packet_ref": "packets/execution_packet.json",
-  "source_packet_hash": "sha256:...",
-  "evidence_refs": [],
-  "metadata": {}
-}
-```
+- The call must bind to a contract id/hash/ref.
+- Expected outputs must be under writable refs.
+- Permission manifests are enforced before runtime invocation.
+- Output refs, runtime refs, evidence refs, and metrics refs stay separate.
+- Result metadata cannot claim semantic acceptance.
+- Secrets and raw provider payloads are not durable task truth.
 
-The sidecar input wraps that call with runtime refs and permission data:
+## Context Pressure
 
-```json
-{
-  "schema_version": "missionforge.pi_agent_runtime_input.v1",
-  "call_id": "WU-000001",
-  "mission_id": "contract-001",
-  "input_ref": "attempts/WU-000001/pi_agent_input.json",
-  "output_ref": "attempts/WU-000001/pi_agent_output.json",
-  "piworker_call": {
-    "schema_version": "piworker_call.v1",
-    "call_id": "WU-000001"
-  },
-  "contract": {
-    "call_id": "WU-000001",
-    "mission_id": "contract-001",
-    "allowed_scope": ["artifacts", "reports"],
-    "visible_refs": [
-      "contract/task_contract.json",
-      "projections/worker_brief.json",
-      "policy/permission_manifest.json"
-    ],
-    "expected_outputs": ["artifacts/final.md"]
-  },
-  "permission_manifest": {
-    "schema_version": "permission_manifest.v1",
-    "writable_refs": ["artifacts", "reports"],
-    "network_policy": "disabled"
-  }
-}
-```
-
-Provider, cache, token, and tool metrics are diagnostics and evidence. They are
-not semantic route or acceptance authority.
-
-## Invariants
-
-- PiWorker receives a bounded call/runtime contract.
-- PiWorker writes only through allowed tools or write scopes.
-- PiWorker output is evidence, not acceptance.
-- The executor may not self-accept its own work.
-- Contract changes require explicit revision records and authority.
-- Live provider credentials remain child-process environment only.
-- Core default construction uses the narrow PiWorker runtime boundary, not a
-  public worker registry.
-- Offline faux-provider tests must pass before live PiWorker smoke tests.
-
-## Attribution
-
-The PI GitHub project is MIT-licensed. MissionForge is inspired by PI. Any
-copied or adapted PI source must retain required attribution.
+The Pi sidecar preserves large tool output behind refs and projects compact
+context diagnostics into later model calls. It can report input tokens,
+cache-read/write tokens, context pressure, and resume checkpoints without
+turning hidden memory into task authority.

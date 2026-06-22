@@ -1,71 +1,20 @@
 """Thin academic DeepResearch integration for MissionForge."""
 
-from .compiler import (
-    DeepResearchTaskContractCompileResult,
-    compile_deepresearch_academic_task_contract,
-    load_deepresearch_task_contract,
+from .kernel_v2 import (
+    DeepResearchKernelV2Result,
+    KernelV2FixtureAdapter,
+    build_deepresearch_kernel_v2_flow,
+    run_deepresearch_kernel_v2,
 )
-from .judging import (
-    DeepResearchFinalPackage,
-    DeepResearchJudgeReport,
-    DeepResearchJudgedRunResult,
-    FixtureDeepResearchJudgeAdapter,
-    judge_deepresearch_run,
-    load_deepresearch_final_package,
-    load_deepresearch_judged_run_result,
-    run_deepresearch_academic_judged,
-)
-from .minimal import (
-    MinimalDeepResearchResult,
-    MinimalDeepResearchLoopResult,
-    MinimalFixtureResearcherAdapter,
-    MinimalFixtureReviewerAdapter,
-    run_deepresearch_minimal,
-    run_deepresearch_minimal_loop,
-)
-from .product_contract import (
-    AcademicResearchRequest,
-    DeepResearchReviewedRunStatus,
-    DeepResearchReviewedRunResult,
-    DeepResearchRunResult,
-    DeepResearchRunStatus,
-    ResearchIntensity,
-    ResearchIntensityProfile,
-    research_intensity_profile,
-)
-from .runtime import (
-    FixtureAcademicResearcherAdapter,
-    load_deepresearch_run_result,
-    run_deepresearch_academic_single_agent,
-)
+from .product_contract import AcademicResearchRequest, ResearchIntensity, ResearchIntensityProfile, research_intensity_profile
 
 __all__ = [
     "AcademicResearchRequest",
-    "DeepResearchRunResult",
-    "DeepResearchRunStatus",
-    "DeepResearchReviewedRunResult",
-    "DeepResearchReviewedRunStatus",
-    "DeepResearchTaskContractCompileResult",
+    "DeepResearchKernelV2Result",
+    "KernelV2FixtureAdapter",
     "ResearchIntensity",
     "ResearchIntensityProfile",
-    "DeepResearchFinalPackage",
-    "DeepResearchJudgeReport",
-    "DeepResearchJudgedRunResult",
-    "MinimalDeepResearchResult",
-    "MinimalDeepResearchLoopResult",
-    "FixtureAcademicResearcherAdapter",
-    "FixtureDeepResearchJudgeAdapter",
-    "MinimalFixtureResearcherAdapter",
-    "MinimalFixtureReviewerAdapter",
-    "compile_deepresearch_academic_task_contract",
-    "judge_deepresearch_run",
-    "load_deepresearch_final_package",
-    "load_deepresearch_judged_run_result",
-    "load_deepresearch_run_result",
-    "load_deepresearch_task_contract",
-    "run_deepresearch_academic_judged",
-    "run_deepresearch_academic_single_agent",
-    "run_deepresearch_minimal",
-    "run_deepresearch_minimal_loop",
+    "build_deepresearch_kernel_v2_flow",
     "research_intensity_profile",
+    "run_deepresearch_kernel_v2",
 ]

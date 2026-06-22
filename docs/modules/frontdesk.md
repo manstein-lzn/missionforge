@@ -79,7 +79,7 @@ faux Pi Agent runtime execution.
 
 FrontDesk is generic. It helps discover intent for software work,
 documentation work, data work, research work, operational tasks, and external
-products such as SkillFoundry. Product-specific meaning enters through
+products. Product-specific meaning enters through
 ProductInquiryProfile data, ProductIntegration packages, TaskContract fields,
 ProfilePacks, validators, product gates, and evidence refs, not through
 FrontDesk or runtime branches.
@@ -89,7 +89,7 @@ FrontDesk or runtime branches.
 - no embedded execution runtime;
 - no PiWorker inner-loop control;
 - no worker-owned acceptance;
-- no product-specific SkillFoundry, Codexarium, benchmark, or customer branches
+- no product-specific Codexarium, benchmark, or customer branches
   in MissionForge core;
 - no UI requirement for the first product implementation;
 - no treating raw chat as runtime truth;
@@ -454,7 +454,7 @@ contract or approve its own revision.
 
 - load external ProfilePacks for authoring;
 - expose profile descriptions and requirements to FrontDesk;
-- prove SkillFoundry and Codexarium can be expressed as profile-backed
+- prove external products can be expressed as profile-backed
   authoring flows without runtime branches.
 
 ### Phase 6: Product Dogfood
@@ -473,7 +473,7 @@ contract or approve its own revision.
 - define `ProductIntegration` and `ProductCompileResult` contracts;
 - define generic ProductGate result contracts with product-owned criteria;
 - treat existing MissionIRMapper as generic fallback behavior;
-- formalize SkillFoundry's FrontDesk bridge outside core.
+- formalize product FrontDesk bridges outside core.
 
 ## Verification Strategy
 
@@ -496,8 +496,7 @@ FrontDesk implementation should include tests for:
 - frozen output can be handed to product integrations or TaskContract runtime
   flows without FrontDesk owning execution;
 - external ProfilePack composition works without core runtime branches;
-- SkillFoundry uses FrontDesk output as an integration, not as core runtime
-  behavior.
+- product integrations use FrontDesk output outside core runtime behavior.
 
 ## Current Status
 
@@ -546,9 +545,9 @@ The current implementation includes:
   abstraction;
 - runtime feedback recommendations for repair, resume, revision, redesign,
   profile or validator extension, human review, and stop;
-- SkillFoundry dogfood and formal SkillFoundry FrontDesk bridge that consume
-  FrontDesk-generated refs from `integrations/skillfoundry` without adding core
-  runtime branches.
+- product integration dogfood and formal FrontDesk bridges that consume
+  FrontDesk-generated refs from integration packages without adding core runtime
+  branches.
 
 Verified on 2026-05-30 with:
 
@@ -589,8 +588,8 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 MISSIONFORGE_SKIP_NPM_CI=1 ./scripts/validate.sh
 # MissionForge validation passed
 
-./scripts/validate_integrations.sh skillfoundry
-# Current cutover validation: 112 tests, OK (skipped=1)
+./scripts/validate_integrations.sh deepresearch
+# DeepResearch integration validation passed
 
 git diff --check
 # passed
@@ -602,5 +601,4 @@ git diff --check
 - Which approval modes are acceptable for non-interactive host integrations?
 - How much live PiWorker-backed authoring should be enabled by default after
   the current bounded node contract helper is hardened?
-- Which additional product dogfood scenarios should become non-optional gates
-  after SkillFoundry?
+- Which additional product dogfood scenarios should become non-optional gates?

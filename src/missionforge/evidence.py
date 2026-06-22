@@ -23,9 +23,8 @@ _TRUST_RANK: dict[EvidenceTrustLevel, int] = {
     EvidenceTrustLevel.COMMAND_RESULT: 3,
     EvidenceTrustLevel.TEST_RESULT: 4,
     EvidenceTrustLevel.SCHEMA_VALIDATION: 5,
-    EvidenceTrustLevel.VERIFIER_RESULT: 6,
-    EvidenceTrustLevel.REVIEWER_DECISION: 7,
-    EvidenceTrustLevel.HUMAN_ACCEPTANCE: 8,
+    EvidenceTrustLevel.REVIEWER_DECISION: 6,
+    EvidenceTrustLevel.HUMAN_ACCEPTANCE: 7,
 }
 
 
