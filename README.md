@@ -1,15 +1,15 @@
 # MissionForge
 
-MissionForge is a small PiWorker-centered runtime kernel.
+MissionForge 是一个以 PiWorker 为中心的轻量运行时内核。
 
-PiWorker owns semantic work. MissionForge owns hard boundaries: frozen task
-contracts, workspace refs, permission manifests, evidence records, runtime
-progress, secret exclusion, and independent judge artifacts.
+PiWorker 负责语义工作：理解任务、执行研究、综合判断、提出修复。
+MissionForge 负责硬边界：冻结任务合同、工作区引用、权限清单、证据记录、
+运行进度、密钥排除、角色隔离和独立 judge 产物。
 
-## Current Shape
+## 当前形态
 
 ```text
-FrontDesk or ProductIntegration
+FrontDesk 或 ProductIntegration
   -> TaskContract + WorkerBrief + JudgeRubric + PermissionManifest
   -> PiWorkerCall
   -> run_piworker_call(...)
@@ -17,18 +17,18 @@ FrontDesk or ProductIntegration
   -> product judge / package / resume logic
 ```
 
-The root package intentionally exposes a small programmer API:
+根包刻意只暴露一组小而正交的程序员 API：
 
-- `TaskContract`, `WorkspacePolicy`, `PermissionManifest`
-- `WorkerBrief`, `JudgeRubric`
-- `PiWorkerCall`, `PiWorkerCallResult`
-- `create_default_piworker_adapter`, `run_piworker_call`
-- refs, evidence, extension, sandbox, and progress primitives
+- `TaskContract`、`WorkspacePolicy`、`PermissionManifest`
+- `WorkerBrief`、`JudgeRubric`
+- `PiWorkerCall`、`PiWorkerCallResult`
+- `create_default_piworker_adapter`、`run_piworker_call`
+- refs、evidence、extension、sandbox、progress 等边界原语
 
-Higher-level product meaning belongs in integrations such as
-`integrations/deepresearch`, not in `src/missionforge`.
+更高层的产品语义属于外部 integration，例如 `integrations/deepresearch`；
+它不应该进入 `src/missionforge` 的产品中立核心。
 
-## Install
+## 安装
 
 ```bash
 python3 -m pip install -e .
@@ -36,7 +36,7 @@ npm ci --ignore-scripts --prefix workers/pi-agent-runtime
 npm run build --prefix workers/pi-agent-runtime
 ```
 
-## Minimal Call
+## 最小调用
 
 ```python
 from missionforge import PiWorkerCall, PiWorkerCallRole, run_piworker_call
@@ -57,12 +57,12 @@ call = PiWorkerCall(
 result = run_piworker_call(call, workspace="/tmp/missionforge-run")
 ```
 
-`PiWorkerCallResult` is boundary evidence, not semantic acceptance. Acceptance
-must come from a separate judge role or product integration artifact.
+`PiWorkerCallResult` 是运行边界证据，不是语义验收结论。语义接受必须来自
+独立 judge 角色或产品 integration 生成的验收 artifact。
 
 ## DeepResearch
 
-The active DeepResearch path is the simplified kernel-v2 runner:
+当前可用的 DeepResearch 路径是简化后的 kernel-v2 runner：
 
 ```bash
 PYTHONPATH=src:integrations/deepresearch/src \
@@ -77,10 +77,10 @@ python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
   --stream-progress
 ```
 
-The CLI prints absolute output paths for `final_report`, `source_packet`,
-`result_package`, `judge_report` when present, and `usage_summary`.
+CLI 会输出已经存在的关键文件绝对路径，包括 `final_report`、`source_packet`、
+`result_package`、`judge_report` 和 `usage_summary`。
 
-## Validate
+## 验证
 
 ```bash
 PYTHONPATH=src python3 -m unittest \
@@ -97,18 +97,16 @@ PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest \
 npm test --prefix workers/pi-agent-runtime
 ```
 
-## Design Notes
+## 设计原则
 
-- Raw chat is not operational truth.
-- A frozen `TaskContract` or explicit revision is task truth.
-- Code may reject malformed, unsafe, stale, unauthorized, or unreferenced
-  output.
-- Code should not pretend to perform product-level semantic judgment.
-- Product semantics live in integrations, profiles, manuals, rubrics, and
-  artifacts.
-- MissionForge core stays product-neutral and PiWorker-centered.
+- 原始聊天记录不是可执行任务真相。
+- 冻结后的 `TaskContract`，或显式 revision，才是持久任务权威。
+- 代码可以拒绝格式错误、不安全、过期、未授权或缺少引用的输出。
+- 代码不假装执行产品级语义判断。
+- 产品语义属于 integrations、profiles、manuals、rubrics 和 artifacts。
+- MissionForge core 保持产品中立，并围绕 PiWorker 运行边界构建。
 
-Start with:
+建议从这些文档开始：
 
 - [Kernel API Design](docs/KERNEL_API_DESIGN.md)
 - [Deep Research Roadmap](docs/DEEP_RESEARCH_ROADMAP.md)
