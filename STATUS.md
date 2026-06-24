@@ -27,7 +27,7 @@ removing the disk-first assumption from data and context movement.
 | Core direction | Product-neutral PiWorker-centered toolkit, not a workflow framework |
 | Kernel API | Kept as a thin developer-friendly facade over core primitives |
 | DeepResearch | Product integration; useful pressure test, not core architecture |
-| Data model | Current implementation remains filesystem-ref-backed; ref-addressed data model is planned |
+| Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Current context path is still mostly file/projection based; `ContextView` plan is next |
 | Observation/control | Basic progress and interaction safe points exist; richer inspect/debug/control plane is planned |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
@@ -52,16 +52,10 @@ removing the disk-first assumption from data and context movement.
 
 ## In Progress
 
-- Define the ref-addressed information kernel:
-  - `ArtifactRecord`
-  - versioned refs
-  - storage-independent artifact identity
-  - durable vs volatile materialization states
-- Prepare the next data-plane slice after gates:
-  - `ArtifactRecord`
-  - versioned refs
-  - storage-independent artifact identity
-  - durable vs volatile materialization states
+- Extend the ref-addressed information kernel beyond the first data-plane slice:
+  - broader storage integration after hard gates
+  - context projection over versioned artifact refs
+  - runtime adoption without changing product integration semantics
 - Define context management primitives:
   - `ContextSegment`
   - `ContextView`
@@ -75,12 +69,11 @@ removing the disk-first assumption from data and context movement.
 
 ## Next Milestones
 
-1. Add minimal core contracts for `ArtifactRecord` and versioned refs.
-2. Keep `ReadGate`, `WriteGate`, and `ToolGateway` in front of all new storage
+1. Keep `ReadGate`, `WriteGate`, and `ToolGateway` in front of all new storage
    behavior.
-3. Add `ContextView` diagnostics without changing PiWorker behavior yet.
-4. Upgrade Kernel API to compile steps against the new data/context primitives.
-5. Use DeepResearch only as an integration pressure test after core boundaries
+2. Add `ContextView` diagnostics without changing PiWorker behavior yet.
+3. Upgrade Kernel API to compile steps against the new data/context primitives.
+4. Use DeepResearch only as an integration pressure test after core boundaries
    are proven.
 
 ## Guardrails
@@ -98,12 +91,17 @@ removing the disk-first assumption from data and context movement.
 Latest known passing checks on 2026-06-24:
 
 ```bash
+python3 -m py_compile src/missionforge/artifacts.py src/missionforge/__init__.py tests/test_artifacts.py tests/test_public_api_boundary.py
+PYTHONPATH=src python3 -m unittest tests/test_artifacts.py tests/test_public_api_boundary.py
 python3 -m py_compile src/missionforge/permissions.py src/missionforge/runtime_control.py src/missionforge/task_contract.py src/missionforge/task_projection.py src/missionforge/workspace_runtime.py src/missionforge/adapters/pi_agent_runtime.py src/missionforge/kernel/compiler.py tests/test_permissions.py tests/test_runtime_control.py tests/test_workspace_runtime.py tests/test_task_contracts.py tests/test_pi_agent_runtime_adapter.py
 PYTHONPATH=src python3 -m unittest discover -s tests
+PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest discover -s integrations/deepresearch/tests
 cd workers/pi-agent-runtime && npm test
 ```
 
 Observed results:
 
-- Core tests: 219 run, OK, 1 skipped.
-- Pi agent runtime tests: 86 passed.
+- Artifact/public API focused tests: 15 run, OK.
+- Core tests: 232 run, OK, 1 skipped.
+- DeepResearch integration tests: 45 run, OK.
+- Pi agent runtime tests: 88 passed.

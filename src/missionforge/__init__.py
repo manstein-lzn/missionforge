@@ -20,6 +20,14 @@ from .context_summary import (
     ContextSummaryKind,
     ContextSummarySource,
 )
+from .artifacts import (
+    ArtifactMaterializationState,
+    ArtifactRecord,
+    ArtifactStore,
+    ArtifactVersionRef,
+    FileArtifactStore,
+    InMemoryArtifactStore,
+)
 from .evidence import ArtifactRef, EvidenceRef
 from .evidence_store import EvidenceLedger, EvidenceRecord, FileEvidenceStore, InMemoryEvidenceStore
 from .extensions import (
@@ -108,6 +116,10 @@ from .task_projection import (
 
 __all__ = [
     "ArtifactRef",
+    "ArtifactMaterializationState",
+    "ArtifactRecord",
+    "ArtifactStore",
+    "ArtifactVersionRef",
     "AGENT_EVENTS_REF",
     "ACKS_REF",
     "AgentEvent",
@@ -130,11 +142,13 @@ __all__ = [
     "ExtensionLock",
     "ExtensionLockEntry",
     "FileEvidenceStore",
+    "FileArtifactStore",
     "FileInteractionPort",
     "FinalPackage",
     "CapabilityGrant",
     "HostSandboxRunner",
     "InMemoryEvidenceStore",
+    "InMemoryArtifactStore",
     "InteractionDelivery",
     "InteractionVisibility",
     "JudgeRubric",

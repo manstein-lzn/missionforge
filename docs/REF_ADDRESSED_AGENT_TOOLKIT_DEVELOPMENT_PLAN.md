@@ -167,6 +167,8 @@ model is proven.
 
 ## Workstream 1: Data Plane
 
+Status: first minimal slice implemented on 2026-06-24.
+
 ### Objective
 
 Separate ref identity from filesystem path without weakening auditability or
@@ -174,16 +176,18 @@ permissions.
 
 ### Deliverables
 
-1. Add `ArtifactRecord`.
-2. Add explicit ref versioning.
+1. Done for first slice: add `ArtifactRecord`.
+2. Done for first slice: add explicit ref versioning through
+   `ArtifactVersionRef`.
 3. Add materialization state:
    - `volatile`
    - `durable`
    - `materialized`
    - `dirty`
-4. Add filesystem-compatible `ArtifactStore`.
-5. Add memory-backed store only for tests and non-authoritative intermediate
-   data.
+4. Done for first slice: add filesystem-compatible `ArtifactStore` protocol and
+   `FileArtifactStore`.
+5. Done for first slice: add memory-backed store only for tests and
+   non-authoritative intermediate data.
 
 ### Rules
 
@@ -203,6 +207,15 @@ permissions.
 - Tests prove versioned updates preserve previous versions.
 - Tests prove durable artifacts survive process restart in the filesystem-backed
   store.
+- Tests prove memory-backed artifacts stay volatile and non-authoritative.
+- Tests prove rejected filesystem commits do not leave unindexed bodies that
+  poison the next valid version.
+- Tests prove committed record provenance cannot be mutated through returned
+  record objects or original input containers.
+- Tests prove durable body corruption is rejected when reading or reloading the
+  filesystem-backed store.
+- Tests prove serialized artifact records carry an explicit matching
+  `version_ref`.
 
 ## Workstream 2: Permission Gates
 
@@ -456,6 +469,8 @@ Exit criteria:
 
 ### Phase 2: Artifact Records
 
+Status: first minimal slice implemented on 2026-06-24.
+
 Deliverables:
 
 - `ArtifactRecord`;
@@ -564,9 +579,9 @@ If the answer is unclear, do not add it to core.
 
 ## Open Questions
 
-1. Should `ArtifactStore` be public immediately or incubate under internal
-   kernel modules first?
-2. What is the exact durable commit rule for small structured bodies?
+1. What is the exact durable commit rule for small structured bodies?
+2. Should `ArtifactStore` gain an adapter boundary after two integrations prove
+   the minimal protocol?
 3. Should `ContextView` be passed to Pi runtime as a first-class envelope or
    compiled into existing runtime input fields for compatibility?
 4. What raw tool observations should a judge see by default, if any?
