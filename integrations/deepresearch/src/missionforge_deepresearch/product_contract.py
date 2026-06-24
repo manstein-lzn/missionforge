@@ -21,46 +21,53 @@ RESEARCH_REQUEST_SCHEMA_VERSION = "missionforge_deepresearch.research_request.v1
 
 _REPORT_SECTION_DEFINITIONS = [
     {
+        "section_id": "abstract_and_key_findings",
+        "canonical_title": "Abstract And Key Findings",
+        "localized_titles": {"zh": "摘要与核心发现"},
+        "aliases": ["Abstract", "Summary", "摘要", "核心发现", "核心结论"],
+        "purpose": "Summarize the research question, scope, key findings, evidence confidence, and main limitations in a neutral tone.",
+    },
+    {
         "section_id": "scope_and_method",
         "canonical_title": "Scope And Method",
         "localized_titles": {"zh": "范围与方法"},
-        "aliases": ["Scope & Method", "方法与范围"],
-        "purpose": "Define the research question, time window, method, source strategy, and limits of the run.",
+        "aliases": ["Scope & Method", "方法与范围", "研究范围", "研究方法"],
+        "purpose": "Define the research question, time window, source strategy, inclusion criteria, evidence types, and limits of the run.",
     },
     {
-        "section_id": "evidence_base",
-        "canonical_title": "Evidence Base",
-        "localized_titles": {"zh": "证据基础"},
-        "aliases": ["Evidence"],
-        "purpose": "Summarize source coverage, source types, recentness, and evidence strength before drawing conclusions.",
+        "section_id": "background_and_problem_definition",
+        "canonical_title": "Background And Problem Definition",
+        "localized_titles": {"zh": "研究背景与问题定义"},
+        "aliases": ["Background", "Problem Definition", "背景", "问题定义"],
+        "purpose": "Explain the field context, core definitions, problem boundaries, assumptions, and why the topic matters.",
     },
     {
-        "section_id": "major_lines_of_work",
-        "canonical_title": "Major Lines Of Work",
-        "localized_titles": {"zh": "主要研究路线"},
-        "aliases": ["Research Lines", "主要路线"],
-        "purpose": "Organize the field into major technical schools, systems, papers, repositories, or benchmarks.",
+        "section_id": "research_lines_and_representative_work",
+        "canonical_title": "Research Lines And Representative Work",
+        "localized_titles": {"zh": "研究路线与代表性工作"},
+        "aliases": ["Major Lines Of Work", "Research Lines", "主要研究路线", "主要路线", "技术路线", "代表性工作"],
+        "purpose": "Organize papers, systems, tools, and repositories by research line and explain the contribution and evidence for each line.",
     },
     {
-        "section_id": "comparison_matrix",
-        "canonical_title": "Comparison Matrix",
-        "localized_titles": {"zh": "对比矩阵"},
-        "aliases": ["Comparison Table", "对比表"],
-        "purpose": "Compare methods by task, assumptions, benchmarks, reproducibility, evidence strength, and limitations.",
+        "section_id": "comparative_analysis",
+        "canonical_title": "Comparative Analysis",
+        "localized_titles": {"zh": "比较分析"},
+        "aliases": ["Comparison Matrix", "Comparison Table", "对比矩阵", "对比表", "比较"],
+        "purpose": "Compare methods by assumptions, techniques, benchmarks, evidence strength, reproducibility, applicability, and limitations.",
     },
     {
-        "section_id": "counterevidence_and_failure_modes",
-        "canonical_title": "Counterevidence And Failure Modes",
-        "localized_titles": {"zh": "反证与失败模式"},
-        "aliases": ["Counterevidence", "Failure Modes", "反证", "失败模式"],
-        "purpose": "Surface negative evidence, weak claims, failed assumptions, competing interpretations, and risks.",
+        "section_id": "limitations_counterevidence_and_open_questions",
+        "canonical_title": "Limitations Counterevidence And Open Questions",
+        "localized_titles": {"zh": "局限、反证与开放问题"},
+        "aliases": ["Counterevidence", "Failure Modes", "Source Gaps", "Evidence Gaps", "Limitations", "反证", "失败模式", "证据缺口", "局限"],
+        "purpose": "Surface negative evidence, weak claims, failed assumptions, unresolved questions, and gaps without turning caveats into the whole report.",
     },
     {
-        "section_id": "source_gaps",
-        "canonical_title": "Limitations And Evidence Gaps",
-        "localized_titles": {"zh": "局限与证据缺口"},
-        "aliases": ["Source Gaps", "Evidence Gaps", "Limitations", "证据缺口", "信息缺口", "局限"],
-        "purpose": "State reader-facing limitations, unresolved questions, inaccessible evidence, and follow-up checks.",
+        "section_id": "trends_and_future_directions",
+        "canonical_title": "Trends And Future Directions",
+        "localized_titles": {"zh": "趋势与未来方向"},
+        "aliases": ["Future Work", "Research Agenda", "趋势", "未来方向", "后续研究问题", "工程启示"],
+        "purpose": "Synthesize likely research trends, practical implications, and follow-up questions while preserving evidence calibration.",
     },
     {
         "section_id": "references",
@@ -91,6 +98,39 @@ _QUALITY_DIMENSIONS = [
         "dimension_id": "synthesis",
         "standard": "Explain relationships, tradeoffs, and disagreement instead of listing papers.",
         "user_visible_value": "clearer field understanding",
+    },
+    {
+        "dimension_id": "insight_depth",
+        "standard": (
+            "Present non-obvious field insights that are supported by cross-source evidence "
+            "and change how the reader understands the problem, not just what the sources say."
+        ),
+        "user_visible_value": "deeper expert insight",
+    },
+    {
+        "dimension_id": "narrative_coherence",
+        "standard": (
+            "Organize the report around a defensible thesis and argument arc; sections should "
+            "build on each other instead of reading like independent summary blocks."
+        ),
+        "user_visible_value": "stronger report storyline",
+    },
+    {
+        "dimension_id": "genre_fit",
+        "standard": (
+            "Match the requested genre and audience: literature reviews should be neutral, "
+            "comprehensive, and evidence-calibrated; strategic memos should be used only "
+            "when explicitly requested."
+        ),
+        "user_visible_value": "better fit to requested report genre",
+    },
+    {
+        "dimension_id": "reader_value",
+        "standard": (
+            "Every major conclusion should explain why it matters to the target audience and "
+            "what decision, assumption, or follow-up work it informs."
+        ),
+        "user_visible_value": "more actionable conclusions",
     },
     {
         "dimension_id": "delta",

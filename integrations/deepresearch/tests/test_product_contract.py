@@ -6,7 +6,10 @@ from missionforge.contracts import ContractValidationError
 from missionforge_deepresearch.product_contract import (
     AcademicResearchRequest,
     ResearchIntensity,
+    deepresearch_quality_dimensions,
     research_intensity_profile,
+    research_report_section_specs,
+    research_report_section_titles,
 )
 
 
@@ -68,6 +71,39 @@ class ProductContractTests(unittest.TestCase):
         self.assertIn("Inspect repository files", intensive.guidance)
         self.assertIn("Do not install projects", intensive.guidance)
         self.assertIn("run benchmarks", intensive.guidance)
+
+    def test_quality_dimensions_include_expert_report_quality(self) -> None:
+        dimensions = {item["dimension_id"]: item for item in deepresearch_quality_dimensions()}
+
+        self.assertIn("insight_depth", dimensions)
+        self.assertIn("narrative_coherence", dimensions)
+        self.assertIn("genre_fit", dimensions)
+        self.assertIn("reader_value", dimensions)
+        self.assertIn("non-obvious field insights", dimensions["insight_depth"]["standard"])
+        self.assertIn("defensible thesis", dimensions["narrative_coherence"]["standard"])
+        self.assertIn("literature reviews", dimensions["genre_fit"]["standard"])
+        self.assertIn("target audience", dimensions["reader_value"]["standard"])
+
+    def test_report_sections_default_to_neutral_literature_review_shape(self) -> None:
+        specs = research_report_section_specs("zh")
+        section_ids = [item["section_id"] for item in specs]
+
+        self.assertEqual(
+            section_ids,
+            [
+                "abstract_and_key_findings",
+                "scope_and_method",
+                "background_and_problem_definition",
+                "research_lines_and_representative_work",
+                "comparative_analysis",
+                "limitations_counterevidence_and_open_questions",
+                "trends_and_future_directions",
+                "references",
+            ],
+        )
+        self.assertEqual(research_report_section_titles("zh")[0], "摘要与核心发现")
+        self.assertEqual(research_report_section_titles("zh")[-1], "参考文献")
+        self.assertIn("范围与方法", specs[1]["aliases"])
 
     def test_quick_is_not_a_current_public_research_intensity(self) -> None:
         self.assertEqual([item.value for item in ResearchIntensity], ["standard", "intensive"])
