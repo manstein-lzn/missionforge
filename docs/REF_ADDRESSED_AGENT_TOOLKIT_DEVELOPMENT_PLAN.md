@@ -367,12 +367,19 @@ usable as an embedded subsystem.
    - run next step;
    - route next;
    - replay from artifact boundary.
+5. Done for first inspect slice: add a product-neutral Kernel run inspection
+   helper over flow result, run snapshot, run events, flow ledger, step records,
+   context projection refs, artifact refs, metric refs, and execution report
+   refs.
 
 Current integration:
 
 - Kernel `run_flow` writes execution-scoped
   `observation/run_events.jsonl` and `observation/run_snapshot.json`.
 - Flow result metadata includes `run_events_ref` and `run_snapshot_ref`.
+- `missionforge.kernel.inspect_kernel_run()` gives host applications a
+  refs-only summary without expanding artifact bodies, prompts, execution
+  reports, provider payloads, tool bodies, or safe-point user text.
 - `stop_after_current_turn` lets the visible step run and then blocks before
   route progression.
 - User text remains in the interaction plane; observation records only carry
@@ -389,8 +396,11 @@ Current integration:
 
 ### Exit Criteria
 
-- A host UI can show current phase, step, role, tool activity, context pressure,
-  usage, latest refs, and last safe point.
+- Done for first inspect slice: a host UI can show current phase, step, role,
+  latest refs, observation refs, and last safe point from refs-only Kernel
+  inspection.
+- Still open: richer tool activity, context pressure display, usage display,
+  and fixture debug stepping.
 - A user can pause before the next step.
 - A user can inject guidance that becomes visible through explicit safe-point
   input refs.
@@ -413,7 +423,8 @@ the new primitives.
    - sandbox and tool gateway policy
 2. Keep `Flow` minimal and product-neutral.
 3. Preserve route extraction only from structured decision artifacts.
-4. Add debug and inspect hooks to Kernel runs.
+4. Done for first inspect slice: add refs-only inspection hooks to Kernel runs.
+5. Deferred: add fixture-flow debug stepping.
 
 ### Rules
 
@@ -524,19 +535,21 @@ Exit criteria:
 
 ### Phase 4: Observation And Control
 
-Status: first slice implemented on 2026-06-24.
+Status: first observation/control and inspect slices implemented on 2026-06-24.
 
 Deliverables:
 
 - structured event stream;
 - run snapshot;
 - safe-point control operations;
+- refs-only Kernel run inspection;
 - debug stepping for fixture flows.
 
 Exit criteria:
 
 - done for first slice: host applications can observe Kernel runs through
-  `RunEvent` and `RunSnapshot` without parsing raw logs;
+  `RunEvent`, `RunSnapshot`, and `inspect_kernel_run()` without parsing raw
+  logs;
 - done for first slice: interruption remains safe-point based;
 - deferred: fixture-flow debug stepping.
 
@@ -548,6 +561,8 @@ Deliverables:
 
 - done for first slice: Kernel API writes `ContextView` diagnostics and
   observation refs without becoming a scheduler or semantic router;
+- done for first inspect slice: Kernel API exposes a read-only, refs-only
+  inspection helper for host UIs and debuggers;
 - done for first slice: DeepResearch result packages expose Kernel
   `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.

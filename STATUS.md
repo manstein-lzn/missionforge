@@ -29,7 +29,7 @@ removing the disk-first assumption from data and context movement.
 | DeepResearch | Product integration; useful pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
-| Observation/control | Phase 4 first slice implemented: refs-only `RunEvent`, `RunSnapshot`, and safe-point `ControlPort` primitives exist |
+| Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, and Kernel run inspection primitives exist |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
 ## Completed Recently
@@ -68,6 +68,14 @@ removing the disk-first assumption from data and context movement.
     metadata;
   - DeepResearch result packages surface those refs for product UIs and debug
     tools without moving research semantics into core.
+- Added a product-neutral Kernel run inspection helper:
+  - `missionforge.kernel.inspect_kernel_run()` reads `FlowResult`,
+    `RunSnapshot`, `RunEvent`, `FlowLedgerEvent`, and `StepRecord` refs;
+  - inspection output stays refs-only and does not expand artifact bodies,
+    PiWorker prompts, execution reports, provider payloads, tool bodies, or
+    safe-point user text;
+  - mixed `ledger_refs` are handled conservatively so projection records remain
+    refs and are not parsed as flow JSONL ledgers.
 
 ## In Progress
 
@@ -79,7 +87,8 @@ removing the disk-first assumption from data and context movement.
   - express more existing refs as `ArtifactRecord`;
   - pass richer context diagnostics through runtime/provider observations;
   - add debug stepping and replay helpers for fixture flows;
-  - teach product UIs to consume `RunSnapshot` and `RunEvent` directly.
+  - teach product UIs to consume `RunSnapshot`, `RunEvent`, and Kernel run
+    inspection directly.
 
 ## Next Milestones
 
@@ -87,8 +96,7 @@ removing the disk-first assumption from data and context movement.
    behavior.
 2. Adopt `ArtifactRecord` in more existing step/output refs without weakening
    filesystem compatibility.
-3. Add minimal debug/inspect hooks over Kernel runs using `RunSnapshot` and
-   existing flow ledger refs.
+3. Extend the minimal Kernel inspect hook toward fixture-flow debug stepping.
 4. Use DeepResearch only as an integration pressure test while keeping prompts,
    rubrics, source tools, and report contracts in the integration package.
 
@@ -117,7 +125,7 @@ cd workers/pi-agent-runtime && npm test
 
 Observed results:
 
-- Context/observation/public API focused tests: 18 run, OK.
-- Core tests: 245 run, OK, 1 skipped.
+- Context/observation/kernel inspection/public API focused tests: 22 run, OK.
+- Core tests: 249 run, OK, 1 skipped.
 - DeepResearch integration tests: 45 run, OK.
 - Pi agent runtime tests: 11 node test files, OK.

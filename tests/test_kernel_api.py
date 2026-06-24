@@ -13,6 +13,7 @@ from missionforge.kernel import (
     FlowLedgerEvent,
     FlowLedgerEventKind,
     FlowRunResult,
+    KernelRunInspection,
     KernelValidationError,
     Projection,
     ProjectionRunResult,
@@ -23,6 +24,7 @@ from missionforge.kernel import (
     StepStatus,
     Toolset,
     compile_step,
+    inspect_kernel_run,
     run_flow,
     run_projection,
     run_step,
@@ -919,6 +921,186 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(ledger_events[3].route_target, "judge")
         self.assertEqual(ledger_events[-1].status, "accepted")
         self.assertEqual(ledger_events[-1].stop_reason, "terminal_route")
+
+    def test_inspect_kernel_run_summarizes_accepted_run_refs_only(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step. PROMPT_SENTINEL_SHOULD_NOT_LEAK",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        judge = Step(
+            id="judge",
+            brief="Judge final acceptance.",
+            inputs=["reports/final_report.md", "reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reports", "reviews"],
+            write=["judge"],
+            role=PiWorkerCallRole.JUDGE,
+            route_on="judge/report.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, judge],
+            routes={
+                "reviewer.ready_for_judge": "judge",
+                "judge.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "ARTIFACT_BODY_SENTINEL_SHOULD_NOT_LEAK\n")
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelFlowAdapter())
+            flow_result_payload = _read_json(root, result.flow_result_ref)
+            flow_result_payload["metadata"]["note"] = "METADATA_SENTINEL_SHOULD_NOT_LEAK"
+            _write_json(root, result.flow_result_ref, flow_result_payload)
+            inspection = inspect_kernel_run(root, result.flow_result_ref)
+            serialized = json.dumps(inspection.to_dict(), sort_keys=True, ensure_ascii=False)
+
+        self.assertIsInstance(inspection, KernelRunInspection)
+        self.assertEqual(inspection.status, "accepted")
+        self.assertEqual(inspection.snapshot_status, "accepted")
+        self.assertEqual(inspection.flow_result_ref, result.flow_result_ref)
+        self.assertEqual(inspection.flow_ledger_ref, result.flow_result.ledger_refs[0])
+        self.assertEqual(inspection.run_events_ref, result.flow_result.metadata["run_events_ref"])
+        self.assertEqual(inspection.run_snapshot_ref, result.flow_result.metadata["run_snapshot_ref"])
+        self.assertEqual(inspection.latest_event_kind, "run_stopped")
+        self.assertEqual(inspection.latest_event_status, "accepted")
+        self.assertEqual(inspection.current_step_id, "")
+        self.assertEqual(inspection.current_role, "")
+        self.assertEqual(inspection.step_record_refs, result.flow_result.step_record_refs)
+        self.assertEqual([record.step_id for record in inspection.step_records], ["reviewer", "judge"])
+        self.assertEqual([record.status for record in inspection.step_records], ["completed", "completed"])
+        self.assertEqual(len(inspection.context_projection_refs), 2)
+        self.assertEqual(inspection.decision_refs, ["reviews/observation.json", "judge/report.json"])
+        self.assertEqual(inspection.final_artifact_refs, ["reviews/observation.json", "judge/report.json"])
+        self.assertIn("attempts/demo-flow-001-reviewer/pi_agent_execution_report.json", inspection.execution_report_refs)
+        self.assertEqual(inspection.flow_result_metadata["executed_steps"], 2)
+        self.assertNotIn("note", inspection.flow_result_metadata)
+        self.assertNotIn("PROMPT_SENTINEL_SHOULD_NOT_LEAK", serialized)
+        self.assertNotIn("ARTIFACT_BODY_SENTINEL_SHOULD_NOT_LEAK", serialized)
+        self.assertNotIn("METADATA_SENTINEL_SHOULD_NOT_LEAK", serialized)
+
+    def test_inspect_kernel_run_keeps_user_interaction_text_out_of_summary(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+        user_text = "USER_INTERACTION_SENTINEL_SHOULD_NOT_LEAK"
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(root)
+            port.submit_text(user_text, run_id="demo-flow", target="flow", kind=UserEventKind.MESSAGE)
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelFlowAdapter(), interaction_port=port)
+            inspection = inspect_kernel_run(root, result.flow_result_ref)
+            serialized = json.dumps(inspection.to_dict(), sort_keys=True, ensure_ascii=False)
+
+        self.assertEqual(inspection.status, "blocked")
+        self.assertEqual(inspection.snapshot_status, "blocked")
+        self.assertEqual(
+            inspection.last_safe_point_ref,
+            "kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json",
+        )
+        self.assertIn(inspection.last_safe_point_ref, inspection.observation_refs)
+        self.assertNotIn(user_text, serialized)
+
+    def test_inspect_kernel_run_handles_projection_record_refs_without_parsing_them_as_ledger(self) -> None:
+        writer = Step(
+            id="writer",
+            brief="Write final report.",
+            inputs=["contract/task_contract.json"],
+            outputs=["reports/final_report.md"],
+            read=["contract"],
+            write=["reports"],
+        )
+        flow = Flow(
+            id="projection-flow",
+            steps=[writer],
+            routes={},
+            artifacts=[
+                Artifact("reports/final_report.md", role=ArtifactRole.OUTPUT, owner="piworker"),
+                Artifact("reports/summary.json", role=ArtifactRole.PROJECTION, owner="runtime"),
+            ],
+            projections=[
+                Projection(
+                    output="reports/summary.json",
+                    from_=["reports/final_report.md"],
+                    projector="summary_index",
+                )
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_json(root, "contract/task_contract.json", {"contract": "stable"})
+            result = run_flow(
+                flow,
+                context=_context(),
+                workspace=root,
+                adapter=_KernelDirectAdapter(),
+                projectors={"summary_index": _summary_projector},
+            )
+            inspection = inspect_kernel_run(root, result.flow_result_ref)
+            flow_ledger_event_count = len(_read_jsonl(root, result.flow_result.ledger_refs[0]))
+
+        self.assertEqual(result.flow_result.status, "completed")
+        self.assertEqual(len(result.flow_result.ledger_refs), 2)
+        self.assertEqual(inspection.ledger_refs, result.flow_result.ledger_refs)
+        self.assertEqual(inspection.flow_ledger_ref, result.flow_result.ledger_refs[0])
+        self.assertEqual(inspection.ledger_event_count, flow_ledger_event_count)
+        self.assertIn("reports/summary.json", inspection.final_artifact_refs)
+
+    def test_inspect_kernel_run_reports_missing_step_records_without_expanding_bodies(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelFlowAdapter())
+            missing_ref = result.flow_result.step_record_refs[0]
+            (root / missing_ref).unlink()
+            inspection = inspect_kernel_run(root, result.flow_result_ref)
+
+        self.assertEqual(inspection.missing_step_record_refs, [missing_ref])
+        self.assertEqual(inspection.step_records, [])
+        self.assertEqual(inspection.step_record_refs, [missing_ref])
 
     def test_run_flow_skips_completed_steps_on_rerun(self) -> None:
         reviewer = Step(

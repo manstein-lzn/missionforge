@@ -18,6 +18,7 @@ from .contracts import (
     StepStatus,
     Toolset,
 )
+from .inspect import KernelRunInspection, KernelStepInspection, inspect_kernel_run
 from .projections import ProjectionRunResult, run_projection, run_projections
 from .runner import FlowRunResult, StepRunResult, run_flow, run_step
 
@@ -33,6 +34,8 @@ __all__ = [
     "FlowRunResult",
     "FlowStop",
     "KernelValidationError",
+    "KernelRunInspection",
+    "KernelStepInspection",
     "Projection",
     "ProjectionRecord",
     "ProjectionRunResult",
@@ -43,6 +46,7 @@ __all__ = [
     "StepStatus",
     "Toolset",
     "compile_step",
+    "inspect_kernel_run",
     "run_flow",
     "run_projection",
     "run_projections",
