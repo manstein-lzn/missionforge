@@ -81,6 +81,8 @@ class DeepResearchKernelV2Result:
     result_ref: str
     flow_result_ref: str
     flow_ledger_ref: str
+    run_events_ref: str
+    run_snapshot_ref: str
     contract_ref: str
     final_report_ref: str
     report_html_ref: str
@@ -110,6 +112,8 @@ class DeepResearchKernelV2Result:
             "result_ref": self.result_ref,
             "flow_result_ref": self.flow_result_ref,
             "flow_ledger_ref": self.flow_ledger_ref,
+            "run_events_ref": self.run_events_ref,
+            "run_snapshot_ref": self.run_snapshot_ref,
             "contract_ref": self.contract_ref,
             "final_report_ref": self.final_report_ref,
             "report_html_ref": self.report_html_ref,
@@ -134,6 +138,8 @@ class DeepResearchKernelV2Result:
             "result_ref",
             "flow_result_ref",
             "flow_ledger_ref",
+            "run_events_ref",
+            "run_snapshot_ref",
             "contract_ref",
             "final_report_ref",
             "report_html_ref",
@@ -1214,6 +1220,8 @@ def _kernel_v2_result(
     flow = flow_result.flow_result
     status = _kernel_v2_projected_status(flow_result)
     flow_ledger_ref = flow.ledger_refs[0] if flow.ledger_refs else "kernel/missing_flow_ledger.jsonl"
+    run_events_ref = _flow_metadata_ref(flow.metadata, "run_events_ref", "kernel/missing_run_events.jsonl")
+    run_snapshot_ref = _flow_metadata_ref(flow.metadata, "run_snapshot_ref", "kernel/missing_run_snapshot.json")
     return DeepResearchKernelV2Result(
         request_id=request.request_id,
         status=status,
@@ -1221,6 +1229,8 @@ def _kernel_v2_result(
         result_ref=_outer_ref(run_ref, KERNEL_V2_RESULT_REF),
         flow_result_ref=_outer_ref(run_ref, flow_result.flow_result_ref),
         flow_ledger_ref=_outer_ref(run_ref, flow_ledger_ref),
+        run_events_ref=_outer_ref(run_ref, run_events_ref),
+        run_snapshot_ref=_outer_ref(run_ref, run_snapshot_ref),
         contract_ref=_outer_ref(run_ref, KERNEL_V2_CONTRACT_REF),
         final_report_ref=_outer_ref(run_ref, KERNEL_V2_FINAL_REPORT_REF),
         report_html_ref=_outer_ref(run_ref, KERNEL_V2_REPORT_HTML_REF),
@@ -1398,6 +1408,13 @@ def _kernel_v2_product_evidence_refs(flow_result: FlowRunResult) -> list[str]:
         }:
             refs.append(ref)
     return _dedupe_refs(refs)
+
+
+def _flow_metadata_ref(metadata: Mapping[str, Any], key: str, fallback: str) -> str:
+    value = metadata.get(key)
+    if isinstance(value, str) and value:
+        return validate_ref(value, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
+    return validate_ref(fallback, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
 
 
 def _outer_ref(run_ref: str, inner_ref: str) -> str:

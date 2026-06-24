@@ -502,6 +502,7 @@ class KernelApiTests(unittest.TestCase):
             permission_payload = _read_json(root, result.compiled.permission_manifest_ref)
             call_result_payload = _read_json(root, result.piworker_call_result_ref)
             step_record_payload = _read_json(root, result.step_record_ref)
+            context_projection_payload = _read_json(root, result.step_record.metadata["context_projection_ref"])
 
         self.assertIsInstance(result, StepRunResult)
         self.assertEqual(adapter.seen_call.call_id, "demo-flow-researcher")
@@ -510,6 +511,15 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(permission_payload, result.compiled.permission_manifest.to_dict())
         self.assertEqual(call_result_payload, result.call_result.to_dict())
         self.assertEqual(step_record_payload, result.step_record.to_dict())
+        self.assertEqual(context_projection_payload["schema_version"], "missionforge.context_view.v1")
+        self.assertEqual(context_projection_payload["role"], "executor_piworker")
+        self.assertEqual(context_projection_payload["contract_ref"], "contract/task_contract.json")
+        self.assertEqual(
+            context_projection_payload["permission_manifest_ref"],
+            "kernel/demo-flow/steps/researcher/permission_manifest.json",
+        )
+        self.assertEqual(context_projection_payload["volatile_tail"][0]["source_refs"], ["sources/source_packet.json"])
+        self.assertEqual(result.step_record.metadata["context_hash"], context_projection_payload["context_hash"])
         self.assertEqual(result.step_record.status, StepStatus.COMPLETED)
         self.assertEqual(result.step_record.output_refs, ["reports/final_report.md"])
         self.assertEqual(result.step_record.piworker_call_ref, "kernel/demo-flow/steps/researcher/piworker_call.json")
@@ -858,10 +868,27 @@ class KernelApiTests(unittest.TestCase):
                 FlowLedgerEvent.from_dict(payload)
                 for payload in _read_jsonl(root, result.flow_result.ledger_refs[0])
             ]
+            run_events_ref = result.flow_result.metadata["run_events_ref"]
+            run_snapshot_ref = result.flow_result.metadata["run_snapshot_ref"]
+            run_events = _read_jsonl(root, run_events_ref)
+            run_snapshot = _read_json(root, run_snapshot_ref)
 
         self.assertIsInstance(result, FlowRunResult)
         self.assertEqual(result.flow_result.status, "accepted")
         self.assertEqual(flow_result_payload, result.flow_result.to_dict())
+        self.assertIn("executions/001/observation/run_events.jsonl", run_events_ref)
+        self.assertIn("executions/001/observation/run_snapshot.json", run_snapshot_ref)
+        self.assertEqual(run_events[0]["kind"], "run_started")
+        self.assertIn("context_projected", [event["kind"] for event in run_events])
+        self.assertIn("judge_accepted", [event["kind"] for event in run_events])
+        self.assertEqual(run_events[-1]["kind"], "run_stopped")
+        self.assertEqual(run_events[-1]["status"], "accepted")
+        self.assertEqual(run_snapshot["status"], "accepted")
+        self.assertEqual(run_snapshot["flow_ledger_ref"], result.flow_result.ledger_refs[0])
+        self.assertEqual(run_snapshot["flow_result_ref"], result.flow_result_ref)
+        self.assertEqual(run_snapshot["step_record_refs"], result.flow_result.step_record_refs)
+        self.assertEqual(len(run_snapshot["context_projection_refs"]), 2)
+        self.assertEqual(run_snapshot["latest_event_ref"], run_events_ref)
         self.assertEqual(len(result.step_results), 2)
         self.assertEqual(result.flow_result.decision_refs, ["reviews/observation.json", "judge/report.json"])
         self.assertEqual(result.flow_result.ledger_refs, [result.flow_result.ledger_refs[0]])
@@ -1183,6 +1210,70 @@ class KernelApiTests(unittest.TestCase):
             ["kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json"],
         )
         self.assertEqual(interaction_event["metadata"]["event_count"], 1)
+
+    def test_run_flow_stop_after_current_turn_runs_current_step_then_blocks(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        judge = Step(
+            id="judge",
+            brief="Judge final acceptance.",
+            inputs=["reports/final_report.md", "reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reports", "reviews"],
+            write=["judge"],
+            role=PiWorkerCallRole.JUDGE,
+            route_on="judge/report.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, judge],
+            routes={
+                "reviewer.ready_for_judge": "judge",
+                "judge.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+        adapter = _KernelCountingFlowAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            port = FileInteractionPort(root)
+            port.submit_text(
+                "当前轮结束后停住。",
+                run_id="demo-flow",
+                target="flow",
+                kind=UserEventKind.STOP_AFTER_CURRENT_TURN,
+                delivery=InteractionDelivery.AFTER_CURRENT_TURN,
+            )
+            result = run_flow(flow, context=_context(), workspace=root, adapter=adapter, interaction_port=port)
+            run_events = _read_jsonl(root, result.flow_result.metadata["run_events_ref"])
+            run_snapshot = _read_json(root, result.flow_result.metadata["run_snapshot_ref"])
+            acks = port.read_acks(run_id="demo-flow")
+
+        self.assertEqual(result.flow_result.status, "blocked")
+        self.assertEqual(result.flow_result.metadata["stop_reason"], "user_stop_after_current_turn_requested")
+        self.assertEqual(adapter.call_count, 1)
+        self.assertEqual(len(result.step_results), 1)
+        self.assertEqual(len(acks), 1)
+        self.assertEqual([event["kind"] for event in run_events][-1], "run_stopped")
+        self.assertEqual(run_snapshot["status"], "blocked")
+        self.assertEqual(run_snapshot["step_record_refs"], result.flow_result.step_record_refs)
+        self.assertEqual(
+            run_snapshot["last_safe_point_ref"],
+            "kernel/demo-flow/runs/demo-flow/executions/001/interaction/safe_points/001-reviewer-user_events.json",
+        )
 
     def test_run_flow_blocks_and_sanitizes_unsafe_decision_value(self) -> None:
         reviewer = Step(

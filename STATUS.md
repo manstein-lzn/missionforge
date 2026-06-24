@@ -28,8 +28,8 @@ removing the disk-first assumption from data and context movement.
 | Kernel API | Kept as a thin developer-friendly facade over core primitives |
 | DeepResearch | Product integration; useful pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
-| Context management | Current context path is still mostly file/projection based; `ContextView` plan is next |
-| Observation/control | Basic progress and interaction safe points exist; richer inspect/debug/control plane is planned |
+| Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
+| Observation/control | Phase 4 first slice implemented: refs-only `RunEvent`, `RunSnapshot`, and safe-point `ControlPort` primitives exist |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
 ## Completed Recently
@@ -49,6 +49,25 @@ removing the disk-first assumption from data and context movement.
   - the Pi agent sidecar mounts only allowed tools and checks the gateway before
     tool effects, including direct bash command/cwd/env authorization paths;
   - extension tools are gateway-wrapped and cannot shadow core tool names.
+- Implemented Phase 3 Context View Diagnostics first slice:
+  - added refs-only `ContextSegment`, `ContextView`, `ToolObservation`, and
+    context pressure diagnostics;
+  - Kernel `run_step` writes `context_projection.json` beside the step record;
+  - step records include `context_projection_ref` and `context_hash`;
+  - diagnostics remain advisory and do not change PiWorker runtime behavior.
+- Implemented Phase 4 Observation/Control first slice:
+  - added `RunEvent`, `RunSnapshot`, `ControlPort`, and `FileControlPort`;
+  - Kernel `run_flow` writes execution-scoped `observation/run_events.jsonl`
+    and `observation/run_snapshot.json`;
+  - pause/cancel/revision requests stop at safe points; `stop_after_current_turn`
+    lets the current step finish before blocking route progression;
+  - observation state remains refs-only and does not embed user text, prompts,
+    tool bodies, provider payloads, or stdout/stderr.
+- Added minimal Kernel/DeepResearch alignment:
+  - Kernel flow results expose `run_events_ref` and `run_snapshot_ref` through
+    metadata;
+  - DeepResearch result packages surface those refs for product UIs and debug
+    tools without moving research semantics into core.
 
 ## In Progress
 
@@ -56,25 +75,22 @@ removing the disk-first assumption from data and context movement.
   - broader storage integration after hard gates
   - context projection over versioned artifact refs
   - runtime adoption without changing product integration semantics
-- Define context management primitives:
-  - `ContextSegment`
-  - `ContextView`
-  - stable prefix / semi-stable context / volatile tail
-  - tool observation demotion and compaction rules
-- Define observation and control interfaces:
-  - event stream
-  - run snapshot
-  - safe-point intervention
-  - debug stepping
+- Harden context and observation adoption:
+  - express more existing refs as `ArtifactRecord`;
+  - pass richer context diagnostics through runtime/provider observations;
+  - add debug stepping and replay helpers for fixture flows;
+  - teach product UIs to consume `RunSnapshot` and `RunEvent` directly.
 
 ## Next Milestones
 
 1. Keep `ReadGate`, `WriteGate`, and `ToolGateway` in front of all new storage
    behavior.
-2. Add `ContextView` diagnostics without changing PiWorker behavior yet.
-3. Upgrade Kernel API to compile steps against the new data/context primitives.
-4. Use DeepResearch only as an integration pressure test after core boundaries
-   are proven.
+2. Adopt `ArtifactRecord` in more existing step/output refs without weakening
+   filesystem compatibility.
+3. Add minimal debug/inspect hooks over Kernel runs using `RunSnapshot` and
+   existing flow ledger refs.
+4. Use DeepResearch only as an integration pressure test while keeping prompts,
+   rubrics, source tools, and report contracts in the integration package.
 
 ## Guardrails
 
@@ -101,7 +117,7 @@ cd workers/pi-agent-runtime && npm test
 
 Observed results:
 
-- Artifact/public API focused tests: 15 run, OK.
-- Core tests: 232 run, OK, 1 skipped.
+- Context/observation/public API focused tests: 18 run, OK.
+- Core tests: 245 run, OK, 1 skipped.
 - DeepResearch integration tests: 45 run, OK.
-- Pi agent runtime tests: 88 passed.
+- Pi agent runtime tests: 11 node test files, OK.

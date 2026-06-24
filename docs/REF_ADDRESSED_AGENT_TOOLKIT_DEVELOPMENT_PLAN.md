@@ -286,6 +286,8 @@ boundaries.
 
 ## Workstream 4: Context Plane
 
+Status: Phase 3 first slice implemented on 2026-06-24.
+
 ### Objective
 
 Replace ad hoc file concatenation with role-specific, permission-aware,
@@ -293,16 +295,22 @@ cache-friendly context projection.
 
 ### Deliverables
 
-1. Add `ContextSegment`.
-2. Add `ContextView`.
-3. Split provider-facing context into:
+1. Done for first slice: add `ContextSegment`.
+2. Done for first slice: add `ContextView`.
+3. Done for first slice: split diagnostic context into:
    - `stable_prefix`
    - `semi_stable_context`
    - `volatile_tail`
    - `omitted_segments`
-4. Add context projection diagnostics.
-5. Add tool observation demotion policy.
-6. Add context pressure safe-point policy.
+4. Done for first slice: add context projection diagnostics.
+5. Done for first slice: add tool observation demotion policy.
+6. Done for first slice: add context pressure safe-point policy.
+
+Current integration:
+
+- Kernel `run_step` writes a refs-only `context_projection.json`.
+- Step records include `context_projection_ref` and `context_hash`.
+- Runtime behavior and provider-facing prompts are not changed by this slice.
 
 ### Rules
 
@@ -323,6 +331,8 @@ cache-friendly context projection.
 
 ## Workstream 5: Observation And Control Plane
 
+Status: Phase 4 first slice implemented on 2026-06-24.
+
 ### Objective
 
 Make MissionForge transparent, debuggable, interruptible at safe points, and
@@ -330,20 +340,19 @@ usable as an embedded subsystem.
 
 ### Deliverables
 
-1. Add structured `RunEvent` records for key boundaries:
-   - contract frozen;
+1. Done for first slice: add structured `RunEvent` records for Kernel
+   boundaries:
+   - run started;
    - step compiled;
    - context projected;
-   - sandbox started;
-   - tool requested / allowed / denied;
-   - artifact committed;
    - route decided;
    - safe point reached;
+   - user intervention received;
    - step completed;
    - judge accepted/rejected;
    - run stopped.
-2. Add `RunSnapshot`.
-3. Add `ControlPort` operations:
+2. Done for first slice: add `RunSnapshot`.
+3. Done for first slice: add `ControlPort` operations:
    - pause;
    - cancel;
    - inject message;
@@ -351,13 +360,23 @@ usable as an embedded subsystem.
    - resume;
    - stop after current turn;
    - force checkpoint.
-4. Add debug stepping support:
+4. Deferred: add debug stepping support:
    - compile next step;
    - inspect permissions;
    - inspect context;
    - run next step;
    - route next;
    - replay from artifact boundary.
+
+Current integration:
+
+- Kernel `run_flow` writes execution-scoped
+  `observation/run_events.jsonl` and `observation/run_snapshot.json`.
+- Flow result metadata includes `run_events_ref` and `run_snapshot_ref`.
+- `stop_after_current_turn` lets the visible step run and then blocks before
+  route progression.
+- User text remains in the interaction plane; observation records only carry
+  refs, counts, ids, status, phase, and safe metadata.
 
 ### Rules
 
@@ -487,6 +506,8 @@ Exit criteria:
 
 ### Phase 3: Context View Diagnostics
 
+Status: first slice implemented on 2026-06-24.
+
 Deliverables:
 
 - `ContextSegment`;
@@ -503,6 +524,8 @@ Exit criteria:
 
 ### Phase 4: Observation And Control
 
+Status: first slice implemented on 2026-06-24.
+
 Deliverables:
 
 - structured event stream;
@@ -512,23 +535,28 @@ Deliverables:
 
 Exit criteria:
 
-- host applications can observe and control runs without parsing raw logs;
-- interruption remains safe-point based unless a future runtime explicitly
-  supports stronger cancellation.
+- done for first slice: host applications can observe Kernel runs through
+  `RunEvent` and `RunSnapshot` without parsing raw logs;
+- done for first slice: interruption remains safe-point based;
+- deferred: fixture-flow debug stepping.
 
 ### Phase 5: Kernel And Product Migration
 
+Status: first alignment slice implemented on 2026-06-24.
+
 Deliverables:
 
-- Kernel API compiles against the new primitives;
-- DeepResearch consumes new diagnostics/events;
+- done for first slice: Kernel API writes `ContextView` diagnostics and
+  observation refs without becoming a scheduler or semantic router;
+- done for first slice: DeepResearch result packages expose Kernel
+  `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.
 
 Exit criteria:
 
-- DeepResearch remains a thin product integration;
-- core package remains product-neutral;
-- public API remains small and defensible.
+- done for first slice: DeepResearch remains a thin product integration;
+- done for first slice: core package remains product-neutral;
+- still open: docs and cookbook for host-Python orchestration patterns.
 
 ## Explicit Non-Goals For This Branch
 

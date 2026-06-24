@@ -8,9 +8,18 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..contracts import ContractValidationError, stable_json_hash, validate_ref
+from ..context import build_call_context_view
 from ..evidence_store import EvidenceLedger
 from ..extensions import ExtensionLock
 from ..interaction import FileInteractionPort, InteractionDelivery, UserEvent, UserEventKind
+from ..observation import (
+    RunEvent,
+    RunEventKind,
+    RunSnapshotStatus,
+    append_run_event,
+    latest_run_snapshot,
+    write_run_snapshot,
+)
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallResultStatus
 from ..piworker_progress import PiWorkerProgressSink
 from ..piworker_runtime import PiWorkerCallAdapter, run_piworker_call
@@ -114,6 +123,38 @@ class _PiWorkerAttemptResult:
 FlowEventSink = Callable[[FlowLedgerEvent], None]
 
 
+@dataclass
+class _RunObservationRecorder:
+    workspace: str | Path
+    events_ref: str
+    run_id: str
+    count: int = 0
+
+    def emit(
+        self,
+        *,
+        kind: RunEventKind,
+        status: str = "",
+        step_id: str = "",
+        role: str = "",
+        refs: list[str] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.count += 1
+        _append_run_observation_event(
+            self.workspace,
+            events_ref=self.events_ref,
+            run_id=self.run_id,
+            sequence=self.count,
+            kind=kind,
+            status=status,
+            step_id=step_id,
+            role=role,
+            refs=refs or [],
+            metadata=metadata or {},
+        )
+
+
 def run_step(
     step: Step,
     *,
@@ -141,12 +182,25 @@ def run_step(
     piworker_call_ref = f"{ref_prefix}/piworker_call.json"
     piworker_call_result_ref = f"{ref_prefix}/piworker_call_result.json"
     step_record_ref = f"{ref_prefix}/step_record.json"
+    context_projection_ref = f"{ref_prefix}/context_projection.json"
 
     write_json_ref(workspace, step_spec_ref, step.to_dict())
     write_json_ref(workspace, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
     write_json_ref(workspace, piworker_call_ref, compiled.piworker_call.to_dict())
     input_hashes = hash_refs(workspace, step.inputs)
     permission_manifest_hash = stable_json_hash(compiled.permission_manifest.to_dict())
+    context_view = build_call_context_view(
+        view_id=f"{compiled.piworker_call.call_id}-context",
+        role=compiled.piworker_call.role.value,
+        contract_ref=compiled.piworker_call.contract_ref,
+        contract_hash=compiled.piworker_call.contract_hash,
+        permission_manifest_ref=compiled.permission_manifest_ref,
+        visible_refs=list(compiled.piworker_call.visible_refs),
+        expected_output_refs=list(compiled.piworker_call.expected_output_refs),
+        evidence_refs=list(compiled.piworker_call.evidence_refs),
+        diagnostics_ref=context_projection_ref,
+    )
+    write_json_ref(workspace, context_projection_ref, context_view.to_dict())
     skip_lock_ref = _expected_extension_lock_ref(
         compiled=compiled,
         ref_prefix=ref_prefix,
@@ -164,6 +218,8 @@ def run_step(
             piworker_call_result_ref=piworker_call_result_ref,
             input_hashes=input_hashes,
             permission_manifest_hash=permission_manifest_hash,
+            context_projection_ref=context_projection_ref,
+            context_hash=context_view.context_hash,
             extension_lock_ref=skip_lock_ref,
             extension_lock_hash=skip_lock_hash,
         )
@@ -227,6 +283,8 @@ def run_step(
             "retry_exhausted": call_result.status != PiWorkerCallResultStatus.COMPLETED,
             "runtime_refs": list(call_result.runtime_refs),
             "evidence_refs": list(call_result.evidence_refs),
+            "context_projection_ref": context_projection_ref,
+            "context_hash": context_view.context_hash,
             **_call_result_diagnostic_metadata(call_result),
         },
     )
@@ -456,7 +514,31 @@ def run_flow(
     flow_run_prefix = f"kernel/{context.flow_id}/runs/{run_id}/executions/{execution_id}"
     flow_ledger_ref = f"{flow_run_prefix}/flow_ledger.jsonl"
     flow_result_ref = f"{flow_run_prefix}/flow_result.json"
+    run_events_ref = f"{flow_run_prefix}/observation/run_events.jsonl"
+    run_snapshot_ref = f"{flow_run_prefix}/observation/run_snapshot.json"
     ledger_events: list[FlowLedgerEvent] = []
+    observation = _RunObservationRecorder(workspace=workspace, events_ref=run_events_ref, run_id=run_id)
+    observation.emit(
+        kind=RunEventKind.RUN_STARTED,
+        status="running",
+        refs=[context.contract_ref],
+        metadata={"max_steps": limit, "flow_execution_id": execution_id},
+    )
+    _write_kernel_run_snapshot(
+        workspace,
+        snapshot_ref=run_snapshot_ref,
+        events_ref=run_events_ref,
+        run_id=run_id,
+        status="running",
+        current_step=current,
+        interaction_port=interaction_port,
+        flow_ledger_ref=flow_ledger_ref,
+        flow_result_ref=flow_result_ref,
+        step_record_refs=[],
+        final_artifact_refs=[],
+        last_safe_point_ref="",
+        metadata={"flow_execution_id": execution_id, "phase": "started"},
+    )
     _append_flow_ledger_event(
         ledger_events,
         _flow_ledger_event(
@@ -474,6 +556,8 @@ def run_flow(
     step_record_refs: list[str] = []
     decision_refs: list[str] = []
     final_artifact_refs: list[str] = []
+    context_projection_refs: list[str] = []
+    last_safe_point_ref = ""
     status = "failed"
     stop_reason = "unknown"
 
@@ -487,6 +571,45 @@ def run_flow(
                 step_id=current.id,
                 step_index=index,
                 ref_prefix=f"{flow_run_prefix}/interaction/safe_points",
+            )
+            if interaction_snapshot_ref:
+                last_safe_point_ref = interaction_snapshot_ref
+            observation.emit(
+                kind=RunEventKind.SAFE_POINT_REACHED,
+                status="running",
+                step_id=current.id,
+                role=current.role.value,
+                refs=[interaction_snapshot_ref] if interaction_snapshot_ref else [],
+                metadata={"step_index": index, "pending_user_event_count": len(interaction_snapshot_events)},
+            )
+            if interaction_snapshot_events:
+                observation.emit(
+                    kind=RunEventKind.USER_INTERVENTION_RECEIVED,
+                    status="running",
+                    step_id=current.id,
+                    role=current.role.value,
+                    refs=[interaction_snapshot_ref] if interaction_snapshot_ref else [],
+                    metadata={
+                        "step_index": index,
+                        "event_count": len(interaction_snapshot_events),
+                        "event_ids": [event.event_id for event in interaction_snapshot_events],
+                    },
+                )
+            _write_kernel_run_snapshot(
+                workspace,
+                snapshot_ref=run_snapshot_ref,
+                events_ref=run_events_ref,
+                run_id=run_id,
+                status="running",
+                current_step=current,
+                interaction_port=interaction_port,
+                flow_ledger_ref=flow_ledger_ref,
+                flow_result_ref=flow_result_ref,
+                step_record_refs=step_record_refs,
+                final_artifact_refs=final_artifact_refs,
+                context_projection_refs=context_projection_refs,
+                last_safe_point_ref=interaction_snapshot_ref,
+                metadata={"flow_execution_id": execution_id, "phase": "safe_point", "step_index": index},
             )
             interaction_stop = _interaction_stop_decision(interaction_snapshot_events)
             if interaction_stop is not None:
@@ -520,6 +643,14 @@ def run_flow(
             denied_refs=context.denied_refs,
             ref_prefix=f"kernel/{context.flow_id}/runs/{run_id}/steps/{index:03d}-{current.id}",
             call_id=f"{context.flow_id}-{index:03d}-{current.id}",
+        )
+        observation.emit(
+            kind=RunEventKind.STEP_COMPILED,
+            status="running",
+            step_id=current.id,
+            role=current.role.value,
+            refs=[f"{step_context.ref_prefix}/step_spec.json", f"{step_context.ref_prefix}/permission_manifest.json"],
+            metadata={"step_index": index},
         )
         _append_flow_ledger_event(
             ledger_events,
@@ -576,6 +707,44 @@ def run_flow(
         step_results.append(step_result)
         step_record_refs.append(step_result.step_record_ref)
         final_artifact_refs.extend(step_result.step_record.output_refs)
+        context_projection_ref = _metadata_ref(step_result.step_record.metadata, "context_projection_ref")
+        if context_projection_ref:
+            context_projection_refs.append(context_projection_ref)
+            observation.emit(
+                kind=RunEventKind.CONTEXT_PROJECTED,
+                status=step_result.step_record.status.value,
+                step_id=current.id,
+                role=current.role.value,
+                refs=[context_projection_ref],
+                metadata={
+                    "step_index": index,
+                    "context_hash_ref": context_projection_ref,
+                },
+            )
+        observation.emit(
+            kind=RunEventKind.STEP_COMPLETED,
+            status=step_result.step_record.status.value,
+            step_id=current.id,
+            role=current.role.value,
+            refs=[step_result.step_record_ref, *step_result.step_record.output_refs],
+            metadata={"step_index": index},
+        )
+        _write_kernel_run_snapshot(
+            workspace,
+            snapshot_ref=run_snapshot_ref,
+            events_ref=run_events_ref,
+            run_id=run_id,
+            status="running",
+            current_step=current,
+            interaction_port=interaction_port,
+            flow_ledger_ref=flow_ledger_ref,
+            flow_result_ref=flow_result_ref,
+            step_record_refs=step_record_refs,
+            final_artifact_refs=final_artifact_refs,
+            context_projection_refs=context_projection_refs,
+            last_safe_point_ref=interaction_snapshot_ref,
+            metadata={"flow_execution_id": execution_id, "phase": "step_completed", "step_index": index},
+        )
         _append_flow_ledger_event(
             ledger_events,
             _flow_ledger_event(
@@ -602,6 +771,10 @@ def run_flow(
                 snapshot_ref=interaction_snapshot_ref,
                 step_record_ref=step_result.step_record_ref,
             )
+        if _stop_after_current_turn_requested(interaction_snapshot_events):
+            status = "blocked"
+            stop_reason = "user_stop_after_current_turn_requested"
+            break
         if current.route_on is None:
             status = "completed"
             stop_reason = "step_without_route"
@@ -612,6 +785,14 @@ def run_flow(
         except (OSError, json.JSONDecodeError, ContractValidationError, KernelValidationError) as exc:
             status = "blocked"
             stop_reason = "invalid_decision_artifact"
+            observation.emit(
+                kind=RunEventKind.ROUTE_DECIDED,
+                status=status,
+                step_id=current.id,
+                role=current.role.value,
+                refs=[current.route_on],
+                metadata={"route_target": "blocked", "route_value": "invalid", "stop_reason": stop_reason},
+            )
             _append_flow_ledger_event(
                 ledger_events,
                 _flow_ledger_event(
@@ -637,6 +818,14 @@ def run_flow(
         if target is None:
             status = "blocked"
             stop_reason = "unrouted_decision"
+            observation.emit(
+                kind=RunEventKind.ROUTE_DECIDED,
+                status=status,
+                step_id=current.id,
+                role=current.role.value,
+                refs=[current.route_on],
+                metadata={"route_target": "unrouted", "route_value": route_value, "stop_reason": stop_reason},
+            )
             _append_flow_ledger_event(
                 ledger_events,
                 _flow_ledger_event(
@@ -657,6 +846,14 @@ def run_flow(
         if isinstance(target, FlowStop):
             status = target.status
             stop_reason = "terminal_route"
+            observation.emit(
+                kind=_terminal_route_event_kind(status),
+                status=status,
+                step_id=current.id,
+                role=current.role.value,
+                refs=[current.route_on],
+                metadata={"route_target": target.status, "route_value": route_value, "stop_reason": stop_reason},
+            )
             _append_flow_ledger_event(
                 ledger_events,
                 _flow_ledger_event(
@@ -674,6 +871,14 @@ def run_flow(
                 event_sink=event_sink,
             )
             break
+        observation.emit(
+            kind=RunEventKind.ROUTE_DECIDED,
+            status="running",
+            step_id=current.id,
+            role=current.role.value,
+            refs=[current.route_on],
+            metadata={"route_target": target, "route_value": route_value},
+        )
         _append_flow_ledger_event(
             ledger_events,
             _flow_ledger_event(
@@ -733,6 +938,28 @@ def run_flow(
         ),
         event_sink=event_sink,
     )
+    observation.emit(
+        kind=RunEventKind.RUN_STOPPED,
+        status=status,
+        refs=[flow_result_ref, *step_record_refs, *decision_refs],
+        metadata={"stop_reason": stop_reason, "flow_execution_id": execution_id},
+    )
+    _write_kernel_run_snapshot(
+        workspace,
+        snapshot_ref=run_snapshot_ref,
+        events_ref=run_events_ref,
+        run_id=run_id,
+        status=_snapshot_status(status, stop_reason),
+        current_step=current if status not in {"accepted", "completed"} else None,
+        interaction_port=interaction_port,
+        flow_ledger_ref=flow_ledger_ref,
+        flow_result_ref=flow_result_ref,
+        step_record_refs=step_record_refs,
+        final_artifact_refs=final_artifact_refs,
+        context_projection_refs=context_projection_refs,
+        last_safe_point_ref=last_safe_point_ref,
+        metadata={"flow_execution_id": execution_id, "phase": "stopped", "stop_reason": stop_reason},
+    )
     write_jsonl_ref(workspace, flow_ledger_ref, [event.to_dict() for event in ledger_events])
 
     flow_result = FlowResult(
@@ -751,6 +978,8 @@ def run_flow(
             "flow_execution_id": execution_id,
             "projection_count": len(projection_results),
             "stop_reason": stop_reason,
+            "run_events_ref": run_events_ref,
+            "run_snapshot_ref": run_snapshot_ref,
         },
     )
     write_json_ref(workspace, flow_result_ref, flow_result.to_dict())
@@ -835,6 +1064,108 @@ def _interaction_stop_decision(events: list[UserEvent]) -> tuple[str, str] | Non
         if event.kind is UserEventKind.CONTRACT_REVISION_REQUEST:
             return "blocked", "user_contract_revision_requested"
     return None
+
+
+def _stop_after_current_turn_requested(events: list[UserEvent]) -> bool:
+    return any(
+        event.kind is UserEventKind.STOP_AFTER_CURRENT_TURN
+        and event.delivery in {InteractionDelivery.AFTER_CURRENT_TURN, InteractionDelivery.NEXT_SAFE_POINT}
+        for event in events
+    )
+
+
+def _append_run_observation_event(
+    workspace: str | Path,
+    *,
+    events_ref: str,
+    run_id: str,
+    sequence: int,
+    kind: RunEventKind,
+    status: str = "",
+    step_id: str = "",
+    role: str = "",
+    refs: list[str] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    event = RunEvent.create(
+        event_id=f"{sequence:06d}-{kind.value}",
+        run_id=run_id,
+        kind=kind,
+        status=status,
+        step_id=step_id,
+        role=role,
+        refs=_dedupe_refs(refs or []),
+        metadata=metadata or {},
+    )
+    append_run_event(workspace, event, events_ref=events_ref)
+
+
+def _write_kernel_run_snapshot(
+    workspace: str | Path,
+    *,
+    snapshot_ref: str,
+    events_ref: str,
+    run_id: str,
+    status: RunSnapshotStatus | str,
+    current_step: Step | None,
+    interaction_port: FileInteractionPort | None,
+    flow_ledger_ref: str,
+    flow_result_ref: str,
+    step_record_refs: list[str],
+    final_artifact_refs: list[str],
+    context_projection_refs: list[str] | None = None,
+    last_safe_point_ref: str = "",
+    metadata: Mapping[str, Any] | None = None,
+) -> None:
+    snapshot = latest_run_snapshot(
+        run_id=run_id,
+        status=status,
+        workspace=workspace,
+        events_ref=events_ref,
+        current_step_id=current_step.id if current_step is not None else "",
+        current_role=current_step.role.value if current_step is not None else "",
+        interaction_port=interaction_port,
+        target=current_step.id if current_step is not None else "flow",
+        flow_ledger_ref=flow_ledger_ref,
+        flow_result_ref=flow_result_ref,
+        last_safe_point_ref=last_safe_point_ref,
+        step_record_refs=list(step_record_refs),
+        context_projection_refs=list(context_projection_refs or []),
+        artifact_refs=_dedupe_refs(final_artifact_refs),
+        metadata=metadata or {},
+    )
+    write_run_snapshot(workspace, snapshot, snapshot_ref=snapshot_ref)
+
+
+def _snapshot_status(status: str, stop_reason: str = "") -> RunSnapshotStatus:
+    if status == "accepted":
+        return RunSnapshotStatus.ACCEPTED
+    if status == "rejected":
+        return RunSnapshotStatus.REJECTED
+    if status == "completed":
+        return RunSnapshotStatus.COMPLETED
+    if status == "failed":
+        return RunSnapshotStatus.FAILED
+    if status == "blocked":
+        if stop_reason == "user_pause_requested":
+            return RunSnapshotStatus.PAUSED
+        return RunSnapshotStatus.BLOCKED
+    return RunSnapshotStatus.RUNNING
+
+
+def _terminal_route_event_kind(status: str) -> RunEventKind:
+    if status == "accepted":
+        return RunEventKind.JUDGE_ACCEPTED
+    if status == "rejected":
+        return RunEventKind.JUDGE_REJECTED
+    return RunEventKind.ROUTE_DECIDED
+
+
+def _metadata_ref(metadata: Mapping[str, Any], key: str) -> str:
+    value = metadata.get(key)
+    if not isinstance(value, str) or not value:
+        return ""
+    return validate_ref(value, f"kernel_step_record.metadata.{key}")
 
 
 def _append_flow_ledger_event(
@@ -927,6 +1258,8 @@ def _skip_result_if_current(
     piworker_call_result_ref: str,
     input_hashes: Mapping[str, str],
     permission_manifest_hash: str,
+    context_projection_ref: str,
+    context_hash: str,
     extension_lock_ref: str | None,
     extension_lock_hash: str | None,
 ) -> StepRunResult | None:
@@ -982,6 +1315,8 @@ def _skip_result_if_current(
             "skip_reason": skip_reason,
             "resumed_from_step_record_ref": step_record_ref,
             "recovered_from_step_status": existing.status.value if record_status_recovered else "",
+            "context_projection_ref": context_projection_ref,
+            "context_hash": context_hash,
         },
     )
     skipped_record_ref = _skip_record_ref(workspace, step_record_ref)
