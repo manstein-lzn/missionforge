@@ -25,7 +25,7 @@ from ..contracts import (
     validate_ref,
 )
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
-from ..permissions import PermissionEnforcer
+from ..permissions import PermissionEnforcer, WriteGate
 from ..piworker_progress import PiWorkerProgressBridge, PiWorkerProgressSink
 from ..piworker_call import PiWorkerCall
 from ..runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
@@ -1497,6 +1497,7 @@ def _runtime_permission_manifest_for_call(
         "readable_refs": readable_refs,
         "writable_refs": _dedupe_refs(list(call.writable_refs)),
         "denied_refs": [],
+        "allowed_tools": ["read", "write", "edit"],
         "allowed_commands": [],
         "network_policy": "disabled",
         "env_allowlist": [],
@@ -1543,6 +1544,7 @@ def _runtime_authority_payloads(
         readable_refs=list(manifest.readable_refs),
         writable_refs=list(manifest.writable_refs),
         denied_refs=list(manifest.denied_refs),
+        allowed_tools=list(manifest.allowed_tools),
         network_enabled=manifest.network_policy.value == "enabled",
         env_allowlist=list(manifest.env_allowlist),
         command_allowlist=list(manifest.allowed_commands),
@@ -1590,6 +1592,7 @@ def _validate_runtime_authority(
     _require_same_refs(sandbox_profile.readable_refs, permission_manifest.readable_refs, "sandbox_profile.readable_refs")
     _require_same_refs(sandbox_profile.writable_refs, permission_manifest.writable_refs, "sandbox_profile.writable_refs")
     _require_same_refs(sandbox_profile.denied_refs, permission_manifest.denied_refs, "sandbox_profile.denied_refs")
+    _require_same_strings(sandbox_profile.allowed_tools, permission_manifest.allowed_tools, "sandbox_profile.allowed_tools")
     if sandbox_profile.command_allowlist != permission_manifest.allowed_commands:
         raise ContractValidationError("sandbox_profile.command_allowlist must match permission_manifest.allowed_commands")
     if sandbox_profile.env_allowlist != permission_manifest.env_allowlist:
@@ -1603,6 +1606,12 @@ def _validate_runtime_authority(
             enforcer.ensure_read(ref)
         except ContractValidationError as exc:
             raise ContractValidationError(f"pi_agent_runtime visible ref is not readable by permission_manifest: {ref}") from exc
+    write_gate = WriteGate(permission_manifest)
+    for ref in _dedupe_refs([*call.writable_refs, *call.expected_output_refs, *call_spec.allowed_scope, *call_spec.expected_outputs]):
+        try:
+            write_gate.authorize(ref, writer_role=call.role.value)
+        except ContractValidationError as exc:
+            raise ContractValidationError(f"pi_agent_runtime output ref is not writable by permission_manifest: {ref}") from exc
 
 
 def _validate_call_spec_for_call(spec: PiAgentCallSpec, call: PiWorkerCall) -> None:
@@ -1621,6 +1630,13 @@ def _require_same_refs(actual: list[str], expected: list[str], field_name: str) 
     _validate_ref_list(expected, field_name)
     if set(actual) != set(expected):
         raise ContractValidationError(f"{field_name} must match PiWorkerCall refs")
+
+
+def _require_same_strings(actual: list[str], expected: list[str], field_name: str) -> None:
+    require_str_list(actual, field_name)
+    require_str_list(expected, field_name)
+    if set(actual) != set(expected):
+        raise ContractValidationError(f"{field_name} must match permission_manifest")
 
 
 def _require_ratio(value: Any, field_name: str) -> float:

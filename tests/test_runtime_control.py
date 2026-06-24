@@ -38,6 +38,7 @@ def sample_manifest() -> PermissionManifest:
             "readable_refs": ["inputs", "contract"],
             "writable_refs": ["artifacts"],
             "denied_refs": ["inputs/private", "artifacts/secrets"],
+            "allowed_tools": ["read", "write", "edit", "bash"],
             "allowed_commands": ["python3 -m unittest"],
             "network_policy": "disabled",
             "env_allowlist": ["PATH"],
@@ -192,6 +193,7 @@ class RuntimeControlTests(unittest.TestCase):
                 "manifest_id": "perm-002",
                 "readable_refs": ["inputs"],
                 "writable_refs": ["artifacts"],
+                "allowed_tools": ["read", "write", "edit", "bash"],
                 "allowed_commands": ["python3 fetch.py"],
                 "network_policy": NetworkPolicy.ENABLED.value,
             }
@@ -214,6 +216,37 @@ class RuntimeControlTests(unittest.TestCase):
         )
 
         self.assertTrue(result.allowed)
+
+    def test_gateway_rejects_bash_when_tool_is_not_allowlisted(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-003",
+                "readable_refs": ["inputs"],
+                "writable_refs": ["artifacts"],
+                "allowed_tools": ["read", "write", "edit"],
+                "allowed_commands": ["python3 fetch.py"],
+                "network_policy": NetworkPolicy.ENABLED.value,
+            }
+        )
+        profile = create_sandbox_profile_from_workspace(
+            "network-sandbox",
+            workspace_policy=sample_workspace_policy(),
+            permission_manifest=manifest,
+        )
+
+        result = ToolGateway(HostSandboxRunner()).dispatch(
+            ToolGatewayRequest(
+                request_id="req-bash-denied",
+                grant=sample_grant(),
+                tool_name="bash",
+                args={"command": "python3 fetch.py", "network": True},
+            ),
+            workspace=Path("."),
+            sandbox_profile=profile,
+        )
+
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.decision, "tool_denied")
 
 
 if __name__ == "__main__":

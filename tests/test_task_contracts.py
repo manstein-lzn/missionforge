@@ -173,6 +173,7 @@ class TaskContractTests(unittest.TestCase):
                 "workspace_policy_ref": "contract/workspace_policy.json",
                 "readable_roots": ["inputs", "contract"],
                 "writable_roots": ["artifacts"],
+                "allowed_tools": ["read", "write", "edit"],
                 "executable_commands": ["python3 -m pytest"],
                 "network_policy": "disabled",
                 "environment_allowlist": ["PATH"],
@@ -186,8 +187,8 @@ class TaskContractTests(unittest.TestCase):
                 {
                     "schema_version": PERMISSION_MANIFEST_SCHEMA_VERSION,
                     "manifest_id": "perm-001",
-                    "workspace_policy_ref": "../contract/workspace_policy.json",
-                }
+                "workspace_policy_ref": "../contract/workspace_policy.json",
+            }
         )
 
     def test_task_contract_revision_requires_explicit_hash_change(self) -> None:

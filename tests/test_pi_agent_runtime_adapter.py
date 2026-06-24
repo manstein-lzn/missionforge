@@ -204,6 +204,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                         "readable_refs": ["other/input.json"],
                         "writable_refs": ["package"],
                         "denied_refs": [],
+                        "allowed_tools": ["read", "write", "edit"],
                         "allowed_commands": [],
                         "network_policy": "disabled",
                         "env_allowlist": [],
@@ -287,6 +288,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             )
             self.assertEqual(input_payload["permission_manifest"]["schema_version"], "permission_manifest.v1")
             self.assertEqual(input_payload["permission_manifest"]["writable_refs"], ["package"])
+            self.assertEqual(input_payload["permission_manifest"]["allowed_tools"], ["read", "write", "edit"])
             self.assertEqual(input_payload["permission_manifest"]["allowed_commands"], [])
             self.assertEqual(input_payload["capability_grant"]["schema_version"], "runtime_capability_grant.v1")
             self.assertEqual(input_payload["capability_grant"]["role"], "executor_piworker")

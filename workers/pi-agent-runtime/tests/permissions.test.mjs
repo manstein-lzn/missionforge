@@ -71,6 +71,7 @@ test("sandbox profile narrows the effective tool boundary", async () => {
         readable_refs: ["inputs"],
         writable_refs: ["outputs"],
         denied_refs: [],
+        allowed_tools: ["read", "write", "edit"],
       }),
       sandboxProfile: {
         schema_version: "sandbox_profile.v1",
@@ -105,6 +106,95 @@ test("sandbox profile narrows the effective tool boundary", async () => {
   });
 });
 
+test("sandbox profile can explicitly deny all tools", async () => {
+  await withWorkspace(async (root) => {
+    const tools = await createMissionForgeTools({
+      workspaceRoot: root,
+      permissionManifest: samplePermissionManifest({
+        readable_refs: ["inputs"],
+        writable_refs: ["outputs"],
+        denied_refs: [],
+        allowed_tools: ["read", "write", "edit", "bash"],
+      }),
+      sandboxProfile: {
+        schema_version: "sandbox_profile.v1",
+        profile_id: "no-tools-profile",
+        mode: "bubblewrap",
+        workspace_root_ref: "attempts/WU-000001/workspace_view",
+        readable_refs: ["inputs"],
+        writable_refs: ["outputs"],
+        denied_refs: [],
+        allowed_tools: [],
+        network_enabled: false,
+        env_allowlist: [],
+        command_allowlist: [],
+        resource_budget: {},
+      },
+      toolTimeoutSeconds: 30,
+    });
+
+    assert.deepEqual(tools.map((candidate) => candidate.name), []);
+  });
+});
+
+test("extension tools cannot shadow MissionForge core tools", async () => {
+  await withWorkspace(async (root) => {
+    await assert.rejects(
+      () => createMissionForgeTools({
+        workspaceRoot: root,
+        permissionManifest: samplePermissionManifest({
+          allowed_tools: ["read"],
+        }),
+        extensionTools: [extensionTool("read")],
+        toolTimeoutSeconds: 30,
+      }),
+      /extension tool name conflicts/,
+    );
+  });
+});
+
+test("extension tools pass through the tool gateway before execution", async () => {
+  await withWorkspace(async (root) => {
+    const decisions = [];
+    let executed = false;
+    const tools = await createMissionForgeTools({
+      workspaceRoot: root,
+      permissionManifest: samplePermissionManifest({
+        readable_refs: [],
+        writable_refs: [],
+        denied_refs: [],
+        allowed_tools: ["custom_tool"],
+      }),
+      extensionTools: [
+        extensionTool("custom_tool", async () => {
+          executed = true;
+          return {
+            content: [{ type: "text", text: "ok" }],
+            details: { ok: true },
+          };
+        }),
+      ],
+      toolTimeoutSeconds: 30,
+      onToolGatewayDecision: (decision) => decisions.push(decision),
+    });
+    const custom = tool(tools, "custom_tool");
+
+    const result = await custom.execute("custom-1", {});
+
+    assert.equal(executed, true);
+    assert.equal(result.content[0].text, "ok");
+    assert.equal(
+      decisions.some(
+        (decision) =>
+          decision.operation === "tool" &&
+          decision.tool_name === "custom_tool" &&
+          decision.status === "allowed",
+      ),
+      true,
+    );
+  });
+});
+
 test("bash tool is hidden when no command is allowed", async () => {
   await withWorkspace(async (root) => {
     const tools = await createMissionForgeTools({
@@ -127,6 +217,7 @@ test("bash requires explicit command permission and exposes only allowlisted env
           readable_refs: [],
           writable_refs: [],
           denied_refs: [],
+          allowed_tools: ["read", "write", "edit", "bash"],
           network_policy: "enabled",
         }),
         allowed_commands: [command],
@@ -169,6 +260,7 @@ test("bash runs inside ref-scoped sandbox when command is explicitly allowed", a
       workspaceRoot: root,
       permissionManifest: {
         ...samplePermissionManifest(),
+        allowed_tools: ["read", "write", "edit", "bash"],
         allowed_commands: [command],
         env_allowlist: ["PATH"],
       },
@@ -201,6 +293,7 @@ test("sandboxed bash cannot read host paths outside the workspace view", async (
             readable_refs: [],
             writable_refs: ["outputs"],
             denied_refs: [],
+            allowed_tools: ["read", "write", "edit", "bash"],
             network_policy: "enabled",
           }),
           allowed_commands: [command],
@@ -330,6 +423,7 @@ test("tool gateway records refs-first decisions without raw command or env value
           readable_refs: ["inputs"],
           writable_refs: ["outputs"],
           denied_refs: ["inputs/private"],
+          allowed_tools: ["read", "write", "edit", "bash"],
           allowed_commands: ["echo allowed-secret-text"],
           env_allowlist: ["VISIBLE_ENV"],
         }),
@@ -356,6 +450,24 @@ test("tool gateway records refs-first decisions without raw command or env value
     assert.equal(decisions.some((decision) => decision.operation === "read_path" && decision.status === "allowed"), true);
     assert.equal(decisions.some((decision) => decision.operation === "bash_command" && decision.status === "denied"), true);
     assert.equal(decisions.some((decision) => decision.operation === "env" && decision.env_names.includes("VISIBLE_ENV")), true);
+  });
+});
+
+test("tool gateway rejects direct bash authorization unless bash is allowlisted", async () => {
+  await withWorkspace(async (root) => {
+    const gateway = new ToolGateway({
+      workspaceRoot: root,
+      permissionManifest: {
+        ...samplePermissionManifest({
+          allowed_commands: ["echo allowed"],
+        }),
+      },
+    });
+
+    assert.throws(
+      () => gateway.authorizeCommand("echo allowed"),
+      /allowed_tools/,
+    );
   });
 });
 
@@ -391,6 +503,7 @@ function samplePermissionManifest(overrides = {}) {
     readable_refs: ["inputs"],
     writable_refs: ["outputs"],
     denied_refs: ["inputs/private", "outputs/private"],
+    allowed_tools: ["read", "write", "edit"],
     allowed_commands: [],
     network_policy: "disabled",
     env_allowlist: [],
@@ -412,4 +525,21 @@ function restoreEnv(name, previous) {
   } else {
     process.env[name] = previous;
   }
+}
+
+function extensionTool(name, execute = async () => ({
+  content: [{ type: "text", text: "extension ok" }],
+  details: {},
+})) {
+  return {
+    name,
+    label: name,
+    description: `${name} test extension tool`,
+    parameters: {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    },
+    execute,
+  };
 }

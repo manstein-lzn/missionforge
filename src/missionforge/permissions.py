@@ -9,11 +9,21 @@ from .contracts import ContractValidationError, require_non_empty_str, require_s
 from .task_contract import NetworkPolicy, PermissionManifest
 
 
+DEFAULT_RUNTIME_OWNED_REF_ROOTS = (
+    "contract",
+    "kernel",
+    "policy",
+    "projections",
+    "runtime",
+)
+
+
 class PermissionOperation(StrEnum):
     """Operations checked by the permission layer."""
 
     READ = "read"
     WRITE = "write"
+    TOOL = "tool"
     COMMAND = "command"
     NETWORK = "network"
     HARD_POLICY = "hard_policy"
@@ -28,6 +38,7 @@ class PermissionDecision:
     reason: str
     ref: str | None = None
     matched_ref: str | None = None
+    tool_name: str | None = None
     command: str | None = None
     unsupported_policy_names: list[str] = field(default_factory=list)
 
@@ -41,6 +52,8 @@ class PermissionDecision:
             validate_ref(self.ref, "permission_decision.ref")
         if self.matched_ref is not None:
             validate_ref(self.matched_ref, "permission_decision.matched_ref")
+        if self.tool_name is not None:
+            require_non_empty_str(self.tool_name, "permission_decision.tool_name")
         if self.command is not None:
             require_non_empty_str(self.command, "permission_decision.command")
         require_str_list(self.unsupported_policy_names, "permission_decision.unsupported_policy_names")
@@ -53,6 +66,7 @@ class PermissionDecision:
             "reason": self.reason,
             "ref": self.ref,
             "matched_ref": self.matched_ref,
+            "tool_name": self.tool_name,
             "command": self.command,
             "unsupported_policy_names": list(self.unsupported_policy_names),
         }
@@ -71,11 +85,38 @@ class PermissionEnforcer:
     def check_write(self, ref: str) -> PermissionDecision:
         return self._check_ref(PermissionOperation.WRITE, ref, self.manifest.writable_refs)
 
+    def check_tool(self, tool_name: str) -> PermissionDecision:
+        normalized = require_non_empty_str(tool_name, "permission.tool_name")
+        candidates = _tool_name_candidates(normalized)
+        for candidate in candidates:
+            if candidate in self.manifest.allowed_tools:
+                return PermissionDecision(
+                    allowed=True,
+                    operation=PermissionOperation.TOOL,
+                    tool_name=normalized,
+                    reason="tool explicitly allowed",
+                )
+        return PermissionDecision(
+            allowed=False,
+            operation=PermissionOperation.TOOL,
+            tool_name=normalized,
+            reason="tool is not in allowed_tools",
+        )
+
     def ensure_read(self, ref: str) -> str:
         return self._ensure_allowed(self.check_read(ref))
 
     def ensure_write(self, ref: str) -> str:
         return self._ensure_allowed(self.check_write(ref))
+
+    def ensure_tool(self, tool_name: str) -> str:
+        decision = self.check_tool(tool_name)
+        decision.validate()
+        if not decision.allowed:
+            raise ContractValidationError(f"permission denied for {tool_name}: {decision.reason}")
+        if decision.tool_name is None:
+            raise ContractValidationError("permission decision has no tool_name")
+        return decision.tool_name
 
     def check_command(self, command: str) -> PermissionDecision:
         normalized = require_non_empty_str(command, "permission.command")
@@ -167,11 +208,72 @@ class PermissionEnforcer:
     def _ensure_allowed(self, decision: PermissionDecision) -> str:
         decision.validate()
         if not decision.allowed:
-            target = decision.ref or decision.command or decision.operation.value
+            target = decision.ref or decision.tool_name or decision.command or decision.operation.value
             raise ContractValidationError(f"permission denied for {target}: {decision.reason}")
         if decision.ref is None:
             raise ContractValidationError("permission decision has no ref")
         return decision.ref
+
+
+@dataclass(frozen=True)
+class ReadGate:
+    """First-class read boundary over a PermissionManifest."""
+
+    manifest: PermissionManifest
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, PermissionManifest):
+            raise ContractValidationError("read_gate.manifest must be a PermissionManifest")
+        self.manifest.validate()
+
+    def check(self, ref: str) -> PermissionDecision:
+        return PermissionEnforcer(self.manifest).check_read(ref)
+
+    def authorize(self, ref: str) -> str:
+        return PermissionEnforcer(self.manifest).ensure_read(ref)
+
+    def authorize_visible_refs(self, refs: list[str]) -> list[str]:
+        return [self.authorize(ref) for ref in refs]
+
+
+@dataclass(frozen=True)
+class WriteGate:
+    """First-class write boundary over a PermissionManifest."""
+
+    manifest: PermissionManifest
+    runtime_owned_refs: tuple[str, ...] = DEFAULT_RUNTIME_OWNED_REF_ROOTS
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest, PermissionManifest):
+            raise ContractValidationError("write_gate.manifest must be a PermissionManifest")
+        self.manifest.validate()
+        for ref in self.runtime_owned_refs:
+            validate_ref(ref, "write_gate.runtime_owned_refs[]")
+
+    def check(self, ref: str, *, writer_role: str = "piworker") -> PermissionDecision:
+        safe_ref = validate_ref(ref, "write_gate.ref")
+        runtime_owned_match = first_matching_root(safe_ref, list(self.runtime_owned_refs))
+        if _is_piworker_role(writer_role) and runtime_owned_match is not None:
+            return PermissionDecision(
+                allowed=False,
+                operation=PermissionOperation.WRITE,
+                ref=safe_ref,
+                matched_ref=runtime_owned_match,
+                reason="ref is runtime-owned",
+            )
+        return PermissionEnforcer(self.manifest).check_write(safe_ref)
+
+    def authorize(self, ref: str, *, writer_role: str = "piworker") -> str:
+        decision = self.check(ref, writer_role=writer_role)
+        decision.validate()
+        if not decision.allowed:
+            raise ContractValidationError(f"permission denied for {ref}: {decision.reason}")
+        if decision.ref is None:
+            raise ContractValidationError("permission decision has no ref")
+        return decision.ref
+
+    def authorize_output_refs(self, refs: list[str], *, writer_role: str = "piworker") -> list[str]:
+        return [self.authorize(ref, writer_role=writer_role) for ref in refs]
 
 
 def first_matching_root(ref: str, root_refs: list[str]) -> str | None:
@@ -187,3 +289,22 @@ def ref_is_under(ref: str, root_ref: str) -> bool:
     safe_ref = validate_ref(ref, "permission.ref")
     safe_root = validate_ref(root_ref, "permission.root_ref")
     return safe_ref == safe_root or safe_ref.startswith(f"{safe_root}/")
+
+
+def _tool_name_candidates(tool_name: str) -> list[str]:
+    normalized = require_non_empty_str(tool_name, "permission.tool_name")
+    aliases = {
+        "read_text": "read",
+        "read_json": "read",
+        "write_text": "write",
+        "write_json": "write",
+    }
+    canonical = aliases.get(normalized)
+    if canonical is None:
+        return [normalized]
+    return [normalized, canonical]
+
+
+def _is_piworker_role(writer_role: str) -> bool:
+    normalized = require_non_empty_str(writer_role, "write_gate.writer_role")
+    return normalized == "piworker" or normalized.endswith("_piworker")

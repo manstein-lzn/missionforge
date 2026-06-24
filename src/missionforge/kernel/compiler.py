@@ -99,12 +99,14 @@ def compile_step(
     network_policy = NetworkPolicy.ENABLED if step.network or any(grant.requires_network for grant in extension_grants) else NetworkPolicy.DISABLED
     ref_prefix = context.ref_prefix or f"kernel/{context.flow_id}/steps/{step.id}"
     permission_manifest_ref = context.permission_manifest_ref or f"{ref_prefix}/permission_manifest.json"
+    allowed_tools = _allowed_tools_for_step(step, toolset_map)
     permission_manifest = PermissionManifest(
         manifest_id=f"{context.flow_id}-{step.id}-permissions",
         workspace_policy_ref=context.workspace_policy_ref,
         readable_refs=_dedupe_refs([context.contract_ref, *step.read]),
         writable_refs=_dedupe_refs(step.write),
         denied_refs=_dedupe_refs(context.denied_refs or []),
+        allowed_tools=allowed_tools,
         allowed_commands=list(step.command_allowlist),
         network_policy=network_policy,
         env_allowlist=_dedupe_strings([*step.env_allowlist, *[env for grant in extension_grants for env in grant.required_env]]),
@@ -169,6 +171,18 @@ def _extension_grant_for_toolset(flow_id: str, step_id: str, toolset: Toolset) -
             **dict(toolset.metadata),
         },
     )
+
+
+def _allowed_tools_for_step(step: Step, toolsets: Mapping[str, Toolset]) -> list[str]:
+    allowed: list[str] = []
+    for tool in step.tools:
+        if tool in CORE_TOOLS:
+            allowed.append(tool)
+            continue
+        toolset = toolsets.get(tool)
+        if toolset is not None:
+            allowed.extend(toolset.tools)
+    return _dedupe_strings(allowed)
 
 
 def _validate_ref_authority(refs: list[str], roots: list[str], field_name: str) -> None:

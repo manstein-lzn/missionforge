@@ -23,6 +23,7 @@ TASK_CONTRACT_SCHEMA_VERSION = "task_contract.v1"
 TASK_CONTRACT_REVISION_SCHEMA_VERSION = "task_contract_revision.v1"
 WORKSPACE_POLICY_SCHEMA_VERSION = "workspace_policy.v1"
 PERMISSION_MANIFEST_SCHEMA_VERSION = "permission_manifest.v1"
+DEFAULT_ALLOWED_TOOLS = ["read", "write", "edit"]
 
 
 class NetworkPolicy(StrEnum):
@@ -297,6 +298,7 @@ class PermissionManifest:
     readable_refs: list[str] = field(default_factory=list)
     writable_refs: list[str] = field(default_factory=list)
     denied_refs: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_TOOLS))
     allowed_commands: list[str] = field(default_factory=list)
     network_policy: NetworkPolicy = NetworkPolicy.DISABLED
     env_allowlist: list[str] = field(default_factory=list)
@@ -329,6 +331,10 @@ class PermissionManifest:
             denied_refs=_ref_list(
                 data.get("denied_refs", data.get("denied_paths", [])),
                 "permission_manifest.denied_refs",
+            ),
+            allowed_tools=require_str_list(
+                data.get("allowed_tools", DEFAULT_ALLOWED_TOOLS),
+                "permission_manifest.allowed_tools",
             ),
             allowed_commands=require_str_list(
                 data.get("allowed_commands", data.get("executable_commands", [])),
@@ -371,6 +377,7 @@ class PermissionManifest:
         _validate_unique_refs(self.readable_refs, "permission_manifest.readable_refs")
         _validate_unique_refs(self.writable_refs, "permission_manifest.writable_refs")
         _validate_unique_refs(self.denied_refs, "permission_manifest.denied_refs")
+        _validate_unique_strings(self.allowed_tools, "permission_manifest.allowed_tools")
         require_str_list(self.allowed_commands, "permission_manifest.allowed_commands")
         require_enum(self.network_policy, NetworkPolicy, "permission_manifest.network_policy")
         require_str_list(self.env_allowlist, "permission_manifest.env_allowlist")
@@ -389,6 +396,7 @@ class PermissionManifest:
             "readable_refs": list(self.readable_refs),
             "writable_refs": list(self.writable_refs),
             "denied_refs": list(self.denied_refs),
+            "allowed_tools": list(self.allowed_tools),
             "allowed_commands": list(self.allowed_commands),
             "network_policy": self.network_policy.value,
             "env_allowlist": list(self.env_allowlist),

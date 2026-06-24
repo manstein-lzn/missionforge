@@ -23,6 +23,7 @@ test("context_snapshot reports refs and projection state without raw bodies", as
         readable_refs: ["inputs", "attempts/WU-000001/context/raw"],
         writable_refs: ["outputs"],
         denied_refs: [],
+        allowed_tools: ["read", "write", "edit", "context_snapshot"],
       }),
       toolTimeoutSeconds: 30,
       contextSnapshot: snapshotOptions({
@@ -31,6 +32,7 @@ test("context_snapshot reports refs and projection state without raw bodies", as
           readable_refs: ["inputs", "attempts/WU-000001/context/raw"],
           writable_refs: ["outputs"],
           denied_refs: [],
+          allowed_tools: ["read", "write", "edit", "context_snapshot"],
         }),
         observations: () => [
           observation({
@@ -80,6 +82,7 @@ test("context_snapshot marks refs unreadable without granting access", async () 
           readable_refs: ["inputs"],
           writable_refs: ["outputs"],
           denied_refs: ["inputs/private"],
+          allowed_tools: ["read", "write", "edit", "context_snapshot"],
         }),
         observations: () => [
           observation({
@@ -116,6 +119,7 @@ test("context_snapshot keeps executor raw refs unreadable under a judge manifest
           ],
           writable_refs: ["reports/judge_report.json"],
           denied_refs: [],
+          allowed_tools: ["read", "write", "edit", "context_snapshot"],
         }),
         observations: () => [
           observation({
@@ -207,6 +211,7 @@ function permissionManifest(overrides = {}) {
     readable_refs: ["inputs"],
     writable_refs: ["outputs"],
     denied_refs: [],
+    allowed_tools: ["read", "write", "edit", "context_snapshot"],
     allowed_commands: [],
     network_policy: "disabled",
     env_allowlist: [],

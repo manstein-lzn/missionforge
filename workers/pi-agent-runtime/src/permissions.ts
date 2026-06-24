@@ -63,6 +63,20 @@ export class ToolPermissionEnforcer {
     return command;
   }
 
+  ensureTool(toolName: string): string {
+    if (typeof toolName !== "string" || toolName.length === 0) {
+      throw new Error("permission.tool_name must be a non-empty string");
+    }
+    if (this.manifest.allowed_tools.includes(toolName)) return toolName;
+    const alias = toolName === "read_text" || toolName === "read_json"
+      ? "read"
+      : toolName === "write_text" || toolName === "write_json"
+        ? "write"
+        : toolName;
+    if (this.manifest.allowed_tools.includes(alias)) return toolName;
+    throw new Error(`permission denied for tool: tool is not in allowed_tools: ${toolName}`);
+  }
+
   filterEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
     return filterEnvByAllowlist(env, this.manifest.env_allowlist);
   }
@@ -80,6 +94,7 @@ export function derivePermissionManifestFromCallSpec(call_spec: PiAgentCallSpec)
     readable_refs: readableRefs,
     writable_refs: uniqueRefs(call_spec.allowed_scope),
     denied_refs: [],
+    allowed_tools: ["read", "write", "edit"],
     allowed_commands: [],
     network_policy: "disabled",
     env_allowlist: [],

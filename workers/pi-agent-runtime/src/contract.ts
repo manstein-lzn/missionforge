@@ -119,6 +119,7 @@ export interface SandboxProfile {
   readable_refs: string[];
   writable_refs: string[];
   denied_refs: string[];
+  allowed_tools: string[];
   network_enabled: boolean;
   env_allowlist: string[];
   command_allowlist: string[];
@@ -153,6 +154,7 @@ export interface PermissionManifest {
   readable_refs: string[];
   writable_refs: string[];
   denied_refs: string[];
+  allowed_tools: string[];
   allowed_commands: string[];
   network_policy: NetworkPolicy;
   env_allowlist: string[];
@@ -432,6 +434,7 @@ export function parsePermissionManifest(value: unknown): PermissionManifest {
     readable_refs: requireRefList(data.readable_refs ?? [], "permission_manifest.readable_refs"),
     writable_refs: requireRefList(data.writable_refs ?? [], "permission_manifest.writable_refs"),
     denied_refs: requireRefList(data.denied_refs ?? [], "permission_manifest.denied_refs"),
+    allowed_tools: requireStringList(data.allowed_tools ?? ["read", "write", "edit"], "permission_manifest.allowed_tools"),
     allowed_commands: requireStringList(data.allowed_commands ?? [], "permission_manifest.allowed_commands"),
     network_policy: networkPolicy,
     env_allowlist: requireStringList(data.env_allowlist ?? [], "permission_manifest.env_allowlist"),
@@ -621,6 +624,7 @@ export function parseSandboxProfile(value: unknown): SandboxProfile {
     readable_refs: requireRefList(data.readable_refs ?? [], "sandbox_profile.readable_refs"),
     writable_refs: requireRefList(data.writable_refs ?? [], "sandbox_profile.writable_refs"),
     denied_refs: requireRefList(data.denied_refs ?? [], "sandbox_profile.denied_refs"),
+    allowed_tools: requireStringList(data.allowed_tools ?? ["read", "write", "edit"], "sandbox_profile.allowed_tools"),
     network_enabled: requireBoolean(data.network_enabled ?? false, "sandbox_profile.network_enabled"),
     env_allowlist: requireStringList(data.env_allowlist ?? [], "sandbox_profile.env_allowlist"),
     command_allowlist: requireStringList(data.command_allowlist ?? [], "sandbox_profile.command_allowlist"),
@@ -1036,6 +1040,7 @@ function validateRuntimeAuthority(input: RuntimeInput): void {
   requireSameStringSet(profile.readable_refs, manifest.readable_refs, "sandbox_profile.readable_refs");
   requireSameStringSet(profile.writable_refs, manifest.writable_refs, "sandbox_profile.writable_refs");
   requireSameStringSet(profile.denied_refs, manifest.denied_refs, "sandbox_profile.denied_refs");
+  requireSameStringSet(profile.allowed_tools, manifest.allowed_tools, "sandbox_profile.allowed_tools");
   requireSameStringList(profile.command_allowlist, manifest.allowed_commands, "sandbox_profile.command_allowlist");
   requireSameStringList(profile.env_allowlist, manifest.env_allowlist, "sandbox_profile.env_allowlist");
   const networkEnabled = manifest.network_policy === "enabled";

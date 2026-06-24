@@ -19,6 +19,8 @@ import { assertNoSymlinkSegments, guardWorkspacePath, ToolPermissionEnforcer } f
 import { createBubblewrapBashOperations } from "./sandbox.js";
 import { ToolGateway, type ToolGatewayDecision } from "./tool-gateway.js";
 
+const RESERVED_TOOL_NAMES = new Set(["read", "write", "edit", "bash", "context_snapshot"]);
+
 export interface MissionForgeToolOptions {
   workspaceRoot: string;
   permissionManifest: PermissionManifest;
@@ -45,26 +47,23 @@ export async function createMissionForgeTools(options: MissionForgeToolOptions):
     onDecision: options.onToolGatewayDecision,
   });
   const toolsByName = new Map<string, AgentTool<any>>();
-  for (const tool of [
-    createReadTool(cwd, {
-      operations: createGatewayReadOperations(gateway),
-    }),
-    createEditTool(cwd, {
-      operations: createGatewayEditOperations(gateway),
-    }),
-    createWriteTool(cwd, {
-      operations: createGatewayWriteOperations(gateway),
-    }),
-  ]) {
-    toolsByName.set(tool.name, tool);
+  const coreTools = [
+    ["read", createReadTool(cwd, { operations: createGatewayReadOperations(gateway) })],
+    ["edit", createEditTool(cwd, { operations: createGatewayEditOperations(gateway) })],
+    ["write", createWriteTool(cwd, { operations: createGatewayWriteOperations(gateway) })],
+  ] as const;
+  for (const [toolName, tool] of coreTools) {
+    if (canUseTool(effectiveManifest.allowed_tools, toolName)) {
+      toolsByName.set(toolName, tool);
+    }
   }
-  if (options.contextSnapshot) {
+  if (options.contextSnapshot && canUseTool(effectiveManifest.allowed_tools, "context_snapshot")) {
     toolsByName.set("context_snapshot", createContextSnapshotTool({
       ...options.contextSnapshot,
       permissionManifest: effectiveManifest,
     }));
   }
-  if (effectiveManifest.allowed_commands.length > 0) {
+  if (effectiveManifest.allowed_commands.length > 0 && canUseTool(effectiveManifest.allowed_tools, "bash")) {
     if (options.sandboxProfile && options.sandboxProfile.mode !== "bubblewrap") {
       throw new Error(`sandbox_profile.mode is not supported for bash: ${options.sandboxProfile.mode}`);
     }
@@ -87,7 +86,11 @@ export async function createMissionForgeTools(options: MissionForgeToolOptions):
     );
   }
   for (const tool of options.extensionTools ?? []) {
-    toolsByName.set(tool.name, tool);
+    if (!canUseTool(effectiveManifest.allowed_tools, tool.name)) continue;
+    if (RESERVED_TOOL_NAMES.has(tool.name)) {
+      throw new Error(`extension tool name conflicts with MissionForge core tool: ${tool.name}`);
+    }
+    toolsByName.set(tool.name, createGatewayExtensionTool(tool, gateway));
   }
   return [...toolsByName.values()];
 }
@@ -100,15 +103,41 @@ export function permissionManifestFromSandboxProfile(
   if (sandboxProfile.mode === "unsupported") {
     throw new Error("sandbox_profile.mode must be supported");
   }
+  const profileAllowedTools = sandboxProfile.allowed_tools as readonly string[] | undefined;
+  const manifestAllowedTools = permissionManifest.allowed_tools as readonly string[] | undefined;
+  const allowedTools = profileAllowedTools === undefined
+    ? manifestAllowedTools === undefined
+      ? ["read", "write", "edit"]
+      : [...manifestAllowedTools]
+    : [...profileAllowedTools];
   return {
     ...permissionManifest,
     readable_refs: [...sandboxProfile.readable_refs],
     writable_refs: [...sandboxProfile.writable_refs],
     denied_refs: [...sandboxProfile.denied_refs],
+    allowed_tools: allowedTools,
     allowed_commands: [...sandboxProfile.command_allowlist],
     network_policy: sandboxProfile.network_enabled ? "enabled" : "disabled",
     env_allowlist: [...sandboxProfile.env_allowlist],
     extension_grants: [...(permissionManifest.extension_grants ?? [])],
+  };
+}
+
+function canUseTool(allowedTools: readonly string[] | undefined, toolName: string): boolean {
+  const effectiveAllowedTools = allowedTools === undefined ? ["read", "write", "edit"] : allowedTools;
+  if (effectiveAllowedTools.includes(toolName)) return true;
+  if (toolName === "read_text" || toolName === "read_json") return effectiveAllowedTools.includes("read");
+  if (toolName === "write_text" || toolName === "write_json") return effectiveAllowedTools.includes("write");
+  return false;
+}
+
+function createGatewayExtensionTool(tool: AgentTool<any>, gateway: ToolGateway): AgentTool<any> {
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate) => {
+      gateway.authorizeTool(tool.name);
+      return tool.execute.call(tool, toolCallId, params, signal, onUpdate);
+    },
   };
 }
 

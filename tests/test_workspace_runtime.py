@@ -27,9 +27,10 @@ def sample_manifest() -> PermissionManifest:
             "readable_refs": ["inputs", "contract", "reports"],
             "writable_refs": ["artifacts", "reports"],
             "denied_refs": ["artifacts/secrets", "secrets"],
+            "allowed_tools": ["read", "write", "edit"],
             "network_policy": "disabled",
         }
-    )
+        )
 
 
 class WorkspaceRuntimeTests(unittest.TestCase):

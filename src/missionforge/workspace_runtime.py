@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import ContractValidationError, ensure_json_value, require_mapping, validate_ref
-from .permissions import PermissionEnforcer
+from .permissions import PermissionEnforcer, ReadGate, WriteGate
 from .task_contract import PermissionManifest, WorkspacePolicy
 
 
@@ -20,6 +20,8 @@ class RunWorkspace:
     workspace_policy: WorkspacePolicy
     permission_manifest: PermissionManifest
     enforcer: PermissionEnforcer = field(init=False)
+    read_gate: ReadGate = field(init=False)
+    write_gate: WriteGate = field(init=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.workspace_policy, WorkspacePolicy):
@@ -31,6 +33,8 @@ class RunWorkspace:
         object.__setattr__(self, "root", Path(self.root))
         object.__setattr__(self, "permission_manifest", self._effective_permission_manifest())
         object.__setattr__(self, "enforcer", PermissionEnforcer(self.permission_manifest))
+        object.__setattr__(self, "read_gate", ReadGate(self.permission_manifest))
+        object.__setattr__(self, "write_gate", WriteGate(self.permission_manifest))
 
     def materialize(self) -> None:
         """Create declared workspace directories without granting new permissions."""
@@ -61,16 +65,16 @@ class RunWorkspace:
         return path
 
     def check_read_ref(self, ref: str):
-        return self.enforcer.check_read(ref)
+        return self.read_gate.check(ref)
 
     def check_write_ref(self, ref: str):
-        return self.enforcer.check_write(ref)
+        return self.write_gate.check(ref)
 
     def ensure_read_ref(self, ref: str) -> str:
-        return self.enforcer.ensure_read(ref)
+        return self.read_gate.authorize(ref)
 
     def ensure_write_ref(self, ref: str) -> str:
-        return self.enforcer.ensure_write(ref)
+        return self.write_gate.authorize(ref)
 
     def read_text(self, ref: str) -> str:
         safe_ref = self.ensure_read_ref(ref)
@@ -108,12 +112,14 @@ class RunWorkspace:
             readable_refs=list(self.permission_manifest.readable_refs),
             writable_refs=list(self.permission_manifest.writable_refs),
             denied_refs=denied_refs,
+            allowed_tools=list(self.permission_manifest.allowed_tools),
             allowed_commands=list(self.permission_manifest.allowed_commands),
             network_policy=self.permission_manifest.network_policy,
             env_allowlist=list(self.permission_manifest.env_allowlist),
             secret_ref=self.permission_manifest.secret_ref,
             unsupported_hard_policies=list(self.permission_manifest.unsupported_hard_policies),
             extension_grants=list(self.permission_manifest.extension_grants),
+            progress_streams=list(self.permission_manifest.progress_streams),
             schema_version=self.permission_manifest.schema_version,
         )
 

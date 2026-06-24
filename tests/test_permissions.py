@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from missionforge import ContractValidationError, NetworkPolicy, PermissionManifest
-from missionforge.permissions import PermissionEnforcer, PermissionOperation, ref_is_under
+from missionforge.permissions import PermissionEnforcer, PermissionOperation, ReadGate, WriteGate, ref_is_under
 
 
 def sample_manifest() -> PermissionManifest:
@@ -13,6 +13,7 @@ def sample_manifest() -> PermissionManifest:
             "readable_refs": ["inputs", "contract/task_contract.json"],
             "writable_refs": ["artifacts", "reports"],
             "denied_refs": ["artifacts/secrets", "inputs/private"],
+            "allowed_tools": ["read", "write", "edit"],
             "allowed_commands": ["python3 -m unittest"],
             "network_policy": "disabled",
             "env_allowlist": ["PATH"],
@@ -62,6 +63,31 @@ class PermissionTests(unittest.TestCase):
 
         supported = enforcer.check_supported_hard_policies({"bash_subprocess_path_policy"})
         self.assertTrue(supported.allowed)
+
+    def test_tool_allowlist_requires_explicit_grant(self) -> None:
+        enforcer = PermissionEnforcer(sample_manifest())
+
+        self.assertTrue(enforcer.check_tool("read").allowed)
+        self.assertTrue(enforcer.check_tool("write").allowed)
+        self.assertFalse(enforcer.check_tool("bash").allowed)
+
+    def test_read_and_write_gates_fail_closed_for_runtime_owned_refs(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-runtime-owned",
+                "readable_refs": ["inputs"],
+                "writable_refs": ["artifacts", "reports"],
+                "denied_refs": ["artifacts/secrets"],
+                "allowed_tools": ["read", "write"],
+            }
+        )
+        read_gate = ReadGate(manifest)
+        write_gate = WriteGate(manifest)
+
+        self.assertEqual(read_gate.authorize("inputs/request.json"), "inputs/request.json")
+        self.assertEqual(write_gate.authorize("artifacts/final.md", writer_role="product"), "artifacts/final.md")
+        with self.assertRaises(ContractValidationError):
+            write_gate.authorize("kernel/demo-flow/flow_result.json", writer_role="executor_piworker")
 
     def test_network_policy_enabled_allows_requested_network(self) -> None:
         manifest = PermissionManifest.from_dict(

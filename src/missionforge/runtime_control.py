@@ -17,7 +17,7 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
-from .permissions import PermissionEnforcer
+from .permissions import PermissionEnforcer, WriteGate
 from .task_contract import PermissionManifest, WorkspacePolicy
 
 
@@ -146,6 +146,7 @@ class SandboxProfile:
     readable_refs: list[str] = field(default_factory=list)
     writable_refs: list[str] = field(default_factory=list)
     denied_refs: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=lambda: ["read", "write", "edit"])
     network_enabled: bool = False
     env_allowlist: list[str] = field(default_factory=list)
     command_allowlist: list[str] = field(default_factory=list)
@@ -167,6 +168,10 @@ class SandboxProfile:
             readable_refs=_ref_list(data.get("readable_refs", []), "sandbox_profile.readable_refs"),
             writable_refs=_ref_list(data.get("writable_refs", []), "sandbox_profile.writable_refs"),
             denied_refs=_ref_list(data.get("denied_refs", []), "sandbox_profile.denied_refs"),
+            allowed_tools=require_str_list(
+                data.get("allowed_tools", ["read", "write", "edit"]),
+                "sandbox_profile.allowed_tools",
+            ),
             network_enabled=bool(data.get("network_enabled", False)),
             env_allowlist=require_str_list(data.get("env_allowlist", []), "sandbox_profile.env_allowlist"),
             command_allowlist=require_str_list(
@@ -192,6 +197,7 @@ class SandboxProfile:
         _validate_unique_refs(self.readable_refs, "sandbox_profile.readable_refs")
         _validate_unique_refs(self.writable_refs, "sandbox_profile.writable_refs")
         _validate_unique_refs(self.denied_refs, "sandbox_profile.denied_refs")
+        _validate_unique_strings(self.allowed_tools, "sandbox_profile.allowed_tools")
         require_str_list(self.env_allowlist, "sandbox_profile.env_allowlist")
         require_str_list(self.command_allowlist, "sandbox_profile.command_allowlist")
         _safe_mapping(self.resource_budget, "sandbox_profile.resource_budget")
@@ -211,6 +217,7 @@ class SandboxProfile:
             "readable_refs": list(self.readable_refs),
             "writable_refs": list(self.writable_refs),
             "denied_refs": list(self.denied_refs),
+            "allowed_tools": list(self.allowed_tools),
             "network_enabled": self.network_enabled,
             "env_allowlist": list(self.env_allowlist),
             "command_allowlist": list(self.command_allowlist),
@@ -355,12 +362,23 @@ class HostSandboxRunner:
                     "readable_refs": list(sandbox_profile.readable_refs),
                     "writable_refs": list(sandbox_profile.writable_refs),
                     "denied_refs": list(sandbox_profile.denied_refs),
+                    "allowed_tools": list(sandbox_profile.allowed_tools),
                     "allowed_commands": list(sandbox_profile.command_allowlist),
                     "network_policy": "enabled" if sandbox_profile.network_enabled else "disabled",
                     "env_allowlist": list(sandbox_profile.env_allowlist),
                 }
             )
         )
+        tool_decision = enforcer.check_tool(request.tool_name)
+        if not tool_decision.allowed:
+            return ToolGatewayResult(
+                request_id=request.request_id,
+                allowed=False,
+                decision="tool_denied",
+                sandbox_ref=None,
+                reason=tool_decision.reason,
+                evidence_refs=list(request.evidence_refs),
+            )
         if request.tool_name in {"read", "read_text", "read_json"}:
             for ref in request.input_refs:
                 decision = enforcer.check_read(ref)
@@ -374,8 +392,23 @@ class HostSandboxRunner:
                         evidence_refs=list(request.evidence_refs),
                     )
         elif request.tool_name in {"write", "write_text", "write_json", "edit"}:
+            write_gate = WriteGate(
+                PermissionManifest.from_dict(
+                    {
+                        "manifest_id": request.grant.permission_manifest_ref.replace("/", "-"),
+                        "workspace_policy_ref": request.grant.workspace_policy_ref,
+                        "readable_refs": list(sandbox_profile.readable_refs),
+                        "writable_refs": list(sandbox_profile.writable_refs),
+                        "denied_refs": list(sandbox_profile.denied_refs),
+                        "allowed_tools": list(sandbox_profile.allowed_tools),
+                        "allowed_commands": list(sandbox_profile.command_allowlist),
+                        "network_policy": "enabled" if sandbox_profile.network_enabled else "disabled",
+                        "env_allowlist": list(sandbox_profile.env_allowlist),
+                    }
+                )
+            )
             for ref in request.output_refs:
-                decision = enforcer.check_write(ref)
+                decision = write_gate.check(ref, writer_role=request.grant.role)
                 if not decision.allowed:
                     return ToolGatewayResult(
                         request_id=request.request_id,
@@ -465,6 +498,7 @@ def create_sandbox_profile_from_workspace(
         readable_refs=list(permission_manifest.readable_refs or workspace_policy.input_refs),
         writable_refs=list(permission_manifest.writable_refs or workspace_policy.artifact_root_refs),
         denied_refs=sorted({*workspace_policy.denied_refs, *permission_manifest.denied_refs}),
+        allowed_tools=list(permission_manifest.allowed_tools),
         network_enabled=permission_manifest.network_policy.value == "enabled" if network_enabled is None else network_enabled,
         env_allowlist=list(permission_manifest.env_allowlist),
         command_allowlist=list(permission_manifest.allowed_commands),
@@ -569,6 +603,12 @@ def _validate_unique_refs(values: list[str], field_name: str) -> None:
     refs = _ref_list(values, field_name)
     if len(refs) != len(set(refs)):
         raise ContractValidationError(f"{field_name} must not contain duplicate refs")
+
+
+def _validate_unique_strings(values: list[str], field_name: str) -> None:
+    items = require_str_list(values, field_name)
+    if len(items) != len(set(items)):
+        raise ContractValidationError(f"{field_name} must not contain duplicates")
 
 
 def _is_under(ref: str, scope: str) -> bool:

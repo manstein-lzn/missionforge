@@ -72,6 +72,7 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(compiled.piworker_call.runtime_budget["max_turns"], 8)
         self.assertEqual(compiled.permission_manifest.readable_refs, ["contract/task_contract.json", "contract", "reports", "sources"])
         self.assertEqual(compiled.permission_manifest.writable_refs, ["reviews"])
+        self.assertEqual(compiled.permission_manifest.allowed_tools, ["read", "write"])
         self.assertEqual(compiled.permission_manifest.network_policy, NetworkPolicy.DISABLED)
         self.assertEqual(compiled.permission_manifest_ref, "kernel/demo-flow/steps/reviewer/permission_manifest.json")
         self.assertEqual(compiled.piworker_call.metadata["kernel_step_id"], "reviewer")
@@ -155,6 +156,10 @@ class KernelApiTests(unittest.TestCase):
         compiled = compile_step(step, context=_context(), toolsets={"academic": toolset})
 
         self.assertEqual(compiled.permission_manifest.network_policy, NetworkPolicy.ENABLED)
+        self.assertEqual(
+            compiled.permission_manifest.allowed_tools,
+            ["read", "write", "academic_search", "academic_fetch"],
+        )
         self.assertEqual(len(compiled.permission_manifest.extension_grants), 1)
         grant = compiled.permission_manifest.extension_grants[0]
         self.assertEqual(grant.grant_id, "demo-flow-source_expander-academic")

@@ -304,6 +304,7 @@ def build_worker_brief(
         readable_refs=list(contract.source_refs),
         writable_refs=[],
         denied_refs=[],
+        allowed_tools=[],
     )
     return project_worker_brief(
         contract,

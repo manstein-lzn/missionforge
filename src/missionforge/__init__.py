@@ -58,6 +58,7 @@ from .runtime_control import (
     create_capability_grant,
     create_sandbox_profile_from_workspace,
 )
+from .permissions import ReadGate, WriteGate
 from .piworker_call import (
     PiWorkerCall,
     PiWorkerCallResult,
@@ -154,6 +155,7 @@ __all__ = [
     "ProgressStreamMount",
     "ProgressStreamGrant",
     "ProgressStreamWriter",
+    "ReadGate",
     "Ref",
     "ToolGateway",
     "ToolGatewayRequest",
@@ -165,6 +167,7 @@ __all__ = [
     "UserEventAck",
     "UserEventKind",
     "WorkerBrief",
+    "WriteGate",
     "WorkspacePolicy",
     "assert_refs_only_payload",
     "append_progress_event",

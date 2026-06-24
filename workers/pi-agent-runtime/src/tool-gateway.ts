@@ -10,6 +10,7 @@ import {
 export const TOOL_GATEWAY_DECISION_SCHEMA_VERSION = "missionforge.pi_agent_tool_gateway_decision.v1";
 
 export type ToolGatewayOperation =
+  | "tool"
   | "read_path"
   | "write_path"
   | "read_write_path"
@@ -50,15 +51,38 @@ export class ToolGateway {
     this.enforcer = new ToolPermissionEnforcer(options.workspaceRoot, options.permissionManifest);
   }
 
+  authorizeTool(toolName: string): string {
+    try {
+      const allowedTool = this.enforcer.ensureTool(toolName);
+      this.record({
+        tool_name: allowedTool,
+        operation: "tool",
+        status: "allowed",
+      });
+      return allowedTool;
+    } catch (error) {
+      this.record({
+        tool_name: toolName,
+        operation: "tool",
+        status: "denied",
+        reason: safeReason(error),
+      });
+      throw error;
+    }
+  }
+
   authorizeReadPath(toolName: string, absolutePath: string): string {
+    this.authorizeTool(toolName);
     return this.authorizePath("read_path", toolName, absolutePath, () => this.enforcer.ensureReadPath(absolutePath));
   }
 
   authorizeWritePath(toolName: string, absolutePath: string): string {
+    this.authorizeTool(toolName);
     return this.authorizePath("write_path", toolName, absolutePath, () => this.enforcer.ensureWritePath(absolutePath));
   }
 
   authorizeReadWritePath(toolName: string, absolutePath: string): string {
+    this.authorizeTool(toolName);
     return this.authorizePath("read_write_path", toolName, absolutePath, () => {
       this.enforcer.ensureReadPath(absolutePath);
       return this.enforcer.ensureWritePath(absolutePath);
@@ -66,12 +90,14 @@ export class ToolGateway {
   }
 
   authorizeWriteContainerPath(toolName: string, absolutePath: string): string {
+    this.authorizeTool(toolName);
     return this.authorizePath("write_container", toolName, absolutePath, () =>
       this.enforcer.ensureWriteContainerPath(absolutePath),
     );
   }
 
   authorizeCommand(command: string): string {
+    this.authorizeTool("bash");
     const commandHash = hashText(command);
     try {
       const allowedCommand = this.enforcer.ensureCommand(command);
@@ -95,6 +121,7 @@ export class ToolGateway {
   }
 
   authorizeCwd(path: string): string {
+    this.authorizeTool("bash");
     const ref = this.refForPath(path);
     try {
       const safePath = guardWorkspacePath(this.options.workspaceRoot, path);
@@ -118,6 +145,7 @@ export class ToolGateway {
   }
 
   filterEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    this.authorizeTool("bash");
     const result = this.enforcer.filterEnv(env);
     this.record({
       tool_name: "bash",
@@ -191,6 +219,7 @@ function hashText(value: string): string {
 function safeReason(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("allowed_commands")) return "command_not_allowlisted";
+  if (message.includes("allowed_tools")) return "tool_not_allowlisted";
   if (message.includes("ref is denied")) return "ref_denied";
   if (message.includes("write container is outside writable roots")) return "container_outside_writable_roots";
   if (message.includes("outside allowed roots")) return "ref_outside_allowed_roots";
