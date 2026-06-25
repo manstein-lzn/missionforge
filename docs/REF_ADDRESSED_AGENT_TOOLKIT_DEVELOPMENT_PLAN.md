@@ -403,8 +403,11 @@ Current integration:
   inspection.
 - Done for first debug slice: a developer can preview one explicit fixture
   step, run it once under a debug prefix, and inspect the route target.
+- Done for first host cookbook slice: a product-neutral example shows ordinary
+  Python code using preview, debug-run, flow execution, route inspection, and
+  refs-only run inspection without DeepResearch semantics.
 - Still open: richer tool activity, context pressure display, usage display,
-  replay helpers, and host cookbook examples.
+  and replay helpers.
 - A user can pause before the next step.
 - A user can inject guidance that becomes visible through explicit safe-point
   input refs.
@@ -429,7 +432,8 @@ the new primitives.
 3. Preserve route extraction only from structured decision artifacts.
 4. Done for first inspect slice: add refs-only inspection hooks to Kernel runs.
 5. Done for first debug slice: add fixture-flow debug stepping primitives.
-6. Deferred: replay helpers and cookbook examples.
+6. Done for first host cookbook slice: add a minimal product-neutral example.
+7. Deferred: replay helpers.
 
 ### Rules
 
@@ -441,8 +445,8 @@ the new primitives.
 ### Exit Criteria
 
 - DeepResearch can remain thin over Kernel API.
-- A second tiny example can use Kernel API without copying DeepResearch
-  internals.
+- Done for first host cookbook slice: a tiny example can use Kernel API without
+  copying DeepResearch internals.
 - Kernel API docs explain the boundary between convenience and authority.
 
 ## Workstream 7: DeepResearch Integration
@@ -572,6 +576,8 @@ Deliverables:
   inspection helper for host UIs and debuggers;
 - done for first debug slice: Kernel API exposes stateless fixture debug
   stepping helpers without becoming a scheduler;
+- done for first host cookbook slice: `examples/kernel_host_toolkit_example.py`
+  shows host-Python orchestration through public/kernel APIs;
 - done for first slice: DeepResearch result packages expose Kernel
   `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.
@@ -580,7 +586,8 @@ Exit criteria:
 
 - done for first slice: DeepResearch remains a thin product integration;
 - done for first slice: core package remains product-neutral;
-- still open: docs and cookbook for host-Python orchestration patterns.
+- done for first host cookbook slice: docs and example show host-Python
+  orchestration patterns.
 
 ## Explicit Non-Goals For This Branch
 

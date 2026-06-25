@@ -30,6 +30,7 @@ removing the disk-first assumption from data and context movement.
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
 | Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, and fixture debug stepping primitives exist |
+| Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
 ## Completed Recently
@@ -84,6 +85,10 @@ removing the disk-first assumption from data and context movement.
   - `read_flow_route()` resolves structured decision artifacts into safe
     `step`, `stop`, `unrouted`, or `invalid` route decisions without exposing
     decision prose or malformed raw values.
+- Added a minimal host cookbook example that demonstrates ordinary Python code
+  using `StepCompileContext`, `Flow`, `preview_flow_step()`,
+  `run_flow_step_once()`, `run_flow()`, `read_flow_route()`, and
+  `inspect_kernel_run()` without pulling in DeepResearch semantics.
 
 ## In Progress
 
@@ -95,6 +100,7 @@ removing the disk-first assumption from data and context movement.
   - express more existing refs as `ArtifactRecord`;
   - pass richer context diagnostics through runtime/provider observations;
   - extend debug stepping toward replay helpers for fixture flows;
+  - keep the host cookbook example small and product-neutral;
   - teach product UIs to consume `RunSnapshot`, `RunEvent`, and Kernel run
     inspection directly.
 
@@ -104,8 +110,8 @@ removing the disk-first assumption from data and context movement.
    behavior.
 2. Adopt `ArtifactRecord` in more existing step/output refs without weakening
    filesystem compatibility.
-3. Extend fixture-flow debug stepping toward replay helpers and host cookbook
-   examples.
+3. Extend fixture-flow debug stepping toward replay helpers; the host
+   cookbook slice is now present.
 4. Use DeepResearch only as an integration pressure test while keeping prompts,
    rubrics, source tools, and report contracts in the integration package.
 
