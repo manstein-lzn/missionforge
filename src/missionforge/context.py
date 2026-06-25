@@ -24,12 +24,11 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
-
-
 CONTEXT_SEGMENT_SCHEMA_VERSION = "missionforge.context_segment.v1"
 CONTEXT_VIEW_SCHEMA_VERSION = "missionforge.context_view.v1"
 TOOL_OBSERVATION_SCHEMA_VERSION = "missionforge.pi_agent_tool_observation.v1"
 CONTEXT_PRESSURE_SCHEMA_VERSION = "missionforge.context_pressure.v1"
+CONTEXT_REPLAY_PLAN_SCHEMA_VERSION = "missionforge.context_replay_plan.v1"
 
 
 class ContextSegmentKind(StrEnum):
@@ -484,6 +483,79 @@ class ContextPressureDiagnostics:
         }
 
 
+@dataclass(frozen=True)
+class ContextReplayPlan:
+    """Refs-only recovery plan for a completed-turn resume or replay."""
+
+    plan_id: str
+    view_ref: str
+    checkpoint_ref: str
+    context_hash: str
+    source_refs: list[str] = field(default_factory=list)
+    summary_refs: list[str] = field(default_factory=list)
+    allowed_source_refs: list[str] = field(default_factory=list)
+    denied_source_refs: list[str] = field(default_factory=list)
+    schema_version: str = CONTEXT_REPLAY_PLAN_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ContextReplayPlan":
+        data = _refs_only_mapping(payload, "context_replay_plan")
+        plan = cls(
+            plan_id=_safe_id(data.get("plan_id"), "context_replay_plan.plan_id"),
+            view_ref=validate_ref(data.get("view_ref"), "context_replay_plan.view_ref"),
+            checkpoint_ref=validate_ref(data.get("checkpoint_ref"), "context_replay_plan.checkpoint_ref"),
+            context_hash=_hash(data.get("context_hash"), "context_replay_plan.context_hash"),
+            source_refs=_ref_list(data.get("source_refs", []), "context_replay_plan.source_refs"),
+            summary_refs=_ref_list(data.get("summary_refs", []), "context_replay_plan.summary_refs"),
+            allowed_source_refs=_ref_list(
+                data.get("allowed_source_refs", []),
+                "context_replay_plan.allowed_source_refs",
+            ),
+            denied_source_refs=_ref_list(
+                data.get("denied_source_refs", []),
+                "context_replay_plan.denied_source_refs",
+            ),
+            schema_version=require_non_empty_str(
+                data.get("schema_version", CONTEXT_REPLAY_PLAN_SCHEMA_VERSION),
+                "context_replay_plan.schema_version",
+            ),
+        )
+        plan.validate()
+        return plan
+
+    def validate(self) -> None:
+        _require_schema(self.schema_version, CONTEXT_REPLAY_PLAN_SCHEMA_VERSION, "context_replay_plan.schema_version")
+        _safe_id(self.plan_id, "context_replay_plan.plan_id")
+        validate_ref(self.view_ref, "context_replay_plan.view_ref")
+        validate_ref(self.checkpoint_ref, "context_replay_plan.checkpoint_ref")
+        _hash(self.context_hash, "context_replay_plan.context_hash")
+        _unique_refs(self.source_refs, "context_replay_plan.source_refs")
+        _unique_refs(self.summary_refs, "context_replay_plan.summary_refs")
+        _unique_refs(self.allowed_source_refs, "context_replay_plan.allowed_source_refs")
+        _unique_refs(self.denied_source_refs, "context_replay_plan.denied_source_refs")
+        assert_refs_only_payload(self.to_dict_without_validation(), "context_replay_plan")
+
+    def to_dict_without_validation(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "plan_id": self.plan_id,
+            "view_ref": self.view_ref,
+            "checkpoint_ref": self.checkpoint_ref,
+            "context_hash": self.context_hash,
+            "source_refs": list(self.source_refs),
+            "summary_refs": list(self.summary_refs),
+            "allowed_source_refs": list(self.allowed_source_refs),
+            "denied_source_refs": list(self.denied_source_refs),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self.to_dict_without_validation()
+
+
 def build_call_context_view(
     *,
     view_id: str,
@@ -610,6 +682,39 @@ def build_context_pressure_diagnostics(
         pressure_ratio=pressure_ratio,
         recommended_action=action,
         checkpoint_ref=checkpoint_ref,
+    )
+
+
+def build_context_replay_plan(
+    *,
+    plan_id: str,
+    view_ref: str,
+    checkpoint_ref: str,
+    view: ContextView,
+    source_refs: list[str] | None = None,
+    summary_refs: list[str] | None = None,
+    allowed_source_refs: list[str] | None = None,
+    denied_source_refs: list[str] | None = None,
+) -> ContextReplayPlan:
+    """Build a refs-only replay/hydration plan from a checkpoint and summary refs."""
+
+    view.validate()
+    source_refs = _dedupe_refs(source_refs or [])
+    summary_refs = _dedupe_refs(summary_refs or [])
+    allowed = _dedupe_refs(allowed_source_refs or [])
+    denied = _dedupe_refs(denied_source_refs or [])
+    if not allowed:
+        allowed = list(source_refs)
+    allowed = _dedupe_refs([ref for ref in allowed if ref not in denied] + [ref for ref in source_refs if ref not in denied])
+    return ContextReplayPlan(
+        plan_id=plan_id,
+        view_ref=view_ref,
+        checkpoint_ref=checkpoint_ref,
+        context_hash=view.context_hash,
+        source_refs=source_refs,
+        summary_refs=summary_refs,
+        allowed_source_refs=allowed,
+        denied_source_refs=denied,
     )
 
 

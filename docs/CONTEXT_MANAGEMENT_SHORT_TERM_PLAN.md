@@ -234,8 +234,9 @@ Exit condition:
 
 ## Remaining Test Candidates
 
-- Full replay/hydration from explicit checkpoint refs and optional Pi-authored
-  semantic summaries.
+- Full replay/hydration remains a later step beyond the current refs-only
+  replay planning helper; explicit checkpoint refs and optional Pi-authored
+  semantic summaries are the intended next layer.
 
 ## Open Questions
 

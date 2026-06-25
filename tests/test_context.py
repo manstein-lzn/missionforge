@@ -7,6 +7,7 @@ from missionforge import (
     ContextInlinePolicy,
     ContextPressureAction,
     ContextPressureDiagnostics,
+    ContextReplayPlan,
     ContextSegment,
     ContextSegmentKind,
     ContextView,
@@ -16,6 +17,7 @@ from missionforge import (
     ToolObservationStatus,
     build_call_context_view,
     build_context_pressure_diagnostics,
+    build_context_replay_plan,
 )
 
 
@@ -184,6 +186,37 @@ class ContextTests(unittest.TestCase):
         self.assertEqual(payload["context_hash"], view.context_hash)
         self.assertNotIn("accepted", str(payload))
         self.assertNotIn("rejected", str(payload))
+
+    def test_context_replay_plan_is_refs_only_and_hash_checked(self) -> None:
+        view = build_call_context_view(
+            view_id="researcher_context",
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=CONTRACT_HASH,
+            permission_manifest_ref="kernel/demo/steps/researcher/permission_manifest.json",
+            visible_refs=["contract/task_contract.json", "sources/source_packet.json"],
+            expected_output_refs=["reports/final_report.md"],
+            diagnostics_ref="kernel/demo/steps/researcher/context_projection.json",
+        )
+        plan = build_context_replay_plan(
+            plan_id="replay_plan_001",
+            view_ref="kernel/demo/steps/researcher/context_projection.json",
+            checkpoint_ref="attempts/WU-000001/context/context_pressure_checkpoint.json",
+            view=view,
+            source_refs=["context/raw/000001-bash-output.txt"],
+            summary_refs=["reports/context_summary.json"],
+            denied_source_refs=["context/raw/000002-secret.txt"],
+        )
+
+        payload = plan.to_dict()
+        round_trip = ContextReplayPlan.from_dict(payload)
+
+        self.assertEqual(round_trip.context_hash, view.context_hash)
+        self.assertIn("context/raw/000001-bash-output.txt", payload["source_refs"])
+        self.assertNotIn("context/raw/000002-secret.txt", payload["allowed_source_refs"])
+        self.assertEqual(payload["checkpoint_ref"], "attempts/WU-000001/context/context_pressure_checkpoint.json")
+        self.assertNotIn("prompt", str(payload).lower())
+        self.assertNotIn("raw_body", str(payload).lower())
 
 
 if __name__ == "__main__":

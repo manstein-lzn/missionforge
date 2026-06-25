@@ -2,7 +2,7 @@
 
 Status: active plan for `feature/ref-addressed-agent-toolkit`
 
-Last updated: 2026-06-24
+Last updated: 2026-06-26
 
 Related documents:
 
@@ -422,7 +422,8 @@ Current integration:
 - Done for richer observer slice: tool activity refs, context pressure, usage
   totals, latest event age, and safe-point details are visible through the
   refs-only status view.
-- Still open: replay helpers.
+- Done for first replay slice: refs-only replay planning helpers are present
+  via `ContextReplayPlan` and `build_context_replay_plan()`.
 - A user can pause before the next step.
 - A user can inject guidance that becomes visible through explicit safe-point
   input refs.
@@ -448,7 +449,7 @@ the new primitives.
 4. Done for first inspect slice: add refs-only inspection hooks to Kernel runs.
 5. Done for first debug slice: add fixture-flow debug stepping primitives.
 6. Done for first host cookbook slice: add a minimal product-neutral example.
-7. Deferred: replay helpers.
+7. Done for first replay slice: replay planning helpers.
 
 ### Rules
 
@@ -579,7 +580,8 @@ Exit criteria:
 - done for first slice: interruption remains safe-point based;
 - done for first debug slice: fixture-flow stepping covers explicit preview,
   run-once, and route-read operations;
-- deferred: replay helpers and host cookbook examples.
+- done for first replay slice: replay planning helpers; host cookbook examples
+  are present.
 
 ### Phase 5: Kernel And Product Migration
 

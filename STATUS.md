@@ -29,7 +29,7 @@ removing the disk-first assumption from data and context movement.
 | DeepResearch | Product integration; now consumes Kernel status view as pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
-| Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a richer read-only status observer exist; DeepResearch TUI now routes runtime controls through the shared control port |
+| Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, replay planning, and a richer read-only status observer exist; DeepResearch TUI now routes runtime controls through the shared control port |
 | Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
@@ -85,6 +85,12 @@ removing the disk-first assumption from data and context movement.
   - `read_flow_route()` resolves structured decision artifacts into safe
     `step`, `stop`, `unrouted`, or `invalid` route decisions without exposing
     decision prose or malformed raw values.
+- Added a minimal refs-only replay planning helper:
+  - `ContextReplayPlan` and `build_context_replay_plan()` capture checkpoint,
+    source refs, summary refs, and denied/allowed replay refs without turning
+    replay into a second runtime;
+  - the helper stays explicit about refs and permissions instead of hydrating
+    hidden memory.
 - Added a minimal host cookbook example that demonstrates ordinary Python code
   using `StepCompileContext`, `Flow`, `preview_flow_step()`,
   `run_flow_step_once()`, `run_flow()`, `read_flow_route()`, and
@@ -115,7 +121,7 @@ removing the disk-first assumption from data and context movement.
   - runtime adoption without changing product integration semantics
 - Harden context and observation adoption:
   - express more existing refs as `ArtifactRecord`;
-  - extend debug stepping toward replay helpers for fixture flows;
+  - extend debug stepping and replay planning for fixture flows;
   - keep the host cookbook example small and product-neutral.
 
 ## Next Milestones
@@ -124,7 +130,7 @@ removing the disk-first assumption from data and context movement.
    behavior.
 2. Adopt `ArtifactRecord` in more existing step/output refs without weakening
    filesystem compatibility.
-3. Extend fixture-flow debug stepping toward replay helpers; the host
+3. Extend fixture-flow debug stepping and replay planning; the host
    cookbook slice is now present.
 4. Use DeepResearch only as an integration pressure test while keeping prompts,
    rubrics, source tools, and report contracts in the integration package.

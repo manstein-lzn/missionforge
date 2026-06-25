@@ -21,6 +21,7 @@ from .contracts import (
 from .debug import (
     KernelStepDebugResult,
     KernelStepPreview,
+    build_context_replay_plan,
     preview_flow_step,
     read_flow_route,
     run_flow_step_once,
@@ -47,6 +48,7 @@ __all__ = [
     "KernelStepDebugResult",
     "KernelStepInspection",
     "KernelStepPreview",
+    "build_context_replay_plan",
     "Projection",
     "ProjectionRecord",
     "ProjectionRunResult",

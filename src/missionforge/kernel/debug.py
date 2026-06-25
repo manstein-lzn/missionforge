@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..context import build_call_context_view
+from ..context import build_context_replay_plan as _build_context_replay_plan
 from ..contracts import assert_refs_only_payload, stable_json_hash, validate_ref
 from ..evidence_store import EvidenceLedger
 from ..piworker_progress import PiWorkerProgressSink
@@ -265,6 +266,31 @@ def read_flow_route(flow: Flow, step_id: str, *, workspace: str | Path = ".") ->
     """Resolve the route for one explicit Flow step."""
 
     return resolve_step_route(flow, _flow_step(flow, step_id), workspace)
+
+
+def build_context_replay_plan(
+    *,
+    plan_id: str,
+    view_ref: str,
+    checkpoint_ref: str,
+    view,
+    source_refs: list[str] | None = None,
+    summary_refs: list[str] | None = None,
+    allowed_source_refs: list[str] | None = None,
+    denied_source_refs: list[str] | None = None,
+):
+    """Build a refs-only context replay plan through the core context module."""
+
+    return _build_context_replay_plan(
+        plan_id=plan_id,
+        view_ref=view_ref,
+        checkpoint_ref=checkpoint_ref,
+        view=view,
+        source_refs=source_refs,
+        summary_refs=summary_refs,
+        allowed_source_refs=allowed_source_refs,
+        denied_source_refs=denied_source_refs,
+    )
 
 
 def _context_projection_ref(context: StepCompileContext, step: Step) -> str:
