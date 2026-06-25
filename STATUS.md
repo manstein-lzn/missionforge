@@ -1,6 +1,6 @@
 # MissionForge Status
 
-Last updated: 2026-06-24
+Last updated: 2026-06-25
 
 Active branch: `feature/ref-addressed-agent-toolkit`
 
@@ -121,7 +121,7 @@ removing the disk-first assumption from data and context movement.
 
 ## Verification Baseline
 
-Latest known passing checks on 2026-06-24:
+Latest known passing checks on 2026-06-25:
 
 ```bash
 python3 -m py_compile src/missionforge/artifacts.py src/missionforge/__init__.py tests/test_artifacts.py tests/test_public_api_boundary.py
