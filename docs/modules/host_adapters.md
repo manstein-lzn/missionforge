@@ -61,10 +61,12 @@ python -m missionforge.adapters.cli status \
 `--run-ref` is accepted as an alias for `--flow-result-ref` for host shells
 that already use run-ref terminology.
 
-The human terminal view renders compact metadata from event logs, execution
-reports, boundary reports, extension load reports, metrics, and common artifact
-directories. It does not mutate workspace state, drive orchestration, accept
-work, or inspect product semantics.
+The human terminal view renders compact metadata from event logs, snapshots,
+step records, context projections, metrics, tool-observation refs, and common
+artifact refs. It includes usage totals, context pressure, latest event age,
+safe-point details, and tool activity refs when those records exist. It does
+not mutate workspace state, drive orchestration, accept work, or inspect
+product semantics.
 
 The machine form returns the same observation through `MissionCommandResult`.
 Both forms preserve the refs-first rule: operator output may include refs,

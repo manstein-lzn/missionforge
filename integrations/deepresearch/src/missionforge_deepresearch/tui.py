@@ -619,6 +619,8 @@ def _print_rich_project_board(
         )
     if interaction_line:
         overview.add_row("交互", interaction_line)
+    for label, value in _kernel_observer_rows(kernel_view):
+        overview.add_row(label, value)
     rich_console.print(Panel(overview, title="项目推进看板", border_style=_phase_border_style(phase)))
     _print_rich_kernel_view(rich_console, kernel_view)
     _print_rich_milestones(rich_console, state)
@@ -717,6 +719,8 @@ def _print_kernel_view(output_stream: TextIO, view: MissionRunView | None) -> No
         f"pending_user_events={view.pending_user_event_count}, safe_point={safe_point}\n"
     )
     output_stream.write(f"    flow_result={view.flow_result_ref}\n")
+    for label, value in _kernel_observer_rows(view):
+        output_stream.write(f"    {label}: {value}\n")
     for ref in view.observation_refs[:2]:
         output_stream.write(f"    observation={ref}\n")
 
@@ -740,6 +744,8 @@ def _print_rich_kernel_view(rich_console: Any, view: MissionRunView | None) -> N
     if view.last_safe_point_ref:
         body.add_row("safe_point", view.last_safe_point_ref)
     body.add_row("flow_result", view.flow_result_ref)
+    for label, value in _kernel_observer_rows(view):
+        body.add_row(label, value)
     if view.observation_refs:
         body.add_row("observations", ", ".join(view.observation_refs[:2]))
     rich_console.print(Panel(body, title="Kernel 状态", border_style=_phase_border_style(view.status)))
@@ -904,6 +910,34 @@ def _usage_totals(usage_summary: dict[str, Any]) -> dict[str, Any]:
     return totals if isinstance(totals, dict) else {}
 
 
+def _kernel_observer_rows(view: MissionRunView | None) -> list[tuple[str, str]]:
+    if view is None:
+        return []
+    rows: list[tuple[str, str]] = []
+    usage = _optional_dict(view, "usage_totals")
+    if usage:
+        parts = []
+        for key in ("input_tokens", "cached_input_tokens", "output_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                parts.append(f"{key}={value}")
+        if parts:
+            rows.append(("usage_totals", ", ".join(parts)))
+    context_pressure = _optional_context_pressure(view)
+    if context_pressure:
+        rows.append(("context_pressure", context_pressure))
+    latest_event_age = _optional_event_age(view)
+    if latest_event_age:
+        rows.append(("latest_event_age", latest_event_age))
+    tool_activity_refs = _optional_ref_list(view, "tool_activity_refs", "tool_activity_ref", "tool_refs")
+    if tool_activity_refs:
+        rows.append(("tool_activity_refs", ", ".join(tool_activity_refs[:3])))
+    safe_point_details = _optional_safe_point_details(view)
+    if safe_point_details:
+        rows.append(("safe_point_details", safe_point_details))
+    return rows
+
+
 def _interaction_status_line(run_status: dict[str, Any]) -> str:
     reason = _string_value(run_status, "interaction_stop_reason")
     count = run_status.get("pending_user_event_count")
@@ -965,6 +999,86 @@ def _force_rich_terminal(output_stream: TextIO) -> bool | None:
     if output_stream is sys.stdout:
         return None
     return False
+
+
+def _optional_dict(view: MissionRunView, attr_name: str) -> dict[str, Any]:
+    value = getattr(view, attr_name, None)
+    return value if isinstance(value, dict) else {}
+
+
+def _optional_context_pressure(view: MissionRunView) -> str:
+    value = getattr(view, "context_pressure", None)
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        parts = []
+        percent = _first_non_empty(
+            _string_value(value, "percent"),
+            _string_value(value, "ratio"),
+            _string_value(value, "pressure"),
+        )
+        if percent:
+            parts.append(percent)
+        for key in ("used_tokens", "limit_tokens", "available_tokens", "remaining_tokens"):
+            if key in value and isinstance(value.get(key), int):
+                parts.append(f"{key}={value[key]}")
+        return ", ".join(parts)
+    return ""
+
+
+def _optional_event_age(view: MissionRunView) -> str:
+    for attr_name in ("latest_event_age_seconds", "latest_event_age_s", "latest_event_age"):
+        value = getattr(view, attr_name, None)
+        if isinstance(value, (int, float)) and value > 0:
+            return f"{value:g}s"
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    value = getattr(view, "latest_event_age", None)
+    if isinstance(value, dict):
+        seconds = value.get("seconds")
+        if isinstance(seconds, (int, float)):
+            return f"{seconds:g}s"
+        age_ref = _string_value(value, "ref")
+        if age_ref:
+            return age_ref
+    return ""
+
+
+def _optional_ref_list(view: MissionRunView, *attr_names: str) -> list[str]:
+    for attr_name in attr_names:
+        value = getattr(view, attr_name, None)
+        if isinstance(value, list):
+            refs = [str(item).strip() for item in value if str(item).strip()]
+            if refs:
+                return refs
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+    return []
+
+
+def _optional_safe_point_details(view: MissionRunView) -> str:
+    details_ref = _first_non_empty(
+        _string_value(_optional_dict(view, "last_safe_point"), "ref"),
+        _string_value(_optional_dict(view, "last_safe_point_details"), "ref"),
+        _string_value(_optional_dict(view, "safe_point_details"), "ref"),
+        _string_value(_optional_dict(view, "safe_point"), "ref"),
+        _string_value(_optional_dict(view, "last_safe_point_details"), "details_ref"),
+    )
+    parts = []
+    if details_ref:
+        parts.append(f"ref={details_ref}")
+    for attr_name in ("last_safe_point_step_id", "last_safe_point_status", "last_safe_point_reason"):
+        value = getattr(view, attr_name, None)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{attr_name.removeprefix('last_safe_point_')}={value.strip()}")
+    for attr_name in ("last_safe_point_age_seconds", "last_safe_point_age_s"):
+        value = getattr(view, attr_name, None)
+        if isinstance(value, (int, float)) and value > 0:
+            parts.append(f"age={value:g}s")
+            break
+    return ", ".join(parts)
 
 
 def _text_list(value: Any) -> list[str]:

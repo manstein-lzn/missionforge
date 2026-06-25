@@ -10,10 +10,72 @@ import unittest
 from missionforge_deepresearch.kernel_v2 import run_deepresearch_kernel_v2
 from missionforge_deepresearch.kernel_v2 import KernelV2FixtureAdapter
 from missionforge_deepresearch.frontdesk import FrontDeskFixtureAdapter
-from missionforge_deepresearch.tui import FrontDeskTuiConfig, run_frontdesk_tui
+from missionforge_deepresearch.tui import FrontDeskTuiConfig, _kernel_observer_rows, _print_kernel_view, run_frontdesk_tui
+from missionforge.adapters.cli import MissionRunView
 
 
 class FrontDeskTuiTests(unittest.TestCase):
+    def test_kernel_view_helpers_render_optional_observer_fields(self) -> None:
+        view = MissionRunView(
+            flow_id="flow",
+            run_id="run",
+            status="running",
+            flow_result_ref="runs/demo/flow_result.json",
+            contract_ref="contracts/demo.json",
+            contract_hash="abc123",
+            latest_event_age_seconds=42,
+            last_safe_point_step_id="step-12",
+            last_safe_point_status="stable",
+            last_safe_point_details={"ref": "state/safe_point.json"},
+            usage_totals={
+                "input_tokens": 11,
+                "cached_input_tokens": 2,
+                "output_tokens": 7,
+                "total_tokens": 20,
+            },
+            context_pressure={"percent": "0.82", "remaining_tokens": 128},
+            tool_activity_refs=["state/tool_activity.json", "metrics/tool_usage.json"],
+        )
+
+        rows = _kernel_observer_rows(view)
+        output = StringIO()
+        _print_kernel_view(output, view)
+        rendered = output.getvalue()
+
+        self.assertIn(("usage_totals", "input_tokens=11, cached_input_tokens=2, output_tokens=7, total_tokens=20"), rows)
+        self.assertIn(("context_pressure", "0.82, remaining_tokens=128"), rows)
+        self.assertIn(("latest_event_age", "42s"), rows)
+        self.assertIn(("tool_activity_refs", "state/tool_activity.json, metrics/tool_usage.json"), rows)
+        self.assertIn(("safe_point_details", "ref=state/safe_point.json, step_id=step-12, status=stable"), rows)
+        self.assertIn("usage_totals: input_tokens=11, cached_input_tokens=2, output_tokens=7, total_tokens=20", rendered)
+        self.assertIn("context_pressure: 0.82, remaining_tokens=128", rendered)
+        self.assertIn("latest_event_age: 42s", rendered)
+        self.assertIn("tool_activity_refs: state/tool_activity.json", rendered)
+        self.assertIn("safe_point_details: ref=state/safe_point.json, step_id=step-12, status=stable", rendered)
+
+    def test_kernel_view_helpers_ignore_absent_optional_fields(self) -> None:
+        view = MissionRunView(
+            flow_id="flow",
+            run_id="run",
+            status="running",
+            flow_result_ref="runs/demo/flow_result.json",
+            contract_ref="contracts/demo.json",
+            contract_hash="abc123",
+        )
+
+        rows = _kernel_observer_rows(view)
+        output = StringIO()
+        _print_kernel_view(output, view)
+        rendered = output.getvalue()
+
+        self.assertEqual(rows, [])
+        self.assertIn("Kernel 状态", rendered)
+        self.assertNotIn("usage_totals:", rendered)
+        self.assertNotIn("context_pressure:", rendered)
+        self.assertNotIn("latest_event_age:", rendered)
+        self.assertNotIn("tool_activity_refs:", rendered)
+        self.assertNotIn("safe_point_details:", rendered)
+
     def test_tui_runs_chat_to_approval_and_research(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

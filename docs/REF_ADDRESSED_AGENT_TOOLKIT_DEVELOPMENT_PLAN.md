@@ -382,6 +382,10 @@ Current integration:
 - `python -m missionforge.adapters.cli tui` / `status` gives host applications
   and operators a read-only status surface over the same refs-only inspection
   result.
+- The status surface now includes optional token usage, context pressure, tool
+  observation refs, latest event age, and safe-point details when those refs
+  and metrics exist. It still does not expand raw artifact bodies, prompts,
+  provider payloads, tool outputs, stdout/stderr, or user text.
 - `preview_flow_step()`, `run_flow_step_once()`, and `read_flow_route()` provide
   a minimal no-cursor debug stepping trio. They do not schedule a Flow, run
   until completion, auto-repair, auto-accept, or create production flow records.
@@ -412,8 +416,10 @@ Current integration:
 - Done for first host observer slice: a read-only adapter CLI can render a
   `MissionRunView` from `inspect_kernel_run()` as JSON or compact terminal
   text.
-- Still open: richer tool activity, context pressure display, usage display,
-  and replay helpers.
+- Done for richer observer slice: tool activity refs, context pressure, usage
+  totals, latest event age, and safe-point details are visible through the
+  refs-only status view.
+- Still open: replay helpers.
 - A user can pause before the next step.
 - A user can inject guidance that becomes visible through explicit safe-point
   input refs.
@@ -588,6 +594,9 @@ Deliverables:
   shows host-Python orchestration through public/kernel APIs;
 - done for first host observer slice: `missionforge.adapters.cli` exposes a
   read-only status observer over Kernel run refs;
+- done for richer observer slice: `MissionRunView` exposes usage totals,
+  context pressure, tool observation refs, latest event age, and safe-point
+  details without adding product semantics;
 - done for first slice: DeepResearch result packages expose Kernel
   `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.

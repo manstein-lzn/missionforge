@@ -29,7 +29,7 @@ removing the disk-first assumption from data and context movement.
 | DeepResearch | Product integration; now consumes Kernel status view as pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
-| Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a read-only status observer exist |
+| Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a richer read-only status observer exist |
 | Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
@@ -92,12 +92,17 @@ removing the disk-first assumption from data and context movement.
 - Added a minimal read-only host adapter CLI:
   - `python -m missionforge.adapters.cli tui` / `status` renders a refs-only
     `MissionRunView` from `inspect_kernel_run()`;
-  - JSON and plain text output include statuses, counts, and refs without
-    expanding artifact bodies, prompts, provider payloads, or tool output.
+  - JSON and plain text output include statuses, counts, refs, token usage,
+    context pressure, tool observation refs, latest event age, and safe-point
+    details without expanding artifact bodies, prompts, provider payloads, or
+    tool output.
 - Wired DeepResearch TUI to the product-neutral Kernel status view:
   - `state/run_status.json` carries Kernel flow/event/snapshot refs;
   - `/status` and final result views render a `Kernel 状态` panel from
     `MissionRunView` while keeping DeepResearch semantics in the integration.
+  - The panel now shows optional Kernel observer rows for usage totals, context
+    pressure, latest event age, tool activity refs, and safe-point details when
+    those refs/metrics exist.
 
 ## In Progress
 
@@ -107,11 +112,8 @@ removing the disk-first assumption from data and context movement.
   - runtime adoption without changing product integration semantics
 - Harden context and observation adoption:
   - express more existing refs as `ArtifactRecord`;
-  - pass richer context diagnostics through runtime/provider observations;
   - extend debug stepping toward replay helpers for fixture flows;
-  - keep the host cookbook example small and product-neutral;
-  - add richer tool activity, context pressure, and usage display to the
-    read-only status view without expanding raw bodies.
+  - keep the host cookbook example small and product-neutral.
 
 ## Next Milestones
 
@@ -149,7 +151,7 @@ cd workers/pi-agent-runtime && npm test
 
 Observed results:
 
-- Context/observation/kernel inspection/debug/public API focused tests: 26 run, OK.
-- Core tests: 253 run, OK, 1 skipped.
-- DeepResearch integration tests: 45 run, OK.
+- Adapter/Kernel/Context/Observation/Progress focused tests: 78 run, OK.
+- Core tests: 260 run, OK, 1 skipped.
+- DeepResearch integration tests: 47 run, OK.
 - Pi agent runtime tests: 11 node test files, OK.

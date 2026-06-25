@@ -3,14 +3,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from ..contracts import ContractValidationError, assert_refs_only_payload, ensure_json_value, validate_ref
+from ..context import ContextView, ToolObservation
 from ..observation import RunEvent, RunSnapshot, read_run_events, read_run_snapshot
 from .contracts import FlowLedgerEvent, FlowResult, StepRecord
 from .io import read_json_ref, ref_exists, resolve_workspace_ref
+
+
+_USAGE_KEYS = (
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "tool_call_count",
+    "tool_error_count",
+    "provider_reported_cost_usd",
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +42,7 @@ class KernelStepInspection:
     context_projection_ref: str = ""
     context_hash: str = ""
     metric_refs: list[str] = field(default_factory=list)
+    runtime_refs: list[str] = field(default_factory=list)
     failure_refs: list[str] = field(default_factory=list)
 
     @classmethod
@@ -46,6 +61,7 @@ class KernelStepInspection:
             context_projection_ref=_metadata_ref(record.metadata, "context_projection_ref"),
             context_hash=_metadata_text(record.metadata, "context_hash"),
             metric_refs=list(record.metric_refs),
+            runtime_refs=_metadata_refs(record.metadata, "runtime_refs"),
             failure_refs=list(record.failure_refs),
         )
 
@@ -62,9 +78,93 @@ class KernelStepInspection:
             "context_projection_ref": self.context_projection_ref,
             "context_hash": self.context_hash,
             "metric_refs": list(self.metric_refs),
+            "runtime_refs": list(self.runtime_refs),
             "failure_refs": list(self.failure_refs),
         }
         return dict(assert_refs_only_payload(payload, "kernel_step_inspection"))
+
+
+@dataclass(frozen=True)
+class KernelUsageInspection:
+    """Refs-only token/tool-cost summary aggregated from metric refs."""
+
+    metric_refs: list[str] = field(default_factory=list)
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    tool_call_count: int = 0
+    tool_error_count: int = 0
+    provider_reported_cost_usd: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "metric_refs": list(self.metric_refs),
+            "total_tokens": self.total_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "tool_call_count": self.tool_call_count,
+            "tool_error_count": self.tool_error_count,
+            "provider_reported_cost_usd": self.provider_reported_cost_usd,
+        }
+        return dict(assert_refs_only_payload(payload, "kernel_usage_inspection"))
+
+
+@dataclass(frozen=True)
+class KernelContextInspection:
+    """Refs-only context projection summary."""
+
+    context_projection_refs: list[str] = field(default_factory=list)
+    stable_segment_count: int = 0
+    semi_stable_segment_count: int = 0
+    volatile_segment_count: int = 0
+    omitted_segment_count: int = 0
+    estimated_input_tokens: int = 0
+    token_budget: int = 0
+    pressure_ratio: float = 0.0
+    recommended_action: str = "continue"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "context_projection_refs": list(self.context_projection_refs),
+            "stable_segment_count": self.stable_segment_count,
+            "semi_stable_segment_count": self.semi_stable_segment_count,
+            "volatile_segment_count": self.volatile_segment_count,
+            "omitted_segment_count": self.omitted_segment_count,
+            "estimated_input_tokens": self.estimated_input_tokens,
+            "token_budget": self.token_budget,
+            "pressure_ratio": self.pressure_ratio,
+            "recommended_action": self.recommended_action,
+        }
+        return dict(assert_refs_only_payload(payload, "kernel_context_inspection"))
+
+
+@dataclass(frozen=True)
+class KernelToolActivityInspection:
+    """Refs-only tool activity summary from runtime refs and observations."""
+
+    tool_observation_refs: list[str] = field(default_factory=list)
+    observed_tool_names: list[str] = field(default_factory=list)
+    observation_count: int = 0
+    error_count: int = 0
+    latest_tool_name: str = ""
+    latest_tool_status: str = ""
+    latest_source_ref: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "tool_observation_refs": list(self.tool_observation_refs),
+            "observed_tool_names": list(self.observed_tool_names),
+            "observation_count": self.observation_count,
+            "error_count": self.error_count,
+            "latest_tool_name": self.latest_tool_name,
+            "latest_tool_status": self.latest_tool_status,
+            "latest_source_ref": self.latest_source_ref,
+        }
+        return dict(assert_refs_only_payload(payload, "kernel_tool_activity_inspection"))
 
 
 @dataclass(frozen=True)
@@ -91,7 +191,14 @@ class KernelRunInspection:
     latest_event_id: str = ""
     latest_event_kind: str = ""
     latest_event_status: str = ""
+    latest_event_created_at: str = ""
+    latest_event_age_seconds: int = 0
     last_safe_point_ref: str = ""
+    last_safe_point_step_id: str = ""
+    last_safe_point_status: str = ""
+    last_safe_point_event_count: int = 0
+    last_safe_point_age_seconds: int = 0
+    last_safe_point_details: Mapping[str, Any] = field(default_factory=dict)
     pending_user_event_count: int = 0
     step_record_refs: list[str] = field(default_factory=list)
     missing_step_record_refs: list[str] = field(default_factory=list)
@@ -105,6 +212,9 @@ class KernelRunInspection:
     execution_report_refs: list[str] = field(default_factory=list)
     observation_refs: list[str] = field(default_factory=list)
     step_records: list[KernelStepInspection] = field(default_factory=list)
+    usage: KernelUsageInspection = field(default_factory=KernelUsageInspection)
+    context: KernelContextInspection = field(default_factory=KernelContextInspection)
+    tool_activity: KernelToolActivityInspection = field(default_factory=KernelToolActivityInspection)
     run_event_count: int = 0
     ledger_event_count: int = 0
     stop_reason: str = ""
@@ -127,7 +237,14 @@ class KernelRunInspection:
             "latest_event_id": self.latest_event_id,
             "latest_event_kind": self.latest_event_kind,
             "latest_event_status": self.latest_event_status,
+            "latest_event_created_at": self.latest_event_created_at,
+            "latest_event_age_seconds": self.latest_event_age_seconds,
             "last_safe_point_ref": self.last_safe_point_ref,
+            "last_safe_point_step_id": self.last_safe_point_step_id,
+            "last_safe_point_status": self.last_safe_point_status,
+            "last_safe_point_event_count": self.last_safe_point_event_count,
+            "last_safe_point_age_seconds": self.last_safe_point_age_seconds,
+            "last_safe_point_details": dict(self.last_safe_point_details),
             "pending_user_event_count": self.pending_user_event_count,
             "step_record_refs": list(self.step_record_refs),
             "missing_step_record_refs": list(self.missing_step_record_refs),
@@ -141,6 +258,9 @@ class KernelRunInspection:
             "execution_report_refs": list(self.execution_report_refs),
             "observation_refs": list(self.observation_refs),
             "step_records": [record.to_dict() for record in self.step_records],
+            "usage": self.usage.to_dict(),
+            "context": self.context.to_dict(),
+            "tool_activity": self.tool_activity.to_dict(),
             "run_event_count": self.run_event_count,
             "ledger_event_count": self.ledger_event_count,
             "stop_reason": self.stop_reason,
@@ -200,11 +320,20 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
     execution_report_refs = _dedupe_refs(
         record.execution_report_ref for record in step_records if record.execution_report_ref
     )
+    runtime_refs = _dedupe_refs(ref for record in step_records for ref in record.runtime_refs)
+    tool_activity = _inspect_tool_activity(workspace, runtime_refs)
     observation_refs = _dedupe_refs(
         ref
-        for ref in [run_events_ref, run_snapshot_ref, _snapshot_text(run_snapshot, "last_safe_point_ref")]
+        for ref in [
+            run_events_ref,
+            run_snapshot_ref,
+            _snapshot_text(run_snapshot, "last_safe_point_ref"),
+            *tool_activity.tool_observation_refs,
+        ]
         if ref
     )
+    latest_safe_point = _latest_safe_point_event(run_events)
+    last_safe_point_ref = _snapshot_text(run_snapshot, "last_safe_point_ref")
 
     return KernelRunInspection(
         flow_result_ref=safe_flow_result_ref,
@@ -222,7 +351,14 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
         latest_event_id=latest_event.event_id if latest_event else "",
         latest_event_kind=latest_event.kind.value if latest_event else "",
         latest_event_status=latest_event.status if latest_event else "",
-        last_safe_point_ref=_snapshot_text(run_snapshot, "last_safe_point_ref"),
+        latest_event_created_at=latest_event.created_at if latest_event else "",
+        latest_event_age_seconds=_event_age_seconds(latest_event),
+        last_safe_point_ref=last_safe_point_ref,
+        last_safe_point_step_id=latest_safe_point.step_id if latest_safe_point else "",
+        last_safe_point_status=latest_safe_point.status if latest_safe_point else "",
+        last_safe_point_event_count=_event_metadata_int(latest_safe_point, "pending_user_event_count"),
+        last_safe_point_age_seconds=_event_age_seconds(latest_safe_point),
+        last_safe_point_details=_safe_point_details(latest_safe_point, last_safe_point_ref),
         pending_user_event_count=run_snapshot.pending_user_event_count if run_snapshot else 0,
         step_record_refs=list(flow_result.step_record_refs),
         missing_step_record_refs=missing_step_record_refs,
@@ -236,6 +372,9 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
         execution_report_refs=execution_report_refs,
         observation_refs=observation_refs,
         step_records=step_records,
+        usage=_inspect_usage(workspace, metric_refs),
+        context=_inspect_context(workspace, context_projection_refs, runtime_refs),
+        tool_activity=tool_activity,
         run_event_count=len(run_events),
         ledger_event_count=len(flow_ledger_events),
         stop_reason=_metadata_text(flow_result.metadata, "stop_reason"),
@@ -269,6 +408,160 @@ def _read_flow_ledger_if_present(workspace: str | Path, ledger_ref: str) -> list
     return events
 
 
+def _inspect_usage(workspace: str | Path, metric_refs: list[str]) -> KernelUsageInspection:
+    totals: dict[str, int | float] = {key: 0 for key in _USAGE_KEYS}
+    safe_metric_refs: list[str] = []
+    for metric_ref in metric_refs:
+        if not ref_exists(workspace, metric_ref):
+            continue
+        safe_metric_refs.append(metric_ref)
+        try:
+            payload = read_json_ref(workspace, metric_ref)
+        except (ContractValidationError, OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        totals["total_tokens"] = int(totals["total_tokens"]) + _non_negative_int(
+            payload.get("total_tokens", payload.get("token_count"))
+        )
+        totals["input_tokens"] = int(totals["input_tokens"]) + _non_negative_int(payload.get("input_tokens"))
+        totals["output_tokens"] = int(totals["output_tokens"]) + _non_negative_int(payload.get("output_tokens"))
+        totals["cache_read_tokens"] = int(totals["cache_read_tokens"]) + _non_negative_int(
+            payload.get("cache_read_tokens")
+        )
+        totals["cache_write_tokens"] = int(totals["cache_write_tokens"]) + _non_negative_int(
+            payload.get("cache_write_tokens")
+        )
+        totals["tool_call_count"] = int(totals["tool_call_count"]) + _non_negative_int(
+            payload.get("tool_call_count", payload.get("tool_calls"))
+        )
+        totals["tool_error_count"] = int(totals["tool_error_count"]) + _non_negative_int(
+            payload.get("tool_error_count")
+        )
+        totals["provider_reported_cost_usd"] = float(totals["provider_reported_cost_usd"]) + _non_negative_float(
+            payload.get("provider_reported_cost_usd")
+        )
+    return KernelUsageInspection(
+        metric_refs=_dedupe_refs(safe_metric_refs),
+        total_tokens=int(totals["total_tokens"]),
+        input_tokens=int(totals["input_tokens"]),
+        output_tokens=int(totals["output_tokens"]),
+        cache_read_tokens=int(totals["cache_read_tokens"]),
+        cache_write_tokens=int(totals["cache_write_tokens"]),
+        tool_call_count=int(totals["tool_call_count"]),
+        tool_error_count=int(totals["tool_error_count"]),
+        provider_reported_cost_usd=round(float(totals["provider_reported_cost_usd"]), 12),
+    )
+
+
+def _inspect_context(
+    workspace: str | Path,
+    context_projection_refs: list[str],
+    runtime_refs: list[str],
+) -> KernelContextInspection:
+    stable = 0
+    semi_stable = 0
+    volatile = 0
+    omitted = 0
+    estimated = 0
+    token_budget = 0
+    pressure_ratio = 0.0
+    recommended_action = "continue"
+    for ref in context_projection_refs:
+        if not ref_exists(workspace, ref):
+            continue
+        try:
+            payload = read_json_ref(workspace, ref)
+        except (ContractValidationError, OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        try:
+            view = ContextView.from_dict(payload)
+        except ContractValidationError:
+            estimated += _non_negative_int(payload.get("estimated_input_tokens"))
+            token_budget = max(token_budget, _context_budget(payload))
+            ratio = _non_negative_float(payload.get("pressure_ratio"))
+            if ratio >= pressure_ratio:
+                pressure_ratio = ratio
+                recommended_action = _safe_action(payload.get("recommended_action"))
+            continue
+        stable += len(view.stable_prefix)
+        semi_stable += len(view.semi_stable_context)
+        volatile += len(view.volatile_tail)
+        omitted += len(view.omitted_segments)
+        estimated += sum(segment.token_estimate for segment in view.all_segments)
+        if view.token_budget is not None:
+            token_budget = max(token_budget, view.token_budget)
+    for ref in runtime_refs:
+        if not ref.endswith("/context/projection.json") and not ref.endswith("context/projection.json"):
+            continue
+        if not ref_exists(workspace, ref):
+            continue
+        try:
+            payload = read_json_ref(workspace, ref)
+        except (ContractValidationError, OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, Mapping):
+            estimated += _non_negative_int(payload.get("estimated_input_tokens"))
+            token_budget = max(token_budget, _context_budget(payload))
+            ratio = _non_negative_float(payload.get("pressure_ratio"))
+            if ratio >= pressure_ratio:
+                pressure_ratio = ratio
+                recommended_action = _safe_action(payload.get("recommended_action"))
+    if token_budget == 0 and estimated > 0:
+        token_budget = estimated
+    if pressure_ratio == 0.0 and token_budget > 0:
+        pressure_ratio = min(1.0, estimated / token_budget)
+    return KernelContextInspection(
+        context_projection_refs=list(context_projection_refs),
+        stable_segment_count=stable,
+        semi_stable_segment_count=semi_stable,
+        volatile_segment_count=volatile,
+        omitted_segment_count=omitted,
+        estimated_input_tokens=estimated,
+        token_budget=token_budget,
+        pressure_ratio=round(pressure_ratio, 6),
+        recommended_action=recommended_action,
+    )
+
+
+def _inspect_tool_activity(workspace: str | Path, runtime_refs: list[str]) -> KernelToolActivityInspection:
+    observation_refs = _dedupe_refs(ref for ref in runtime_refs if ref.endswith("tool_observations.jsonl"))
+    observations: list[ToolObservation] = []
+    for ref in observation_refs:
+        if not ref_exists(workspace, ref):
+            continue
+        for payload in _read_jsonl_ref(workspace, ref):
+            try:
+                observations.append(ToolObservation.from_dict(payload))
+            except ContractValidationError:
+                continue
+    latest = observations[-1] if observations else None
+    return KernelToolActivityInspection(
+        tool_observation_refs=observation_refs,
+        observed_tool_names=sorted({observation.tool_name for observation in observations}),
+        observation_count=len(observations),
+        error_count=sum(1 for observation in observations if observation.status.value == "error"),
+        latest_tool_name=latest.tool_name if latest else "",
+        latest_tool_status=latest.status.value if latest else "",
+        latest_source_ref=latest.source_ref or latest.raw_ref or "" if latest else "",
+    )
+
+
+def _read_jsonl_ref(workspace: str | Path, ref: str) -> list[Mapping[str, Any]]:
+    if not ref_exists(workspace, ref):
+        return []
+    result: list[Mapping[str, Any]] = []
+    for line in resolve_workspace_ref(workspace, ref).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, Mapping):
+            result.append(payload)
+    return result
+
+
 def _snapshot_refs(snapshot: RunSnapshot | None, field_name: str) -> list[str]:
     if snapshot is None:
         return []
@@ -300,6 +593,95 @@ def _metadata_ref(metadata: Mapping[str, Any], key: str) -> str:
 def _metadata_text(metadata: Mapping[str, Any], key: str) -> str:
     value = metadata.get(key)
     return value if isinstance(value, str) else ""
+
+
+def _metadata_refs(metadata: Mapping[str, Any], key: str) -> list[str]:
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    return _dedupe_refs(value)
+
+
+def _latest_safe_point_event(events: list[RunEvent]) -> RunEvent | None:
+    for event in reversed(events):
+        if event.kind.value == "safe_point_reached":
+            return event
+    return None
+
+
+def _safe_point_details(event: RunEvent | None, safe_point_ref: str) -> dict[str, Any]:
+    if event is None and not safe_point_ref:
+        return {}
+    payload: dict[str, Any] = {}
+    if safe_point_ref:
+        payload["ref"] = safe_point_ref
+    if event is not None:
+        payload["step_id"] = event.step_id
+        payload["status"] = event.status
+        payload["event_count"] = _event_metadata_int(event, "pending_user_event_count")
+        payload["event_id"] = event.event_id
+    return payload
+
+
+def _event_metadata_int(event: RunEvent | None, key: str) -> int:
+    if event is None:
+        return 0
+    value = event.metadata.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _event_age_seconds(event: RunEvent | None) -> int:
+    if event is None:
+        return 0
+    try:
+        created_at = datetime.fromisoformat(event.created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    return max(int((datetime.now(UTC) - created_at.astimezone(UTC)).total_seconds()), 0)
+
+
+def _context_budget(payload: Mapping[str, Any]) -> int:
+    value = payload.get("token_budget")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    context_budget = payload.get("context_budget")
+    if isinstance(context_budget, Mapping):
+        for key in ("usable_input_budget", "model_context_window"):
+            nested = context_budget.get(key)
+            if isinstance(nested, int) and not isinstance(nested, bool) and nested > 0:
+                return nested
+    window = payload.get("model_context_window")
+    return window if isinstance(window, int) and not isinstance(window, bool) and window > 0 else 0
+
+
+def _safe_action(value: Any) -> str:
+    if isinstance(value, str) and value in {
+        "continue",
+        "prepare_checkpoint",
+        "checkpoint_before_next_turn",
+    }:
+        return value
+    return "continue"
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    return 0
+
+
+def _non_negative_float(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return max(float(value), 0.0)
+    return 0.0
 
 
 def _safe_flow_result_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
