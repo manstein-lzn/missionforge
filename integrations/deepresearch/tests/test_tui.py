@@ -52,6 +52,8 @@ class FrontDeskTuiTests(unittest.TestCase):
         self.assertIn("[FrontDesk] status: ready_for_approval", output)
         self.assertIn("[DeepResearch] status: accepted", output)
         self.assertIn("项目推进看板", output)
+        self.assertIn("Kernel 状态", output)
+        self.assertIn("flow_result", output)
         self.assertIn("里程碑", output)
         self.assertIn("覆盖面", output)
         self.assertIn("输出文件", output)

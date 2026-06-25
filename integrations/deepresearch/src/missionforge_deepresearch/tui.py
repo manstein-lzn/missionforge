@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by plain fallback te
     Table = None  # type: ignore[assignment]
 
 from missionforge.contracts import ContractValidationError
+from missionforge.adapters.cli import MissionRunView, build_mission_run_view
 from missionforge.interaction import FileInteractionPort, InteractionDelivery, UserEventKind
 from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
 from missionforge.piworker_runtime import PiWorkerCallAdapter
@@ -520,6 +521,7 @@ def _print_project_board(output_stream: TextIO, config: FrontDeskTuiConfig) -> N
     source_packet = _read_project_json(run_root, "source_packet")
     claim_index = _read_project_json(run_root, "claim_index")
     usage_summary = _read_project_json(run_root, "usage_summary")
+    kernel_view = _kernel_run_view(run_root, run_status)
 
     phase = _first_non_empty(
         _string_value(state, "project_phase"),
@@ -546,6 +548,7 @@ def _print_project_board(output_stream: TextIO, config: FrontDeskTuiConfig) -> N
             claim_count=claim_count,
             usage=usage,
             interaction_line=interaction_line,
+            kernel_view=kernel_view,
             state=state,
             researcher_control=researcher_control,
             reviewer_observation=reviewer_observation,
@@ -569,6 +572,7 @@ def _print_project_board(output_stream: TextIO, config: FrontDeskTuiConfig) -> N
         )
     if interaction_line:
         output_stream.write(f"  交互: {interaction_line}\n")
+    _print_kernel_view(output_stream, kernel_view)
 
     _print_milestones(output_stream, state)
     _print_coverage_map(output_stream, state)
@@ -590,6 +594,7 @@ def _print_rich_project_board(
     claim_count: int,
     usage: dict[str, Any],
     interaction_line: str,
+    kernel_view: MissionRunView | None,
     state: dict[str, Any],
     researcher_control: dict[str, Any],
     reviewer_observation: dict[str, Any],
@@ -615,6 +620,7 @@ def _print_rich_project_board(
     if interaction_line:
         overview.add_row("交互", interaction_line)
     rich_console.print(Panel(overview, title="项目推进看板", border_style=_phase_border_style(phase)))
+    _print_rich_kernel_view(rich_console, kernel_view)
     _print_rich_milestones(rich_console, state)
     _print_rich_coverage_map(rich_console, state)
     _print_rich_feedback(rich_console, "Reviewer", reviewer_observation)
@@ -682,6 +688,61 @@ def _print_rich_feedback(rich_console: Any, label: str, payload: dict[str, Any])
     if summary:
         body.add_row("summary", _one_line(summary, 120))
     rich_console.print(Panel(body, title=label, border_style=_phase_border_style(decision)))
+
+
+def _kernel_run_view(run_root: Path, run_status: dict[str, Any]) -> MissionRunView | None:
+    flow_result_ref = _string_value(run_status, "flow_result_ref")
+    if not flow_result_ref:
+        return None
+    try:
+        return build_mission_run_view(run_root, flow_result_ref=flow_result_ref)
+    except (ContractValidationError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _print_kernel_view(output_stream: TextIO, view: MissionRunView | None) -> None:
+    if view is None:
+        return
+    current = view.current_step_id or "<none>"
+    latest = view.latest_event_kind or "<none>"
+    latest_status = view.latest_event_status or "<none>"
+    safe_point = view.last_safe_point_ref or "<none>"
+    output_stream.write("  Kernel 状态:\n")
+    output_stream.write(
+        f"    status={view.status}, snapshot={view.snapshot_status or '<none>'}, "
+        f"current={current}, latest={latest}:{latest_status}\n"
+    )
+    output_stream.write(
+        f"    steps={len(view.step_record_refs)}, events={view.run_event_count}, "
+        f"pending_user_events={view.pending_user_event_count}, safe_point={safe_point}\n"
+    )
+    output_stream.write(f"    flow_result={view.flow_result_ref}\n")
+    for ref in view.observation_refs[:2]:
+        output_stream.write(f"    observation={ref}\n")
+
+
+def _print_rich_kernel_view(rich_console: Any, view: MissionRunView | None) -> None:
+    if view is None:
+        return
+    body = Table.grid(padding=(0, 1))
+    body.add_column(style="bold cyan", no_wrap=True)
+    body.add_column()
+    body.add_row("status", f"[{_status_style(view.status)}]{view.status}[/]")
+    body.add_row("snapshot", view.snapshot_status or "<none>")
+    body.add_row("current", _first_non_empty(view.current_step_id, "<none>"))
+    latest = view.latest_event_kind or "<none>"
+    if view.latest_event_status:
+        latest += f" status={view.latest_event_status}"
+    body.add_row("latest", latest)
+    body.add_row("steps/events", f"steps={len(view.step_record_refs)}, events={view.run_event_count}")
+    if view.pending_user_event_count:
+        body.add_row("pending_user_events", str(view.pending_user_event_count))
+    if view.last_safe_point_ref:
+        body.add_row("safe_point", view.last_safe_point_ref)
+    body.add_row("flow_result", view.flow_result_ref)
+    if view.observation_refs:
+        body.add_row("observations", ", ".join(view.observation_refs[:2]))
+    rich_console.print(Panel(body, title="Kernel 状态", border_style=_phase_border_style(view.status)))
 
 
 def _print_rich_next_actions(

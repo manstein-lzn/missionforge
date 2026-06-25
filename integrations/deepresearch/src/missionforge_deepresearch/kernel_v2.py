@@ -1117,12 +1117,19 @@ def _kernel_v2_run_status(
     flow_stop_reason = str(flow_result.flow_result.metadata.get("stop_reason") or "")
     interaction_stop_reason = flow_stop_reason if flow_stop_reason.startswith("user_") else ""
     interaction = dict(interaction_summary or {})
+    flow_ledger_ref = flow_result.flow_result.ledger_refs[0] if flow_result.flow_result.ledger_refs else "kernel/missing_flow_ledger.jsonl"
+    run_events_ref = _flow_metadata_ref(flow_result.flow_result.metadata, "run_events_ref", "kernel/missing_run_events.jsonl")
+    run_snapshot_ref = _flow_metadata_ref(flow_result.flow_result.metadata, "run_snapshot_ref", "kernel/missing_run_snapshot.json")
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2.run_status.v1",
         "request_id": request.request_id,
         "status": status,
         "flow_status": flow_result.flow_result.status,
         "flow_stop_reason": flow_stop_reason,
+        "flow_result_ref": flow_result.flow_result_ref,
+        "flow_ledger_ref": flow_ledger_ref,
+        "run_events_ref": run_events_ref,
+        "run_snapshot_ref": run_snapshot_ref,
         "interaction_stop_reason": interaction_stop_reason,
         "pending_user_event_count": interaction.get("pending_user_event_count", 0),
         "last_interaction_snapshot_ref": interaction.get("last_interaction_snapshot_ref", ""),

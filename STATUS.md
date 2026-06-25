@@ -26,7 +26,7 @@ removing the disk-first assumption from data and context movement.
 | Git hygiene | `main` pushed; old local and remote branches removed; new working branch created |
 | Core direction | Product-neutral PiWorker-centered toolkit, not a workflow framework |
 | Kernel API | Kept as a thin developer-friendly facade over core primitives |
-| DeepResearch | Product integration; useful pressure test, not core architecture |
+| DeepResearch | Product integration; now consumes Kernel status view as pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
 | Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a read-only status observer exist |
@@ -94,6 +94,10 @@ removing the disk-first assumption from data and context movement.
     `MissionRunView` from `inspect_kernel_run()`;
   - JSON and plain text output include statuses, counts, and refs without
     expanding artifact bodies, prompts, provider payloads, or tool output.
+- Wired DeepResearch TUI to the product-neutral Kernel status view:
+  - `state/run_status.json` carries Kernel flow/event/snapshot refs;
+  - `/status` and final result views render a `Kernel 状态` panel from
+    `MissionRunView` while keeping DeepResearch semantics in the integration.
 
 ## In Progress
 
@@ -106,7 +110,8 @@ removing the disk-first assumption from data and context movement.
   - pass richer context diagnostics through runtime/provider observations;
   - extend debug stepping toward replay helpers for fixture flows;
   - keep the host cookbook example small and product-neutral;
-  - teach product UIs to consume the new read-only status view directly.
+  - add richer tool activity, context pressure, and usage display to the
+    read-only status view without expanding raw bodies.
 
 ## Next Milestones
 

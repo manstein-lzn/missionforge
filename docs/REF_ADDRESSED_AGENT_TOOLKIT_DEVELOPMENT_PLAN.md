@@ -467,14 +467,16 @@ into core.
 1. Keep DeepResearch role prompts, rubrics, source tools, and report contracts
    in `integrations/deepresearch`.
 2. Consume `ContextView` diagnostics for better long-run stability.
-3. Consume observation/control events for TUI progress and interruption.
+3. Done for first status slice: consume Kernel observation/control refs through
+   `MissionRunView` in the DeepResearch TUI.
 4. Keep final paths, usage summary, and report exports visible to users.
 
 ### Exit Criteria
 
 - DeepResearch standard and intensive runs can use the new core boundaries
   without product semantics entering `src/missionforge`.
-- The TUI can show project-level state, not just raw tool events.
+- Done for first status slice: the TUI can show product project state and
+  product-neutral Kernel state, not just raw tool events.
 - Reports and source artifacts remain easy to locate after completion.
 
 ## Implementation Phases
