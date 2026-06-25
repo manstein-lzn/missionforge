@@ -10,7 +10,14 @@ import unittest
 from missionforge_deepresearch.kernel_v2 import run_deepresearch_kernel_v2
 from missionforge_deepresearch.kernel_v2 import KernelV2FixtureAdapter
 from missionforge_deepresearch.frontdesk import FrontDeskFixtureAdapter
-from missionforge_deepresearch.tui import FrontDeskTuiConfig, _kernel_observer_rows, _print_kernel_view, run_frontdesk_tui
+from missionforge_deepresearch.tui import (
+    FrontDeskTuiConfig,
+    _ResearchInputListener,
+    _kernel_observer_rows,
+    _print_kernel_view,
+    _run_root,
+    run_frontdesk_tui,
+)
 from missionforge.adapters.cli import MissionRunView
 
 
@@ -197,6 +204,65 @@ class FrontDeskTuiTests(unittest.TestCase):
         self.assertEqual(events[0]["target"], "flow")
         self.assertIn("请额外关注用户体验和进度可观测性。", events[0]["text"])
         self.assertIn("已记录用户插入", output)
+
+    def test_runtime_listener_routes_control_commands_through_control_port(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            inputs = StringIO(
+                "\n".join(
+                    [
+                        "/help",
+                        "/pause",
+                        "/resume",
+                        "/checkpoint",
+                        "/stop",
+                        "/revise 需要收紧范围",
+                        "/cancel",
+                        "继续保留这条自然语言输入。",
+                        "/quit",
+                    ]
+                )
+                + "\n"
+            )
+            outputs = StringIO()
+            listener = _ResearchInputListener(
+                config=FrontDeskTuiConfig(
+                    request_id="tui-control",
+                    workspace=root,
+                    live_extension_mode=False,
+                ),
+                input_stream=inputs,
+                output_stream=outputs,
+            )
+            listener._run()
+            event_log = _run_root(
+                FrontDeskTuiConfig(
+                    request_id="tui-control",
+                    workspace=root,
+                    live_extension_mode=False,
+                )
+            ) / "interaction/user_events.jsonl"
+            events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+            output = outputs.getvalue()
+
+        self.assertEqual(
+            [event["kind"] for event in events],
+            [
+                "pause_request",
+                "resume_request",
+                "checkpoint_request",
+                "stop_after_current_turn",
+                "contract_revision_request",
+                "cancel_request",
+                "message",
+                "message",
+            ],
+        )
+        self.assertIn("研究运行中可用命令", output)
+        self.assertIn("/resume", output)
+        self.assertIn("/checkpoint", output)
+        self.assertIn("/stop", output)
+        self.assertIn("继续保留这条自然语言输入。", events[-2]["text"])
 
 
 if __name__ == "__main__":

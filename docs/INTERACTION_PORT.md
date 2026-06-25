@@ -49,11 +49,12 @@ for later resume or revision handling.
 
 ## Safe-Point Semantics
 
-The first implementation is intentionally safe-point based:
+The first implementation is intentionally safe-point based and now routes all
+host-side control requests through `ControlPort`:
 
 ```text
-TUI/Web submits UserEvent
-  -> FileInteractionPort appends it
+TUI/Web submits ControlPort request
+  -> FileControlPort appends the corresponding UserEvent
   -> kernel checks before the next step
   -> kernel writes execution-scoped safe-point projection
   -> next PiWorker sees the projection as an input ref

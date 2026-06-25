@@ -386,6 +386,9 @@ Current integration:
   observation refs, latest event age, and safe-point details when those refs
   and metrics exist. It still does not expand raw artifact bodies, prompts,
   provider payloads, tool outputs, stdout/stderr, or user text.
+- DeepResearch TUI now routes runtime interventions through `ControlPort`
+  commands (`/pause`, `/cancel`, `/resume`, `/checkpoint`, `/stop`, `/revise`)
+  instead of writing interaction refs directly.
 - `preview_flow_step()`, `run_flow_step_once()`, and `read_flow_route()` provide
   a minimal no-cursor debug stepping trio. They do not schedule a Flow, run
   until completion, auto-repair, auto-accept, or create production flow records.

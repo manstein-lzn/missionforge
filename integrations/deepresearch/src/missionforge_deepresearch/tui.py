@@ -20,9 +20,10 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by plain fallback te
     Panel = None  # type: ignore[assignment]
     Table = None  # type: ignore[assignment]
 
+from missionforge import FileControlPort, UserEvent
 from missionforge.contracts import ContractValidationError
 from missionforge.adapters.cli import MissionRunView, build_mission_run_view
-from missionforge.interaction import FileInteractionPort, InteractionDelivery, UserEventKind
+from missionforge.interaction import FileInteractionPort
 from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
 from missionforge.piworker_runtime import PiWorkerCallAdapter
 
@@ -164,7 +165,8 @@ def _print_intro(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:
             "[green]/show[/green] 查看需求  "
             "[green]/status[/green] 项目推进  "
             "[green]/approve[/green] 批准并启动  "
-            "[green]/quit[/green] 退出"
+            "[green]/quit[/green] 退出  "
+            "[green]/help[/green] 命令帮助"
         )
         rich_console.print()
         return
@@ -438,6 +440,8 @@ class _ResearchInputListener:
         self.config = config
         self.input_stream = input_stream
         self.output_stream = output_stream
+        self.run_id = deepresearch_kernel_v2_flow_run_id(config.request_id)
+        self.control_port = FileControlPort(FileInteractionPort(_run_root(config)))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -448,7 +452,7 @@ class _ResearchInputListener:
         self._thread.start()
         _hint(
             self.output_stream,
-            "研究运行中可以直接输入补充；/revise <内容> 请求修订合同，/pause 和 /cancel 会在下一安全点生效，不会打断当前 PiWorker 调用。",
+            "研究运行中可以直接输入补充；/revise <内容>、/pause、/cancel、/resume、/checkpoint、/stop 会在下一安全点生效，不会打断当前 PiWorker 调用；/status 查看项目推进，/help 查看命令。",
         )
 
     def stop(self) -> None:
@@ -465,47 +469,84 @@ class _ResearchInputListener:
             if not message:
                 continue
             if message.lower() in {"/quit", "/exit"}:
-                self._write_user_event(
-                    "用户请求退出交互界面；正式研究可在安全点继续或由外部终止。",
-                    kind=UserEventKind.MESSAGE,
+                self._record_event(
+                    self.control_port.inject_message(
+                        run_id=self.run_id,
+                        text="用户请求退出交互界面；正式研究可在安全点继续或由外部终止。",
+                    )
                 )
                 return
             if message.lower() == "/pause":
-                self._write_user_event("用户请求暂停。", kind=UserEventKind.PAUSE_REQUEST)
+                self._record_event(self.control_port.pause(run_id=self.run_id))
                 continue
             if message.lower() == "/cancel":
-                self._write_user_event("用户请求取消。", kind=UserEventKind.CANCEL_REQUEST)
+                self._record_event(self.control_port.cancel(run_id=self.run_id))
                 continue
             if message.startswith("/revise "):
-                self._write_user_event(
-                    message.removeprefix("/revise ").strip(),
-                    kind=UserEventKind.CONTRACT_REVISION_REQUEST,
-                )
+                revision = message.removeprefix("/revise ").strip()
+                if revision:
+                    self._record_event(self.control_port.request_revision(run_id=self.run_id, text=revision))
+                continue
+            if message.lower() == "/resume":
+                self._record_event(self.control_port.resume(run_id=self.run_id))
+                continue
+            if message.lower() in {"/checkpoint", "/force-checkpoint"}:
+                self._record_event(self.control_port.force_checkpoint(run_id=self.run_id))
+                continue
+            if message.lower() in {"/stop", "/stop-turn"}:
+                self._record_event(self.control_port.stop_after_current_turn(run_id=self.run_id))
+                continue
+            if message.lower() in {"/help", "帮助"}:
+                _print_runtime_help(self.output_stream)
                 continue
             if message.lower() in {"/status", "状态"}:
                 _print_project_board(self.output_stream, self.config)
                 continue
-            self._write_user_event(message, kind=UserEventKind.MESSAGE)
+            self._record_event(self.control_port.inject_message(run_id=self.run_id, text=message))
 
-    def _write_user_event(self, text: str, *, kind: UserEventKind) -> None:
-        if not text.strip():
-            return
-        run_root = _run_root(self.config)
-        port = FileInteractionPort(run_root)
-        event = port.submit_text(
-            text,
-            run_id=deepresearch_kernel_v2_flow_run_id(self.config.request_id),
-            target="flow",
-            kind=kind,
-            delivery=InteractionDelivery.NEXT_SAFE_POINT,
-            metadata={"source": "deepresearch_tui"},
-        )
+    def _record_event(self, event: UserEvent) -> None:
         rich_console = _rich_console(self.output_stream)
         if rich_console is not None:
             rich_console.print(f"[dim]已记录用户插入：{event.kind.value} -> {event.event_id}[/dim]")
         else:
             self.output_stream.write(f"  [interaction] 已记录用户插入：{event.kind.value} -> {event.event_id}\n")
             self.output_stream.flush()
+
+
+def _print_runtime_help(output_stream: TextIO) -> None:
+    rich_console = _rich_console(output_stream)
+    if rich_console is not None:
+        table = Table(title="研究运行中可用命令", box=None, show_header=True, header_style="bold cyan")
+        table.add_column("命令", style="green", no_wrap=True)
+        table.add_column("说明")
+        for command, description in [
+            ("/status", "查看项目推进看板"),
+            ("/help", "查看这份帮助"),
+            ("/pause", "在下一安全点暂停"),
+            ("/cancel", "在下一安全点取消"),
+            ("/resume", "记录恢复请求"),
+            ("/checkpoint", "请求创建检查点"),
+            ("/stop", "在当前回合结束后停止"),
+            ("/revise <内容>", "请求修订合同"),
+            ("自然语言", "作为补充意见写入下一安全点"),
+        ]:
+            table.add_row(command, description)
+        rich_console.print(table)
+        return
+    _section(output_stream, "研究运行中可用命令")
+    for command, description in [
+        ("/status", "查看项目推进看板"),
+        ("/help", "查看这份帮助"),
+        ("/pause", "在下一安全点暂停"),
+        ("/cancel", "在下一安全点取消"),
+        ("/resume", "记录恢复请求"),
+        ("/checkpoint", "请求创建检查点"),
+        ("/stop", "在当前回合结束后停止"),
+        ("/revise <内容>", "请求修订合同"),
+        ("自然语言", "作为补充意见写入下一安全点"),
+    ]:
+        output_stream.write(f"  {command:<16} {description}\n")
+    output_stream.write("\n")
 
 
 def _print_project_board(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:

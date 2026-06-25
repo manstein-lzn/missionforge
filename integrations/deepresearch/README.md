@@ -50,7 +50,11 @@ While the research run is active, the TUI also accepts user interventions:
 - `/revise <text>`: queued as a contract revision request;
 - `/pause`: requests a safe-point pause;
 - `/cancel`: requests safe-point cancellation;
+- `/resume`: records a resume request for the next safe point;
+- `/checkpoint`: requests a checkpoint at the next safe point;
+- `/stop`: requests stop after the current turn;
 - `/status`: prints the current project board.
+- `/help`: prints the runtime command list.
 
 These events are stored under `interaction/user_events.jsonl` and projected to
 the next worker through execution-scoped `interaction/safe_points/*.json`

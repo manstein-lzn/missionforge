@@ -29,7 +29,7 @@ removing the disk-first assumption from data and context movement.
 | DeepResearch | Product integration; now consumes Kernel status view as pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
-| Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a richer read-only status observer exist |
+| Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a richer read-only status observer exist; DeepResearch TUI now routes runtime controls through the shared control port |
 | Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
@@ -103,6 +103,9 @@ removing the disk-first assumption from data and context movement.
   - The panel now shows optional Kernel observer rows for usage totals, context
     pressure, latest event age, tool activity refs, and safe-point details when
     those refs/metrics exist.
+  - Runtime user commands now go through `FileControlPort` (`/pause`,
+    `/cancel`, `/resume`, `/checkpoint`, `/stop`, `/revise`) rather than
+    appending interaction files directly in the TUI layer.
 
 ## In Progress
 
