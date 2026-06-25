@@ -29,7 +29,7 @@ removing the disk-first assumption from data and context movement.
 | DeepResearch | Product integration; useful pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
 | Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
-| Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, and fixture debug stepping primitives exist |
+| Observation/control | Phase 4 first slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, and a read-only status observer exist |
 | Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
 
@@ -89,6 +89,11 @@ removing the disk-first assumption from data and context movement.
   using `StepCompileContext`, `Flow`, `preview_flow_step()`,
   `run_flow_step_once()`, `run_flow()`, `read_flow_route()`, and
   `inspect_kernel_run()` without pulling in DeepResearch semantics.
+- Added a minimal read-only host adapter CLI:
+  - `python -m missionforge.adapters.cli tui` / `status` renders a refs-only
+    `MissionRunView` from `inspect_kernel_run()`;
+  - JSON and plain text output include statuses, counts, and refs without
+    expanding artifact bodies, prompts, provider payloads, or tool output.
 
 ## In Progress
 
@@ -101,8 +106,7 @@ removing the disk-first assumption from data and context movement.
   - pass richer context diagnostics through runtime/provider observations;
   - extend debug stepping toward replay helpers for fixture flows;
   - keep the host cookbook example small and product-neutral;
-  - teach product UIs to consume `RunSnapshot`, `RunEvent`, and Kernel run
-    inspection directly.
+  - teach product UIs to consume the new read-only status view directly.
 
 ## Next Milestones
 

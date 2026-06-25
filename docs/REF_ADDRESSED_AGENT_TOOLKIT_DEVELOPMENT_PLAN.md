@@ -379,6 +379,9 @@ Current integration:
 - `missionforge.kernel.inspect_kernel_run()` gives host applications a
   refs-only summary without expanding artifact bodies, prompts, execution
   reports, provider payloads, tool bodies, or safe-point user text.
+- `python -m missionforge.adapters.cli tui` / `status` gives host applications
+  and operators a read-only status surface over the same refs-only inspection
+  result.
 - `preview_flow_step()`, `run_flow_step_once()`, and `read_flow_route()` provide
   a minimal no-cursor debug stepping trio. They do not schedule a Flow, run
   until completion, auto-repair, auto-accept, or create production flow records.
@@ -406,6 +409,9 @@ Current integration:
 - Done for first host cookbook slice: a product-neutral example shows ordinary
   Python code using preview, debug-run, flow execution, route inspection, and
   refs-only run inspection without DeepResearch semantics.
+- Done for first host observer slice: a read-only adapter CLI can render a
+  `MissionRunView` from `inspect_kernel_run()` as JSON or compact terminal
+  text.
 - Still open: richer tool activity, context pressure display, usage display,
   and replay helpers.
 - A user can pause before the next step.
@@ -578,6 +584,8 @@ Deliverables:
   stepping helpers without becoming a scheduler;
 - done for first host cookbook slice: `examples/kernel_host_toolkit_example.py`
   shows host-Python orchestration through public/kernel APIs;
+- done for first host observer slice: `missionforge.adapters.cli` exposes a
+  read-only status observer over Kernel run refs;
 - done for first slice: DeepResearch result packages expose Kernel
   `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.
@@ -588,6 +596,8 @@ Exit criteria:
 - done for first slice: core package remains product-neutral;
 - done for first host cookbook slice: docs and example show host-Python
   orchestration patterns.
+- done for first host observer slice: host adapters can show project state from
+  refs without driving orchestration.
 
 ## Explicit Non-Goals For This Branch
 

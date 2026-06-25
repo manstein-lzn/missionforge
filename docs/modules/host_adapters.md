@@ -47,9 +47,19 @@ use the TaskContract/PiWorker flow.
 `tui` is a read-only terminal observer for an existing workspace/run ref:
 
 ```bash
-python -m missionforge.adapters.cli tui --workspace . --run-ref runs/example --watch
-python -m missionforge.adapters.cli tui --workspace . --run-ref runs/example --json
+python -m missionforge.adapters.cli tui \
+  --workspace . \
+  --flow-result-ref kernel/example/runs/example/executions/001/flow_result.json \
+  --watch
+
+python -m missionforge.adapters.cli status \
+  --workspace . \
+  --flow-result-ref kernel/example/runs/example/executions/001/flow_result.json \
+  --json
 ```
+
+`--run-ref` is accepted as an alias for `--flow-result-ref` for host shells
+that already use run-ref terminology.
 
 The human terminal view renders compact metadata from event logs, execution
 reports, boundary reports, extension load reports, metrics, and common artifact
