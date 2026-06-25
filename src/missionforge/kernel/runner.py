@@ -40,6 +40,7 @@ from .contracts import (
 from .extensions import ExtensionInstaller, prepare_extension_lock
 from .io import hash_refs, read_json_ref, ref_exists, resolve_workspace_ref, write_json_ref, write_jsonl_ref
 from .projections import ProjectionProjector, ProjectionRunResult, run_projections
+from .routing import route_value_for_step
 
 
 @dataclass(frozen=True)
@@ -781,7 +782,7 @@ def run_flow(
             break
         decision_refs.append(current.route_on)
         try:
-            route_value = _route_value_for_step(workspace, current)
+            route_value = route_value_for_step(workspace, current)
         except (OSError, json.JSONDecodeError, ContractValidationError, KernelValidationError) as exc:
             status = "blocked"
             stop_reason = "invalid_decision_artifact"
@@ -1407,7 +1408,7 @@ def _has_recoverable_route_decision(workspace: str | Path, step: Step) -> bool:
     if not ref_exists(workspace, step.route_on):
         return False
     try:
-        _route_value_for_step(workspace, step)
+        route_value_for_step(workspace, step)
     except (OSError, json.JSONDecodeError, ContractValidationError, KernelValidationError):
         return False
     return True
@@ -1436,30 +1437,6 @@ def _existing_extension_lock_hash(workspace: str | Path, ref: str | None) -> str
         return ExtensionLock.from_dict(json.loads(path.read_text(encoding="utf-8"))).lock_hash
     except (OSError, json.JSONDecodeError, ContractValidationError):
         return None
-
-
-def _route_value_for_step(workspace: str | Path, step: Step) -> str:
-    if step.route_on is None:
-        raise KernelValidationError("kernel_flow route step must declare route_on")
-    payload = read_json_ref(workspace, step.route_on)
-    if not isinstance(payload, Mapping):
-        raise KernelValidationError("kernel_flow decision artifact must be a JSON object")
-    values: list[str] = []
-    for field in step.route_fields:
-        value = payload.get(field)
-        if value is None:
-            raise KernelValidationError(f"kernel_flow decision artifact missing route field: {field}")
-        if not isinstance(value, str) or not value.strip():
-            raise KernelValidationError(f"kernel_flow decision artifact route field must be a string: {field}")
-        values.append(_safe_route_segment(value.strip(), f"kernel_flow decision artifact route field: {field}"))
-    return "+".join(values)
-
-
-def _safe_route_segment(value: str, field_name: str) -> str:
-    route_value = validate_ref(value, field_name)
-    if "/" in route_value or "\\" in route_value or route_value in {".", ".."}:
-        raise KernelValidationError(f"{field_name} must be a single safe route segment")
-    return route_value
 
 
 def _dedupe_refs(values: list[str]) -> list[str]:

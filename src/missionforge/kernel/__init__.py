@@ -18,8 +18,16 @@ from .contracts import (
     StepStatus,
     Toolset,
 )
+from .debug import (
+    KernelStepDebugResult,
+    KernelStepPreview,
+    preview_flow_step,
+    read_flow_route,
+    run_flow_step_once,
+)
 from .inspect import KernelRunInspection, KernelStepInspection, inspect_kernel_run
 from .projections import ProjectionRunResult, run_projection, run_projections
+from .routing import KernelRouteDecision
 from .runner import FlowRunResult, StepRunResult, run_flow, run_step
 
 __all__ = [
@@ -35,7 +43,10 @@ __all__ = [
     "FlowStop",
     "KernelValidationError",
     "KernelRunInspection",
+    "KernelRouteDecision",
+    "KernelStepDebugResult",
     "KernelStepInspection",
+    "KernelStepPreview",
     "Projection",
     "ProjectionRecord",
     "ProjectionRunResult",
@@ -47,6 +58,9 @@ __all__ = [
     "Toolset",
     "compile_step",
     "inspect_kernel_run",
+    "preview_flow_step",
+    "read_flow_route",
+    "run_flow_step_once",
     "run_flow",
     "run_projection",
     "run_projections",

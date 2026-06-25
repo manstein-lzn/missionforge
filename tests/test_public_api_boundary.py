@@ -178,6 +178,12 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "run_revision_draft_with_default_piworker",
             "TaskContractFlowPreset",
             "create_default_task_contract_flow",
+            "KernelRouteDecision",
+            "KernelStepDebugResult",
+            "KernelStepPreview",
+            "preview_flow_step",
+            "read_flow_route",
+            "run_flow_step_once",
         }
 
         for symbol in forbidden:

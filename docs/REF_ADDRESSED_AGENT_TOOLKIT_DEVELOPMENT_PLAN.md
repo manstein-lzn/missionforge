@@ -360,13 +360,12 @@ usable as an embedded subsystem.
    - resume;
    - stop after current turn;
    - force checkpoint.
-4. Deferred: add debug stepping support:
+4. Done for first debug slice: add fixture-flow debug stepping support:
    - compile next step;
    - inspect permissions;
    - inspect context;
-   - run next step;
-   - route next;
-   - replay from artifact boundary.
+   - run one explicit step;
+   - route one explicit decision artifact.
 5. Done for first inspect slice: add a product-neutral Kernel run inspection
    helper over flow result, run snapshot, run events, flow ledger, step records,
    context projection refs, artifact refs, metric refs, and execution report
@@ -380,6 +379,9 @@ Current integration:
 - `missionforge.kernel.inspect_kernel_run()` gives host applications a
   refs-only summary without expanding artifact bodies, prompts, execution
   reports, provider payloads, tool bodies, or safe-point user text.
+- `preview_flow_step()`, `run_flow_step_once()`, and `read_flow_route()` provide
+  a minimal no-cursor debug stepping trio. They do not schedule a Flow, run
+  until completion, auto-repair, auto-accept, or create production flow records.
 - `stop_after_current_turn` lets the visible step run and then blocks before
   route progression.
 - User text remains in the interaction plane; observation records only carry
@@ -399,8 +401,10 @@ Current integration:
 - Done for first inspect slice: a host UI can show current phase, step, role,
   latest refs, observation refs, and last safe point from refs-only Kernel
   inspection.
+- Done for first debug slice: a developer can preview one explicit fixture
+  step, run it once under a debug prefix, and inspect the route target.
 - Still open: richer tool activity, context pressure display, usage display,
-  and fixture debug stepping.
+  replay helpers, and host cookbook examples.
 - A user can pause before the next step.
 - A user can inject guidance that becomes visible through explicit safe-point
   input refs.
@@ -424,7 +428,8 @@ the new primitives.
 2. Keep `Flow` minimal and product-neutral.
 3. Preserve route extraction only from structured decision artifacts.
 4. Done for first inspect slice: add refs-only inspection hooks to Kernel runs.
-5. Deferred: add fixture-flow debug stepping.
+5. Done for first debug slice: add fixture-flow debug stepping primitives.
+6. Deferred: replay helpers and cookbook examples.
 
 ### Rules
 
@@ -535,7 +540,7 @@ Exit criteria:
 
 ### Phase 4: Observation And Control
 
-Status: first observation/control and inspect slices implemented on 2026-06-24.
+Status: first observation/control, inspect, and debug stepping slices implemented on 2026-06-24.
 
 Deliverables:
 
@@ -551,7 +556,9 @@ Exit criteria:
   `RunEvent`, `RunSnapshot`, and `inspect_kernel_run()` without parsing raw
   logs;
 - done for first slice: interruption remains safe-point based;
-- deferred: fixture-flow debug stepping.
+- done for first debug slice: fixture-flow stepping covers explicit preview,
+  run-once, and route-read operations;
+- deferred: replay helpers and host cookbook examples.
 
 ### Phase 5: Kernel And Product Migration
 
@@ -563,6 +570,8 @@ Deliverables:
   observation refs without becoming a scheduler or semantic router;
 - done for first inspect slice: Kernel API exposes a read-only, refs-only
   inspection helper for host UIs and debuggers;
+- done for first debug slice: Kernel API exposes stateless fixture debug
+  stepping helpers without becoming a scheduler;
 - done for first slice: DeepResearch result packages expose Kernel
   `run_events_ref` and `run_snapshot_ref`;
 - docs and cookbook show host-Python orchestration patterns.

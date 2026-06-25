@@ -14,6 +14,9 @@ from missionforge.kernel import (
     FlowLedgerEventKind,
     FlowRunResult,
     KernelRunInspection,
+    KernelRouteDecision,
+    KernelStepDebugResult,
+    KernelStepPreview,
     KernelValidationError,
     Projection,
     ProjectionRunResult,
@@ -25,6 +28,9 @@ from missionforge.kernel import (
     Toolset,
     compile_step,
     inspect_kernel_run,
+    preview_flow_step,
+    read_flow_route,
+    run_flow_step_once,
     run_flow,
     run_projection,
     run_step,
@@ -1101,6 +1107,222 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(inspection.missing_step_record_refs, [missing_ref])
         self.assertEqual(inspection.step_records, [])
         self.assertEqual(inspection.step_record_refs, [missing_ref])
+
+    def test_preview_flow_step_returns_refs_only_boundary_without_writes(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="PROMPT_SENTINEL_SHOULD_NOT_LEAK",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            routes={"reviewer.ready_for_judge": Flow.stop("blocked")},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "ARTIFACT_SENTINEL_SHOULD_NOT_LEAK\n")
+            preview = preview_flow_step(
+                flow,
+                "reviewer",
+                context=_context(),
+                ref_prefix="kernel/debug/demo/reviewer",
+            )
+            serialized = json.dumps(preview.to_dict(), sort_keys=True, ensure_ascii=False)
+            written_paths = [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()]
+
+        self.assertIsInstance(preview, KernelStepPreview)
+        self.assertEqual(preview.step_id, "reviewer")
+        self.assertEqual(preview.call_id, "demo-flow-reviewer")
+        self.assertEqual(preview.role, "executor_piworker")
+        self.assertEqual(preview.permission_manifest_ref, "kernel/debug/demo/reviewer/permission_manifest.json")
+        self.assertTrue(preview.permission_manifest_hash.startswith("sha256:"))
+        self.assertEqual(preview.readable_refs, ["contract/task_contract.json", "reports"])
+        self.assertEqual(preview.visible_refs, ["contract/task_contract.json", "reports/final_report.md"])
+        self.assertNotIn("kernel/debug/demo/reviewer/permission_manifest.json", preview.visible_refs)
+        self.assertNotIn("kernel/debug/demo/reviewer/step_spec.json", preview.visible_refs)
+        self.assertEqual(preview.writable_refs, ["reviews"])
+        self.assertEqual(preview.denied_refs, [])
+        self.assertEqual(preview.expected_output_refs, ["reviews/observation.json"])
+        self.assertEqual(preview.allowed_tools, ["read", "write"])
+        self.assertEqual(preview.network_policy, "disabled")
+        self.assertEqual(preview.route_on, "reviews/observation.json")
+        self.assertEqual(preview.route_fields, ["decision"])
+        self.assertEqual(written_paths, ["reports/final_report.md"])
+        self.assertNotIn("PROMPT_SENTINEL_SHOULD_NOT_LEAK", serialized)
+        self.assertNotIn("ARTIFACT_SENTINEL_SHOULD_NOT_LEAK", serialized)
+
+    def test_run_flow_step_once_executes_single_step_without_flow_records(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        judge = Step(
+            id="judge",
+            brief="Judge final acceptance.",
+            inputs=["reports/final_report.md", "reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reports", "reviews"],
+            write=["judge"],
+            role=PiWorkerCallRole.JUDGE,
+            route_on="judge/report.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, judge],
+            routes={
+                "reviewer.ready_for_judge": "judge",
+                "judge.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+        adapter = _KernelCountingFlowAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "draft\n")
+            result = run_flow_step_once(
+                flow,
+                "reviewer",
+                context=_context(),
+                workspace=root,
+                ref_prefix="kernel/debug/session-001/steps/001-reviewer",
+                adapter=adapter,
+            )
+            all_paths = [path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()]
+
+        self.assertIsInstance(result, KernelStepDebugResult)
+        self.assertEqual(adapter.call_count, 1)
+        self.assertEqual(result.step.step_id, "reviewer")
+        self.assertEqual(result.step.status, "completed")
+        self.assertEqual(result.step.step_record_ref, "kernel/debug/session-001/steps/001-reviewer/step_record.json")
+        self.assertIsNotNone(result.route_decision)
+        self.assertEqual(result.route_decision.target_kind, "step")
+        self.assertEqual(result.route_decision.route_value, "ready_for_judge")
+        self.assertEqual(result.route_decision.target_step_id, "judge")
+        self.assertIn("reviews/observation.json", all_paths)
+        self.assertNotIn("judge/report.json", all_paths)
+        self.assertFalse(any(path.endswith("flow_result.json") for path in all_paths))
+        self.assertFalse(any(path.endswith("flow_ledger.jsonl") for path in all_paths))
+        self.assertFalse(any(path.endswith("run_snapshot.json") for path in all_paths))
+
+    def test_read_flow_route_reports_stop_unrouted_and_invalid_without_raw_payload(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        judge = Step(
+            id="judge",
+            brief="Judge final acceptance.",
+            inputs=["reports/final_report.md", "reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reports", "reviews"],
+            write=["judge"],
+            role=PiWorkerCallRole.JUDGE,
+            route_on="judge/report.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, judge],
+            routes={
+                "reviewer.ready_for_judge": "judge",
+                "judge.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_json(root, "reviews/observation.json", {"decision": "ready_for_judge", "notes": "NOTE_SENTINEL"})
+            step_target = read_flow_route(flow, "reviewer", workspace=root)
+            _write_json(root, "judge/report.json", {"decision": "accepted", "notes": "ACCEPT_SENTINEL"})
+            stop_target = read_flow_route(flow, "judge", workspace=root)
+            _write_json(root, "reviews/observation.json", {"decision": "needs_more_work"})
+            unrouted = read_flow_route(flow, "reviewer", workspace=root)
+            _write_json(root, "reviews/observation.json", {"decision": "ready/now", "notes": "BAD_SENTINEL"})
+            invalid = read_flow_route(flow, "reviewer", workspace=root)
+            invalid_serialized = json.dumps(invalid.to_dict(), sort_keys=True, ensure_ascii=False)
+
+        self.assertIsInstance(step_target, KernelRouteDecision)
+        self.assertEqual(step_target.target_kind, "step")
+        self.assertEqual(step_target.route_target, "judge")
+        self.assertEqual(step_target.target_step_id, "judge")
+        self.assertEqual(step_target.route_key, "reviewer.ready_for_judge")
+        self.assertEqual(stop_target.target_kind, "stop")
+        self.assertEqual(stop_target.terminal_status, "accepted")
+        self.assertTrue(stop_target.is_terminal)
+        self.assertEqual(unrouted.target_kind, "unrouted")
+        self.assertEqual(unrouted.route_value, "needs_more_work")
+        self.assertEqual(unrouted.route_target, "unrouted")
+        self.assertEqual(invalid.target_kind, "invalid")
+        self.assertEqual(invalid.route_value, "invalid")
+        self.assertEqual(invalid.route_target, "blocked")
+        self.assertEqual(invalid.route_key, "reviewer.invalid")
+        self.assertNotIn("ready/now", invalid_serialized)
+        self.assertNotIn("BAD_SENTINEL", invalid_serialized)
+
+    def test_read_flow_route_supports_multi_field_route_values(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision", "scope"],
+        )
+        fixer = Step(
+            id="fixer",
+            brief="Fix.",
+            inputs=["reviews/observation.json"],
+            outputs=["reports/final_report.md"],
+            read=["reviews"],
+            write=["reports"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, fixer],
+            routes={"reviewer.repair+citations": "fixer"},
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_json(root, "reviews/observation.json", {"decision": "repair", "scope": "citations"})
+            decision = read_flow_route(flow, "reviewer", workspace=root)
+
+        self.assertEqual(decision.route_value, "repair+citations")
+        self.assertEqual(decision.route_key, "reviewer.repair+citations")
+        self.assertEqual(decision.target_kind, "step")
+        self.assertEqual(decision.target_step_id, "fixer")
 
     def test_run_flow_skips_completed_steps_on_rerun(self) -> None:
         reviewer = Step(
