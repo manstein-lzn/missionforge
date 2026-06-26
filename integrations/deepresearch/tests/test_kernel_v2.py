@@ -219,7 +219,13 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         source_mapper = kernel_v2_module._source_mapper_brief(request)
         brief = kernel_v2_module._researcher_brief(request)
 
+        self.assertIn("first-pass evidence-mapping phase", source_mapper)
         self.assertIn("Do not keep searching until timeout.", source_mapper)
+        self.assertIn("representative source set", source_mapper)
+        self.assertIn("Write the required artifacts before any second broad search wave.", source_mapper)
+        self.assertIn("record the follow-up targets in `reports/source_gaps.md`", source_mapper)
+        self.assertIn("context pressure is reported", source_mapper)
+        self.assertIn("Do not spend this phase trying to fill the cap.", source_mapper)
         self.assertIn("ready_for_synthesis", source_mapper)
         self.assertIn("sources/source_packet.json", source_mapper)
         self.assertIn("The source mapper already owns source acquisition.", brief)
@@ -328,7 +334,8 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("analysis", flow.steps[3].read)
         self.assertEqual(flow.steps[0].failure.retries, 0)
         self.assertEqual(flow.steps[1].failure.retries, 0)
-        self.assertFalse(any("max_turns" in step.runtime_budget for step in flow.steps))
+        self.assertEqual(flow.steps[0].runtime_budget["max_turns"], 12)
+        self.assertFalse(any("max_turns" in step.runtime_budget for step in flow.steps[1:]))
         self.assertTrue(all("timeout_seconds" in step.runtime_budget for step in flow.steps))
 
     def test_researcher_and_reviewer_cannot_self_accept(self) -> None:

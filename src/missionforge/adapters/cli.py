@@ -45,6 +45,7 @@ class MissionRunView:
     artifact_refs: list[str] = field(default_factory=list)
     decision_refs: list[str] = field(default_factory=list)
     observation_refs: list[str] = field(default_factory=list)
+    context_engine_refs: list[str] = field(default_factory=list)
     metric_refs: list[str] = field(default_factory=list)
     failure_refs: list[str] = field(default_factory=list)
     run_event_count: int = 0
@@ -82,6 +83,7 @@ class MissionRunView:
             artifact_refs=list(inspection.artifact_refs),
             decision_refs=list(inspection.decision_refs),
             observation_refs=list(inspection.observation_refs),
+            context_engine_refs=list(inspection.context_engine_refs),
             metric_refs=list(inspection.metric_refs),
             failure_refs=list(inspection.failure_refs),
             run_event_count=inspection.run_event_count,
@@ -99,6 +101,7 @@ class MissionRunView:
                     "step_record_ref": step.step_record_ref,
                     "output_refs": list(step.output_refs),
                     "context_projection_ref": step.context_projection_ref,
+                    "context_engine_refs": list(step.context_engine_refs),
                     "permission_manifest_ref": step.permission_manifest_ref,
                     "execution_report_ref": step.execution_report_ref,
                     "metric_refs": list(step.metric_refs),
@@ -132,6 +135,7 @@ class MissionRunView:
             "artifact_refs": list(self.artifact_refs),
             "decision_refs": list(self.decision_refs),
             "observation_refs": list(self.observation_refs),
+            "context_engine_refs": list(self.context_engine_refs),
             "metric_refs": list(self.metric_refs),
             "failure_refs": list(self.failure_refs),
             "run_event_count": self.run_event_count,
@@ -213,6 +217,9 @@ def render_mission_run_view(view: MissionRunView) -> str:
     if view.observation_refs:
         lines.append("    observations:")
         lines.extend(f"      - {ref}" for ref in view.observation_refs)
+    if view.context_engine_refs:
+        lines.append("    context_engine:")
+        lines.extend(f"      - {ref}" for ref in view.context_engine_refs)
     if view.artifact_refs:
         lines.append("    artifacts:")
         lines.extend(f"      - {ref}" for ref in view.artifact_refs)

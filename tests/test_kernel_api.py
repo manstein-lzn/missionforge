@@ -5,6 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from missionforge import (
+    ContextCacheLayout,
+    ContextCompileResult,
+    ContextEpoch,
+    ContextTurnBoundary,
+)
 from missionforge.kernel import (
     Artifact,
     ArtifactRole,
@@ -511,6 +517,11 @@ class KernelApiTests(unittest.TestCase):
             call_result_payload = _read_json(root, result.piworker_call_result_ref)
             step_record_payload = _read_json(root, result.step_record_ref)
             context_projection_payload = _read_json(root, result.step_record.metadata["context_projection_ref"])
+            source_snapshot_payload = _read_json(root, result.step_record.metadata["context_source_snapshot_ref"])
+            context_epoch_payload = _read_json(root, result.step_record.metadata["context_epoch_ref"])
+            cache_layout_payload = _read_json(root, result.step_record.metadata["context_cache_layout_ref"])
+            turn_boundary_payload = _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
+            compile_result_payload = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
 
         self.assertIsInstance(result, StepRunResult)
         self.assertEqual(adapter.seen_call.call_id, "demo-flow-researcher")
@@ -528,6 +539,26 @@ class KernelApiTests(unittest.TestCase):
         )
         self.assertEqual(context_projection_payload["volatile_tail"][0]["source_refs"], ["sources/source_packet.json"])
         self.assertEqual(result.step_record.metadata["context_hash"], context_projection_payload["context_hash"])
+        self.assertEqual(source_snapshot_payload["schema_version"], "missionforge.context_source_snapshot_index.v1")
+        self.assertEqual(source_snapshot_payload["view_ref"], result.step_record.metadata["context_projection_ref"])
+        self.assertEqual(source_snapshot_payload["context_hash"], context_projection_payload["context_hash"])
+        self.assertIn("contract/task_contract.json", source_snapshot_payload["source_refs"])
+        self.assertEqual(
+            ContextEpoch.from_dict(context_epoch_payload).context_view_ref,
+            result.step_record.metadata["context_projection_ref"],
+        )
+        self.assertEqual(
+            ContextCacheLayout.from_dict(cache_layout_payload).view_ref,
+            result.step_record.metadata["context_projection_ref"],
+        )
+        self.assertEqual(
+            ContextTurnBoundary.from_dict(turn_boundary_payload).context_epoch_ref,
+            result.step_record.metadata["context_epoch_ref"],
+        )
+        self.assertEqual(
+            ContextCompileResult.from_dict(compile_result_payload).cache_layout_ref,
+            result.step_record.metadata["context_cache_layout_ref"],
+        )
         self.assertEqual(result.step_record.status, StepStatus.COMPLETED)
         self.assertEqual(result.step_record.output_refs, ["reports/final_report.md"])
         self.assertEqual(result.step_record.piworker_call_ref, "kernel/demo-flow/steps/researcher/piworker_call.json")
@@ -988,6 +1019,8 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual([record.step_id for record in inspection.step_records], ["reviewer", "judge"])
         self.assertEqual([record.status for record in inspection.step_records], ["completed", "completed"])
         self.assertEqual(len(inspection.context_projection_refs), 2)
+        self.assertTrue(any(ref.endswith("/context/compile_result.json") for ref in inspection.context_engine_refs))
+        self.assertTrue(all(record.context_engine_refs for record in inspection.step_records))
         self.assertEqual(inspection.decision_refs, ["reviews/observation.json", "judge/report.json"])
         self.assertEqual(inspection.final_artifact_refs, ["reviews/observation.json", "judge/report.json"])
         self.assertIn("attempts/demo-flow-001-reviewer/pi_agent_execution_report.json", inspection.execution_report_refs)

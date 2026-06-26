@@ -121,6 +121,7 @@ python3 -m missionforge_deepresearch.cli academic frontdesk-run \
 academic request
   -> optional FrontDesk requirements document approved by user
   -> frozen contract, role briefs, rubrics, permissions, extension lock
+  -> source_mapper PiWorker
   -> researcher PiWorker
   -> reviewer PiWorker
   -> judge PiWorker
@@ -134,6 +135,14 @@ and token usage summaries.
 PiWorker owns semantic research: search planning, source triage, repository and
 documentation inspection, synthesis, gap tracking, reviewer critique response,
 and final judgment.
+
+The `source_mapper` is a first-pass evidence handoff phase, not the whole
+research run. It should build `sources/source_packet.json`,
+`reports/evidence_index.md`, `reports/source_gaps.md`, and
+`state/research_state.json` from a representative source set, then hand off to
+research synthesis. Broad follow-up targets belong in the gap/state artifacts
+so later researcher/reviewer passes can request narrow expansion without losing
+the first durable evidence base.
 
 PiWorker also owns the user-facing project progress board by keeping
 `state/research_state.json` current. MissionForge renders that board but does

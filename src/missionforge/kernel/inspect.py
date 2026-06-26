@@ -26,6 +26,15 @@ _USAGE_KEYS = (
     "provider_reported_cost_usd",
 )
 
+_CONTEXT_ENGINE_REF_KEYS = (
+    "context_source_snapshot_ref",
+    "context_epoch_ref",
+    "context_cache_layout_ref",
+    "context_turn_safe_point_ref",
+    "context_turn_boundary_ref",
+    "context_compile_result_ref",
+)
+
 
 @dataclass(frozen=True)
 class KernelStepInspection:
@@ -41,6 +50,7 @@ class KernelStepInspection:
     execution_report_ref: str = ""
     context_projection_ref: str = ""
     context_hash: str = ""
+    context_engine_refs: list[str] = field(default_factory=list)
     metric_refs: list[str] = field(default_factory=list)
     runtime_refs: list[str] = field(default_factory=list)
     failure_refs: list[str] = field(default_factory=list)
@@ -60,6 +70,7 @@ class KernelStepInspection:
             execution_report_ref=record.execution_report_ref or "",
             context_projection_ref=_metadata_ref(record.metadata, "context_projection_ref"),
             context_hash=_metadata_text(record.metadata, "context_hash"),
+            context_engine_refs=_metadata_context_engine_refs(record.metadata),
             metric_refs=list(record.metric_refs),
             runtime_refs=_metadata_refs(record.metadata, "runtime_refs"),
             failure_refs=list(record.failure_refs),
@@ -77,6 +88,7 @@ class KernelStepInspection:
             "execution_report_ref": self.execution_report_ref,
             "context_projection_ref": self.context_projection_ref,
             "context_hash": self.context_hash,
+            "context_engine_refs": list(self.context_engine_refs),
             "metric_refs": list(self.metric_refs),
             "runtime_refs": list(self.runtime_refs),
             "failure_refs": list(self.failure_refs),
@@ -118,6 +130,7 @@ class KernelContextInspection:
     """Refs-only context projection summary."""
 
     context_projection_refs: list[str] = field(default_factory=list)
+    context_engine_refs: list[str] = field(default_factory=list)
     stable_segment_count: int = 0
     semi_stable_segment_count: int = 0
     volatile_segment_count: int = 0
@@ -130,6 +143,7 @@ class KernelContextInspection:
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "context_projection_refs": list(self.context_projection_refs),
+            "context_engine_refs": list(self.context_engine_refs),
             "stable_segment_count": self.stable_segment_count,
             "semi_stable_segment_count": self.semi_stable_segment_count,
             "volatile_segment_count": self.volatile_segment_count,
@@ -206,6 +220,7 @@ class KernelRunInspection:
     final_artifact_refs: list[str] = field(default_factory=list)
     ledger_refs: list[str] = field(default_factory=list)
     context_projection_refs: list[str] = field(default_factory=list)
+    context_engine_refs: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     metric_refs: list[str] = field(default_factory=list)
     failure_refs: list[str] = field(default_factory=list)
@@ -252,6 +267,7 @@ class KernelRunInspection:
             "final_artifact_refs": list(self.final_artifact_refs),
             "ledger_refs": list(self.ledger_refs),
             "context_projection_refs": list(self.context_projection_refs),
+            "context_engine_refs": list(self.context_engine_refs),
             "artifact_refs": list(self.artifact_refs),
             "metric_refs": list(self.metric_refs),
             "failure_refs": list(self.failure_refs),
@@ -303,6 +319,7 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
             *(record.context_projection_ref for record in step_records if record.context_projection_ref),
         ]
     )
+    context_engine_refs = _dedupe_refs(ref for record in step_records for ref in record.context_engine_refs)
     artifact_refs = _dedupe_refs(
         [
             *_snapshot_refs(run_snapshot, "artifact_refs"),
@@ -366,6 +383,7 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
         final_artifact_refs=list(flow_result.final_artifact_refs),
         ledger_refs=list(flow_result.ledger_refs),
         context_projection_refs=context_projection_refs,
+        context_engine_refs=context_engine_refs,
         artifact_refs=artifact_refs,
         metric_refs=metric_refs,
         failure_refs=failure_refs,
@@ -373,7 +391,7 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
         observation_refs=observation_refs,
         step_records=step_records,
         usage=_inspect_usage(workspace, metric_refs),
-        context=_inspect_context(workspace, context_projection_refs, runtime_refs),
+        context=_inspect_context(workspace, context_projection_refs, runtime_refs, context_engine_refs),
         tool_activity=tool_activity,
         run_event_count=len(run_events),
         ledger_event_count=len(flow_ledger_events),
@@ -458,6 +476,7 @@ def _inspect_context(
     workspace: str | Path,
     context_projection_refs: list[str],
     runtime_refs: list[str],
+    context_engine_refs: list[str],
 ) -> KernelContextInspection:
     stable = 0
     semi_stable = 0
@@ -515,6 +534,7 @@ def _inspect_context(
         pressure_ratio = min(1.0, estimated / token_budget)
     return KernelContextInspection(
         context_projection_refs=list(context_projection_refs),
+        context_engine_refs=list(context_engine_refs),
         stable_segment_count=stable,
         semi_stable_segment_count=semi_stable,
         volatile_segment_count=volatile,
@@ -600,6 +620,10 @@ def _metadata_refs(metadata: Mapping[str, Any], key: str) -> list[str]:
     if not isinstance(value, list):
         return []
     return _dedupe_refs(value)
+
+
+def _metadata_context_engine_refs(metadata: Mapping[str, Any]) -> list[str]:
+    return _dedupe_refs(_metadata_ref(metadata, key) for key in _CONTEXT_ENGINE_REF_KEYS)
 
 
 def _latest_safe_point_event(events: list[RunEvent]) -> RunEvent | None:

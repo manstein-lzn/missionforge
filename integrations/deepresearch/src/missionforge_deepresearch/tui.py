@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+try:  # Importing readline lets input() handle multibyte line editing on POSIX.
+    import readline as _readline  # noqa: F401
+except ImportError:  # pragma: no cover - Windows/plain runtime fallback.
+    _readline = None  # type: ignore[assignment]
 import sys
 import threading
 from typing import Any, Callable, TextIO
@@ -82,13 +86,11 @@ def run_frontdesk_tui(
     while True:
         prompt = "\n你> " if initial_seen else "\n请描述你的初始研究想法> "
         try:
-            output_stream.write(prompt)
-            output_stream.flush()
-            raw_message = input_stream.readline()
+            raw_message = _read_user_line(prompt, input_stream=input_stream, output_stream=output_stream)
         except KeyboardInterrupt:
             output_stream.write("\n已退出 FrontDesk。\n")
             return 130
-        if raw_message == "":
+        if raw_message is None:
             output_stream.write("\n已退出 FrontDesk。\n")
             return 0
         message = raw_message.strip()
@@ -462,8 +464,8 @@ class _ResearchInputListener:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            raw = self.input_stream.readline()
-            if raw == "":
+            raw = _read_user_line("", input_stream=self.input_stream, output_stream=self.output_stream)
+            if raw is None:
                 return
             message = raw.strip()
             if not message:
@@ -511,6 +513,37 @@ class _ResearchInputListener:
         else:
             self.output_stream.write(f"  [interaction] 已记录用户插入：{event.kind.value} -> {event.event_id}\n")
             self.output_stream.flush()
+
+
+def _read_user_line(prompt: str, *, input_stream: TextIO, output_stream: TextIO) -> str | None:
+    """Read one user-edited line, using readline for real terminals.
+
+    `TextIO.readline()` keeps tests and scripted pipes simple, but on some
+    terminals it leaves UTF-8 editing to the kernel line discipline. Python's
+    `input()` path uses GNU readline when available, so Backspace operates on
+    Chinese characters instead of bytes.
+    """
+
+    if _is_interactive_stdio(input_stream, output_stream):
+        try:
+            return input(prompt)
+        except EOFError:
+            return None
+    output_stream.write(prompt)
+    output_stream.flush()
+    raw = input_stream.readline()
+    if raw == "":
+        return None
+    return raw
+
+
+def _is_interactive_stdio(input_stream: TextIO, output_stream: TextIO) -> bool:
+    return input_stream is sys.stdin and output_stream is sys.stdout and _stream_isatty(input_stream)
+
+
+def _stream_isatty(stream: TextIO) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
 
 
 def _print_runtime_help(output_stream: TextIO) -> None:

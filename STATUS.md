@@ -1,6 +1,6 @@
 # MissionForge Status
 
-Last updated: 2026-06-25
+Last updated: 2026-06-26
 
 Active branch: `feature/ref-addressed-agent-toolkit`
 
@@ -28,7 +28,7 @@ removing the disk-first assumption from data and context movement.
 | Kernel API | Kept as a thin developer-friendly facade over core primitives |
 | DeepResearch | Product integration; now consumes Kernel status view as pressure test, not core architecture |
 | Data model | Minimal `ArtifactRecord` / versioned ref slice implemented with durable filesystem and volatile memory stores |
-| Context management | Phase 3 first slice implemented: refs-only `ContextView` diagnostics are emitted without changing PiWorker prompt behavior |
+| Context management | ContextEngine first contract slice implemented and minimally wired into Kernel step records, inspection, and the read-only host CLI |
 | Observation/control | Phase 4 slices implemented: refs-only `RunEvent`, `RunSnapshot`, safe-point `ControlPort`, Kernel run inspection, fixture debug stepping, replay planning, and a richer read-only status observer exist; DeepResearch TUI now routes runtime controls through the shared control port |
 | Host cookbook | Minimal product-neutral Kernel host example added under `examples/` |
 | Permission gates | Phase 1 hard `ReadGate` / `WriteGate` / `allowed_tools` boundaries implemented |
@@ -112,17 +112,45 @@ removing the disk-first assumption from data and context movement.
   - Runtime user commands now go through `FileControlPort` (`/pause`,
     `/cancel`, `/resume`, `/checkpoint`, `/stop`, `/revise`) rather than
     appending interaction files directly in the TUI layer.
+- Implemented the first minimal ContextEngine contract slice:
+  - added `docs/MISSIONFORGE_CONTEXT_ENGINE_ARCHITECTURE.md` to define the
+    refs-only context architecture, prompt-cache layout principles, working-set
+    lifecycle, tool-output projection, turn boundary, and compaction model;
+  - added product-neutral `ContextSource`, `ContextSourceSnapshot`,
+    `ContextEpoch`, `ContextWorkingSet`, `ContextCacheLayout`,
+    `ContextCompileRequest`, `ContextCompileResult`, `ContextTurnBoundary`,
+    `ContextCompactionRecord`, `ContextReadObservation`, and
+    `ContextThrashDiagnostics` contracts;
+  - added `filter_context_sources()`, `build_context_epoch()`,
+    `build_context_cache_layout()`, and `build_thrash_diagnostics()` helpers;
+  - added `ToolOutputProjection` and `bound_tool_output()` so full tool outputs
+    can be kept as raw refs while model-visible projections remain bounded;
+  - exported the new primitives from the package root and documented them in
+    `docs/PRIMITIVE_REFERENCE.md`.
+- Wired the first ContextEngine runtime adoption slice into Kernel:
+  - `run_step()` now writes source snapshot, context epoch, cache layout, turn
+    safe point, turn boundary, and context compile result refs beside the
+    existing `context_projection.json`;
+  - normal and resume/skip step records preserve those refs in metadata;
+  - `inspect_kernel_run()` and `python -m missionforge.adapters.cli status`
+    surface the ContextEngine refs without expanding artifact bodies, prompts,
+    provider payloads, or tool outputs.
 
 ## In Progress
 
 - Extend the ref-addressed information kernel beyond the first data-plane slice:
   - broader storage integration after hard gates
-  - context projection over versioned artifact refs
+  - use the emitted ContextEngine records as the boundary for future provider
+    prompt rendering and compaction
   - runtime adoption without changing product integration semantics
 - Harden context and observation adoption:
   - express more existing refs as `ArtifactRecord`;
   - extend debug stepping and replay planning for fixture flows;
   - keep the host cookbook example small and product-neutral.
+- Extend ContextEngine from refs-only emission to active context management:
+  - project tool observations through `ToolOutputProjection`;
+  - derive repeated-read diagnostics from actual tool events;
+  - add policy-controlled compaction and working-set updates at turn boundaries.
 
 ## Next Milestones
 
@@ -147,20 +175,22 @@ removing the disk-first assumption from data and context movement.
 
 ## Verification Baseline
 
-Latest known passing checks on 2026-06-25:
+Latest known passing checks on 2026-06-26:
 
 ```bash
+PYTHONPATH=src python3 -m unittest tests.test_context_engine tests.test_tool_projection tests.test_public_api_boundary -q
+python3 -m py_compile src/missionforge/context_engine.py src/missionforge/tool_projection.py src/missionforge/__init__.py tests/test_context_engine.py tests/test_tool_projection.py tests/test_public_api_boundary.py
 python3 -m py_compile src/missionforge/artifacts.py src/missionforge/__init__.py tests/test_artifacts.py tests/test_public_api_boundary.py
 PYTHONPATH=src python3 -m unittest tests/test_artifacts.py tests/test_public_api_boundary.py
 python3 -m py_compile src/missionforge/permissions.py src/missionforge/runtime_control.py src/missionforge/task_contract.py src/missionforge/task_projection.py src/missionforge/workspace_runtime.py src/missionforge/adapters/pi_agent_runtime.py src/missionforge/kernel/compiler.py tests/test_permissions.py tests/test_runtime_control.py tests/test_workspace_runtime.py tests/test_task_contracts.py tests/test_pi_agent_runtime_adapter.py
 PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest discover -s integrations/deepresearch/tests
-cd workers/pi-agent-runtime && npm test
 ```
 
 Observed results:
 
-- Adapter/Kernel/Context/Observation/Progress focused tests: 78 run, OK.
-- Core tests: 260 run, OK, 1 skipped.
-- DeepResearch integration tests: 47 run, OK.
-- Pi agent runtime tests: 11 node test files, OK.
+- ContextEngine/public API focused tests: 13 run, OK.
+- Core tests: 272 run, OK, 1 skipped.
+- DeepResearch integration tests: 50 run, OK.
+- Pi agent runtime tests were not rerun for this Python-only ContextEngine
+  slice; the last known node baseline remains 11 test files OK.

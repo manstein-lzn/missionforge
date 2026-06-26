@@ -130,9 +130,11 @@ class AdapterCliTests(unittest.TestCase):
         self.assertEqual(view.context_pressure["ratio"], "0.75")
         self.assertEqual(view.context_pressure["remaining_tokens"], 30)
         self.assertEqual(view.tool_activity["latest_tool_name"], "read")
+        self.assertTrue(view.context_engine_refs)
         self.assertIn(observations_ref, view.tool_activity_refs)
         self.assertIn("usage: input=100 cached=20 output=30 total=130", rendered)
         self.assertIn("context_pressure: ratio=0.75 used_tokens=90 limit_tokens=120", rendered)
+        self.assertIn("context_engine:", rendered)
         self.assertNotIn("The host application supplies the product logic.", rendered)
         assert_refs_only_payload(view.to_dict(), "adapter_cli.rich_view")
 

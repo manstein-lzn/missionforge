@@ -8,7 +8,16 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..contracts import ContractValidationError, stable_json_hash, validate_ref
-from ..context import build_call_context_view
+from ..context import ContextView, build_call_context_view
+from ..context_engine import (
+    ContextCompileAction,
+    ContextCompileResult,
+    ContextSourceSnapshot,
+    ContextTurnBoundary,
+    ContextTurnBoundaryStatus,
+    build_context_cache_layout,
+    build_context_epoch,
+)
 from ..evidence_store import EvidenceLedger
 from ..extensions import ExtensionLock
 from ..interaction import FileInteractionPort, InteractionDelivery, UserEvent, UserEventKind
@@ -202,6 +211,14 @@ def run_step(
         diagnostics_ref=context_projection_ref,
     )
     write_json_ref(workspace, context_projection_ref, context_view.to_dict())
+    context_engine_metadata = _write_context_engine_records(
+        workspace=workspace,
+        compiled=compiled,
+        context=context,
+        ref_prefix=ref_prefix,
+        context_projection_ref=context_projection_ref,
+        context_view=context_view,
+    )
     skip_lock_ref = _expected_extension_lock_ref(
         compiled=compiled,
         ref_prefix=ref_prefix,
@@ -221,6 +238,7 @@ def run_step(
             permission_manifest_hash=permission_manifest_hash,
             context_projection_ref=context_projection_ref,
             context_hash=context_view.context_hash,
+            context_engine_metadata=context_engine_metadata,
             extension_lock_ref=skip_lock_ref,
             extension_lock_hash=skip_lock_hash,
         )
@@ -286,6 +304,7 @@ def run_step(
             "evidence_refs": list(call_result.evidence_refs),
             "context_projection_ref": context_projection_ref,
             "context_hash": context_view.context_hash,
+            **context_engine_metadata,
             **_call_result_diagnostic_metadata(call_result),
         },
     )
@@ -301,6 +320,137 @@ def run_step(
     )
     result.validate()
     return result
+
+
+def _write_context_engine_records(
+    *,
+    workspace: str | Path,
+    compiled: CompiledStep,
+    context: StepCompileContext,
+    ref_prefix: str,
+    context_projection_ref: str,
+    context_view: ContextView,
+) -> dict[str, str]:
+    context_root_ref = f"{ref_prefix}/context"
+    source_snapshot_ref = f"{context_root_ref}/source_snapshot.json"
+    context_epoch_ref = f"{context_root_ref}/epoch.json"
+    context_cache_layout_ref = f"{context_root_ref}/cache_layout.json"
+    context_turn_safe_point_ref = f"{context_root_ref}/turn_safe_point.json"
+    context_turn_boundary_ref = f"{context_root_ref}/turn_boundary.json"
+    context_compile_result_ref = f"{context_root_ref}/compile_result.json"
+    call_id = compiled.piworker_call.call_id
+    role = compiled.piworker_call.role.value
+
+    source_snapshot_payload = _context_source_snapshot_payload(
+        context_view=context_view,
+        view_ref=context_projection_ref,
+    )
+    write_json_ref(workspace, source_snapshot_ref, source_snapshot_payload)
+
+    epoch = build_context_epoch(
+        epoch_id=f"{call_id}-epoch",
+        role=role,
+        contract_hash=compiled.piworker_call.contract_hash,
+        permission_manifest_ref=compiled.permission_manifest_ref,
+        baseline_ref=context_projection_ref,
+        baseline_hash=context_view.context_hash,
+        source_snapshot_ref=source_snapshot_ref,
+        context_view_ref=context_projection_ref,
+    )
+    write_json_ref(workspace, context_epoch_ref, epoch.to_dict())
+
+    cache_layout = build_context_cache_layout(
+        layout_id=f"{call_id}-cache-layout",
+        view_ref=context_projection_ref,
+        view=context_view,
+    )
+    write_json_ref(workspace, context_cache_layout_ref, cache_layout.to_dict())
+
+    turn_safe_point_payload = {
+        "schema_version": "missionforge.context_turn_safe_point.v1",
+        "run_id": context.flow_id,
+        "step_id": compiled.step.id,
+        "call_id": call_id,
+        "pre_view_ref": context_projection_ref,
+        "context_epoch_ref": context_epoch_ref,
+        "context_cache_layout_ref": context_cache_layout_ref,
+    }
+    write_json_ref(workspace, context_turn_safe_point_ref, turn_safe_point_payload)
+
+    turn_boundary = ContextTurnBoundary(
+        boundary_id=f"{call_id}-turn-boundary",
+        run_id=context.flow_id,
+        call_id=call_id,
+        turn_id=f"{call_id}-turn-001",
+        role=role,
+        safe_point_ref=context_turn_safe_point_ref,
+        pre_view_ref=context_projection_ref,
+        status=ContextTurnBoundaryStatus.READY,
+        context_epoch_ref=context_epoch_ref,
+        metadata={"context_cache_layout_ref": context_cache_layout_ref},
+    )
+    write_json_ref(workspace, context_turn_boundary_ref, turn_boundary.to_dict())
+
+    compile_result = ContextCompileResult(
+        result_id=f"{call_id}-context-compile",
+        view_ref=context_projection_ref,
+        context_hash=context_view.context_hash,
+        action=ContextCompileAction.CONTINUE,
+        epoch_ref=context_epoch_ref,
+        cache_layout_ref=context_cache_layout_ref,
+        diagnostics_refs=[
+            source_snapshot_ref,
+            context_cache_layout_ref,
+            context_turn_boundary_ref,
+        ],
+        metadata={
+            "source_snapshot_ref": source_snapshot_ref,
+            "turn_boundary_ref": context_turn_boundary_ref,
+            "turn_safe_point_ref": context_turn_safe_point_ref,
+        },
+    )
+    write_json_ref(workspace, context_compile_result_ref, compile_result.to_dict())
+
+    return {
+        "context_source_snapshot_ref": source_snapshot_ref,
+        "context_epoch_ref": context_epoch_ref,
+        "context_cache_layout_ref": context_cache_layout_ref,
+        "context_turn_safe_point_ref": context_turn_safe_point_ref,
+        "context_turn_boundary_ref": context_turn_boundary_ref,
+        "context_compile_result_ref": context_compile_result_ref,
+    }
+
+
+def _context_source_snapshot_payload(*, context_view: ContextView, view_ref: str) -> dict[str, Any]:
+    context_view.validate()
+    snapshots = [
+        ContextSourceSnapshot(
+            source_key=segment.segment_id,
+            source_refs=list(segment.source_refs),
+            source_hashes=dict(segment.source_hashes),
+            projection_ref=segment.body_ref,
+            token_estimate=segment.token_estimate,
+            sequence=index,
+            metadata={
+                "segment_kind": segment.kind.value,
+                "cache_policy": segment.cache_policy.value,
+                "inline_policy": segment.inline_policy.value,
+            },
+        ).to_dict()
+        for index, segment in enumerate(context_view.all_segments)
+    ]
+    source_refs = _dedupe_refs(
+        [ref for segment in context_view.all_segments for ref in [*segment.source_refs, segment.body_ref] if ref]
+    )
+    payload = {
+        "schema_version": "missionforge.context_source_snapshot_index.v1",
+        "view_ref": view_ref,
+        "context_hash": context_view.context_hash,
+        "source_refs": source_refs,
+        "snapshots": snapshots,
+    }
+    payload["snapshot_index_hash"] = stable_json_hash(payload)
+    return payload
 
 
 def _run_piworker_with_failure_policy(
@@ -1261,6 +1411,7 @@ def _skip_result_if_current(
     permission_manifest_hash: str,
     context_projection_ref: str,
     context_hash: str,
+    context_engine_metadata: Mapping[str, str],
     extension_lock_ref: str | None,
     extension_lock_hash: str | None,
 ) -> StepRunResult | None:
@@ -1318,6 +1469,7 @@ def _skip_result_if_current(
             "recovered_from_step_status": existing.status.value if record_status_recovered else "",
             "context_projection_ref": context_projection_ref,
             "context_hash": context_hash,
+            **dict(context_engine_metadata),
         },
     )
     skipped_record_ref = _skip_record_ref(workspace, step_record_ref)

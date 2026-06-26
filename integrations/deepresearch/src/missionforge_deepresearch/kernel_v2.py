@@ -44,6 +44,11 @@ from .product_contract import (
 from .workspace import read_json_ref, write_json_ref, write_text_ref
 
 
+_SOURCE_MAPPER_RUNTIME_MAX_TURNS = {
+    ResearchIntensity.STANDARD: 12,
+    ResearchIntensity.INTENSIVE: 18,
+}
+
 KERNEL_V2_RESULT_REF = "packages/deepresearch_kernel_v2_result.json"
 KERNEL_V2_CONTRACT_REF = "contract/task_contract.json"
 KERNEL_V2_WORKSPACE_POLICY_REF = "policy/workspace_policy.json"
@@ -264,7 +269,10 @@ def build_deepresearch_kernel_v2_flow(
         tools=tools,
         route_on=KERNEL_V2_SOURCE_CONTROL_REF,
         route_fields=["decision"],
-        runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
+        runtime_budget={
+            "timeout_seconds": profile.piworker_timeout_seconds,
+            "max_turns": _source_mapper_max_turns(profile.intensity),
+        },
         network=live_extension_mode,
         failure=FailurePolicy(retries=0, on_exhausted=StepStatus.BLOCKED),
     )
@@ -562,10 +570,14 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
         [
             "# DeepResearch v2 Source Mapper Brief",
             "",
-            "You own only the evidence-mapping phase. Do not draft the final report in this step.",
-            "Your goal is to create a durable, useful evidence base that the synthesis researcher can read and turn into a report.",
+            "You own only the first-pass evidence-mapping phase. Do not draft the final report in this step.",
+            "Your goal is to create a durable, useful evidence base that the synthesis researcher can read and turn into a report, then hand off.",
+            "This is not the whole research run. Later researcher/reviewer passes can request narrow follow-up source expansion from your artifacts.",
             "Use academic/repo tools when available. Batch independent searches, but keep the batch bounded enough to leave time to write artifacts.",
-            "Do not keep searching until timeout. After a representative evidence batch, write the required artifacts and hand off.",
+            "Do not keep searching until timeout. After a representative source set exists, write the required artifacts and hand off.",
+            "Write the required artifacts before any second broad search wave. If you are tempted to continue searching broadly, record the follow-up targets in `reports/source_gaps.md` and `state/research_state.json` instead.",
+            "Once you have enough sources to make synthesis useful, stop expanding and set `ready_for_synthesis`; do not chase the maximum source count in this phase.",
+            "If tool failures repeat, context pressure is reported, or a context checkpoint/safe-point appears, stop searching and write the durable artifacts from the evidence already gathered.",
             "Required outputs: `sources/source_packet.json`, `reports/evidence_index.md`, `reports/source_gaps.md`, `state/research_state.json`, and `state/source_control.json`.",
             "Treat `sources/source_packet.json` as the durable source authority. Include `source_records` with `source_id`, `title`, `source_type`, `year`, `locator`, `evidence_note`, and `evidence_strength` when available.",
             "Treat `reports/evidence_index.md` as a compact reading map grouped by research line, not a full report.",
@@ -576,13 +588,21 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "Use `blocked` only when tools or permissions prevent writing a usable source packet.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_source_mapper_intensity_guidance(profile.intensity),
-            f"Target at least {profile.min_source_records} useful source records when feasible, capped at {profile.max_sources}.",
+            f"First-pass handoff target: at least {profile.min_source_records} useful source records when feasible.",
+            f"Overall run cap: {profile.max_sources} source records. Do not spend this phase trying to fill the cap.",
             "These are source-quality targets, not permission to exhaust the runtime.",
             f"Topic: {request.topic}",
             f"Audience: {request.audience}",
             f"Language: {request.language}",
         ]
     )
+
+
+def _source_mapper_max_turns(intensity: ResearchIntensity) -> int:
+    try:
+        return _SOURCE_MAPPER_RUNTIME_MAX_TURNS[intensity]
+    except KeyError as exc:
+        raise ContractValidationError(f"unsupported research intensity for source mapper runtime: {intensity}") from exc
 
 
 def _source_mapper_intensity_guidance(intensity: ResearchIntensity) -> list[str]:

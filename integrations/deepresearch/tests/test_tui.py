@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from unittest.mock import patch
 
 from missionforge_deepresearch.kernel_v2 import run_deepresearch_kernel_v2
 from missionforge_deepresearch.kernel_v2 import KernelV2FixtureAdapter
@@ -15,6 +16,7 @@ from missionforge_deepresearch.tui import (
     _ResearchInputListener,
     _kernel_observer_rows,
     _print_kernel_view,
+    _read_user_line,
     _run_root,
     run_frontdesk_tui,
 )
@@ -22,6 +24,31 @@ from missionforge.adapters.cli import MissionRunView
 
 
 class FrontDeskTuiTests(unittest.TestCase):
+    def test_read_user_line_uses_readline_input_for_interactive_stdio(self) -> None:
+        class _InteractiveStream(StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        fake_stdin = _InteractiveStream()
+        fake_stdout = _InteractiveStream()
+
+        with patch("sys.stdin", fake_stdin), patch("sys.stdout", fake_stdout), patch("builtins.input", return_value="我想研究撒") as input_mock:
+            message = _read_user_line("请描述> ", input_stream=fake_stdin, output_stream=fake_stdout)
+
+        self.assertEqual(message, "我想研究撒")
+        input_mock.assert_called_once_with("请描述> ")
+
+    def test_read_user_line_keeps_scripted_streams_non_interactive(self) -> None:
+        inputs = StringIO("脚本输入\n")
+        outputs = StringIO()
+
+        with patch("builtins.input") as input_mock:
+            message = _read_user_line("请描述> ", input_stream=inputs, output_stream=outputs)
+
+        self.assertEqual(message, "脚本输入\n")
+        self.assertEqual(outputs.getvalue(), "请描述> ")
+        input_mock.assert_not_called()
+
     def test_kernel_view_helpers_render_optional_observer_fields(self) -> None:
         view = MissionRunView(
             flow_id="flow",
