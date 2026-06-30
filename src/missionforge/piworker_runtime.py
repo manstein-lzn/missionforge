@@ -59,19 +59,36 @@ class PiWorkerRuntimeFactory:
 
     config: Any | None = None
     runner: Any | None = None
+    environ: Mapping[str, str] | None = None
+    codex_home: str | Path | None = None
 
     def create_default_worker(self) -> PiWorkerCallAdapter:
-        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter
+        from .adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
+
+        config = self.config
+        if hasattr(config, "to_adapter_kwargs"):
+            config = PiAgentRuntimeConfig(**config.to_adapter_kwargs())
 
         if self.runner is None:
-            return PiAgentRuntimeAdapter(self.config)
-        return PiAgentRuntimeAdapter(self.config, runner=self.runner)
+            return PiAgentRuntimeAdapter(config, environ=self.environ, codex_home=self.codex_home)
+        return PiAgentRuntimeAdapter(config, runner=self.runner, environ=self.environ, codex_home=self.codex_home)
 
 
-def create_default_piworker_adapter(config: Any | None = None, *, runner: Any | None = None) -> PiWorkerCallAdapter:
+def create_default_piworker_adapter(
+    config: Any | None = None,
+    *,
+    runner: Any | None = None,
+    environ: Mapping[str, str] | None = None,
+    codex_home: str | Path | None = None,
+) -> PiWorkerCallAdapter:
     """Return the default PiWorkerCall adapter."""
 
-    return PiWorkerRuntimeFactory(config=config, runner=runner).create_default_worker()
+    return PiWorkerRuntimeFactory(
+        config=config,
+        runner=runner,
+        environ=environ,
+        codex_home=codex_home,
+    ).create_default_worker()
 
 
 def run_piworker_call(

@@ -22,7 +22,8 @@ FrontDesk 或 ProductIntegration
 - `TaskContract`、`WorkspacePolicy`、`PermissionManifest`
 - `WorkerBrief`、`JudgeRubric`
 - `PiWorkerCall`、`PiWorkerCallResult`
-- `create_default_piworker_adapter`、`run_piworker_call`
+- `create_piagent_runtime_config`、`create_default_piworker_adapter`、
+  `run_piworker_call`
 - refs、evidence、extension、sandbox、progress 等边界原语
 - packaged PiAgent runtime discovery / preflight
 
@@ -55,9 +56,9 @@ execution 提供 OS 级强隔离。
 可以在应用启动时做能力检查：
 
 ```python
-from missionforge import preflight_pi_agent_runtime
+import missionforge as mf
 
-report = preflight_pi_agent_runtime(require_sandbox_linux=True)
+report = mf.preflight_pi_agent_runtime(require_sandbox_linux=True)
 if not report.available:
     raise RuntimeError(report.failures)
 ```
@@ -65,11 +66,11 @@ if not report.available:
 ## 最小调用
 
 ```python
-from missionforge import PiWorkerCall, PiWorkerCallRole, run_piworker_call
+import missionforge as mf
 
-call = PiWorkerCall(
+call = mf.PiWorkerCall(
     call_id="call-001",
-    role=PiWorkerCallRole.EXECUTOR,
+    role=mf.PiWorkerCallRole.EXECUTOR,
     contract_id="contract-001",
     contract_hash="sha256:" + "a" * 64,
     contract_ref="contract/task_contract.json",
@@ -80,7 +81,7 @@ call = PiWorkerCall(
     permission_manifest_ref="policy/permission_manifest.json",
 )
 
-result = run_piworker_call(call, workspace="/tmp/missionforge-run")
+result = mf.run_piworker_call(call, workspace="/tmp/missionforge-run")
 ```
 
 `PiWorkerCallResult` 是运行边界证据，不是语义验收结论。语义接受必须来自
@@ -88,11 +89,12 @@ result = run_piworker_call(call, workspace="/tmp/missionforge-run")
 
 ## DeepResearch
 
-当前可用的 DeepResearch 路径是简化后的 kernel-v2 runner：
+DeepResearch 是随仓库维护的完整示例工程，但按外部应用方式使用
+MissionForge：示例源码只通过 `import missionforge` 调用公开 API。安装
+`missionforge-deepresearch` 后运行：
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
+missionforge-deepresearch academic kernel-v2-run \
   --topic "你的调研主题" \
   --request-id research-001 \
   --workspace /tmp/mf-dr \

@@ -140,7 +140,7 @@ class CliTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tempdir,
-            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter"),
+            patch("missionforge_deepresearch.cli.mf.create_default_piworker_adapter"),
             patch("missionforge_deepresearch.cli.run_deepresearch_kernel_v2", return_value=expected),
             patch("builtins.print") as print_mock,
             patch("sys.stderr") as stderr_mock,
@@ -186,7 +186,7 @@ class CliTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tempdir,
-            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter) as adapter_mock,
+            patch("missionforge_deepresearch.cli.mf.create_default_piworker_adapter", return_value=adapter) as adapter_mock,
             patch("missionforge_deepresearch.cli.KernelV2FixtureAdapter") as fixture_mock,
             patch("missionforge_deepresearch.cli.run_deepresearch_kernel_v2", return_value=expected) as run_mock,
             patch("builtins.print") as print_mock,
@@ -255,7 +255,7 @@ class CliTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tempdir,
-            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter),
+            patch("missionforge_deepresearch.cli.mf.create_default_piworker_adapter", return_value=adapter),
             patch("missionforge_deepresearch.cli.run_deepresearch_frontdesk_turn", return_value=expected) as run_mock,
             patch("builtins.print") as print_mock,
             patch("sys.stderr"),
@@ -300,7 +300,7 @@ class CliTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tempdir,
-            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter),
+            patch("missionforge_deepresearch.cli.mf.create_default_piworker_adapter", return_value=adapter),
             patch("missionforge_deepresearch.cli.approve_frontdesk_requirements") as approve_mock,
             patch("missionforge_deepresearch.cli.run_deepresearch_kernel_v2", return_value=expected) as run_mock,
             patch("builtins.print") as print_mock,
@@ -382,7 +382,7 @@ class CliTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tempdir,
-            patch("missionforge_deepresearch.cli.PiAgentRuntimeAdapter", return_value=adapter) as adapter_mock,
+            patch("missionforge_deepresearch.cli.mf.create_default_piworker_adapter", return_value=adapter) as adapter_mock,
             patch("missionforge_deepresearch.cli.run_deepresearch_kernel_v2", return_value=expected),
             patch("builtins.print"),
             patch("sys.stderr"),

@@ -6,14 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Mapping
 
-from missionforge.contracts import (
-    ContractValidationError,
-    require_enum,
-    require_mapping,
-    require_non_empty_str,
-    require_str_list,
-    validate_ref,
-)
+import missionforge as mf
 
 
 RESEARCH_REQUEST_SCHEMA_VERSION = "missionforge_deepresearch.research_request.v1"
@@ -181,7 +174,7 @@ class ResearchIntensityProfile:
 def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntensityProfile:
     """Return the product-layer budget preset for a research intensity."""
 
-    intensity = require_enum(value, ResearchIntensity, "research_intensity")
+    intensity = mf.require_enum(value, ResearchIntensity, "research_intensity")
     profiles = {
         ResearchIntensity.STANDARD: ResearchIntensityProfile(
             intensity=ResearchIntensity.STANDARD,
@@ -279,7 +272,7 @@ class AcademicResearchRequest:
         object.__setattr__(
             self,
             "research_intensity",
-            require_enum(
+            mf.require_enum(
                 self.research_intensity,
                 ResearchIntensity,
                 "academic_research_request.research_intensity",
@@ -304,15 +297,15 @@ class AcademicResearchRequest:
             },
         )
         request = cls(
-            schema_version=require_non_empty_str(
+            schema_version=mf.require_non_empty_str(
                 data.get("schema_version", RESEARCH_REQUEST_SCHEMA_VERSION),
                 "academic_research_request.schema_version",
             ),
-            request_id=require_non_empty_str(data.get("request_id"), "academic_research_request.request_id"),
-            topic=require_non_empty_str(data.get("topic"), "academic_research_request.topic"),
-            audience=require_non_empty_str(data.get("audience", "R&D team"), "academic_research_request.audience"),
-            language=require_non_empty_str(data.get("language", "zh"), "academic_research_request.language"),
-            research_intensity=require_enum(
+            request_id=mf.require_non_empty_str(data.get("request_id"), "academic_research_request.request_id"),
+            topic=mf.require_non_empty_str(data.get("topic"), "academic_research_request.topic"),
+            audience=mf.require_non_empty_str(data.get("audience", "R&D team"), "academic_research_request.audience"),
+            language=mf.require_non_empty_str(data.get("language", "zh"), "academic_research_request.language"),
+            research_intensity=mf.require_enum(
                 data.get("research_intensity", ResearchIntensity.STANDARD.value),
                 ResearchIntensity,
                 "academic_research_request.research_intensity",
@@ -321,28 +314,28 @@ class AcademicResearchRequest:
                 data.get("previous_run_refs", []),
                 "academic_research_request.previous_run_refs",
             ),
-            constraints=require_str_list(data.get("constraints", []), "academic_research_request.constraints"),
-            non_goals=require_str_list(data.get("non_goals", []), "academic_research_request.non_goals"),
+            constraints=mf.require_str_list(data.get("constraints", []), "academic_research_request.constraints"),
+            non_goals=mf.require_str_list(data.get("non_goals", []), "academic_research_request.non_goals"),
         )
         request.validate()
         return request
 
     def validate(self) -> None:
         if self.schema_version != RESEARCH_REQUEST_SCHEMA_VERSION:
-            raise ContractValidationError("academic_research_request.schema_version is unsupported")
-        require_non_empty_str(self.request_id, "academic_research_request.request_id")
+            raise mf.ContractValidationError("academic_research_request.schema_version is unsupported")
+        mf.require_non_empty_str(self.request_id, "academic_research_request.request_id")
         _validate_request_id(self.request_id)
-        require_non_empty_str(self.topic, "academic_research_request.topic")
-        require_non_empty_str(self.audience, "academic_research_request.audience")
-        require_non_empty_str(self.language, "academic_research_request.language")
-        require_enum(
+        mf.require_non_empty_str(self.topic, "academic_research_request.topic")
+        mf.require_non_empty_str(self.audience, "academic_research_request.audience")
+        mf.require_non_empty_str(self.language, "academic_research_request.language")
+        mf.require_enum(
             self.research_intensity,
             ResearchIntensity,
             "academic_research_request.research_intensity",
         )
         _validate_unique_refs(self.previous_run_refs, "academic_research_request.previous_run_refs")
-        require_str_list(self.constraints, "academic_research_request.constraints")
-        require_str_list(self.non_goals, "academic_research_request.non_goals")
+        mf.require_str_list(self.constraints, "academic_research_request.constraints")
+        mf.require_str_list(self.non_goals, "academic_research_request.non_goals")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -352,7 +345,7 @@ class AcademicResearchRequest:
             "topic": self.topic,
             "audience": self.audience,
             "language": self.language,
-            "research_intensity": require_enum(
+            "research_intensity": mf.require_enum(
                 self.research_intensity,
                 ResearchIntensity,
                 "academic_research_request.research_intensity",
@@ -364,27 +357,27 @@ class AcademicResearchRequest:
 
 
 def _strict_mapping(payload: Mapping[str, Any], field_name: str, allowed: set[str]) -> dict[str, Any]:
-    data = require_mapping(payload, field_name)
+    data = mf.require_mapping(payload, field_name)
     unknown = sorted(set(data) - allowed)
     if unknown:
-        raise ContractValidationError(f"{field_name} contains unknown fields: {unknown}")
+        raise mf.ContractValidationError(f"{field_name} contains unknown fields: {unknown}")
     return data
 
 
 def _validate_request_id(request_id: str) -> None:
-    validate_ref(f"runs/{request_id}", "academic_research_request.request_id")
+    mf.validate_ref(f"runs/{request_id}", "academic_research_request.request_id")
     if "/" in request_id:
-        raise ContractValidationError("academic_research_request.request_id must be one ref segment")
+        raise mf.ContractValidationError("academic_research_request.request_id must be one ref segment")
 
 
 def _ref_list(value: Any, field_name: str) -> list[str]:
-    return [validate_ref(item, f"{field_name}[]") for item in require_str_list(value, field_name)]
+    return [mf.validate_ref(item, f"{field_name}[]") for item in mf.require_str_list(value, field_name)]
 
 
 def _validate_unique_refs(values: list[str], field_name: str) -> None:
     refs = _ref_list(values, field_name)
     if len(refs) != len(set(refs)):
-        raise ContractValidationError(f"{field_name} must not contain duplicate refs")
+        raise mf.ContractValidationError(f"{field_name} must not contain duplicate refs")
 
 
 def _language_key(language: str) -> str:

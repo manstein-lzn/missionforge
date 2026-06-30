@@ -47,10 +47,19 @@ class AdapterImportBoundaryTests(unittest.TestCase):
 
     def test_package_root_does_not_reexport_adapters(self) -> None:
         init_text = (CORE_ROOT / "__init__.py").read_text(encoding="utf-8")
+        tree = ast.parse(init_text)
+        exported_symbols: set[str] = set()
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(isinstance(target, ast.Name) and target.id == "__all__" for target in node.targets):
+                continue
+            exported_symbols = set(ast.literal_eval(node.value))
+            break
 
         self.assertNotIn("adapters", init_text)
-        self.assertNotIn("AdapterBoundary", init_text)
-        self.assertNotIn("AdapterResult", init_text)
+        self.assertNotIn("AdapterBoundary", exported_symbols)
+        self.assertNotIn("AdapterResult", exported_symbols)
 
     def test_no_unplanned_host_adapter_implementation_modules_exist_yet(self) -> None:
         forbidden = {

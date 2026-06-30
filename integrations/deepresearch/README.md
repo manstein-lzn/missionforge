@@ -1,14 +1,29 @@
 # MissionForge DeepResearch v2
 
 DeepResearch is a product integration built on MissionForge Kernel v2. It is
-not part of core.
+not part of core. It is also the reference example for external MissionForge
+applications: its source imports MissionForge only through `import missionforge`
+and uses the public package API.
+
+Install it like a normal downstream package:
+
+```bash
+python3 -m pip install missionforge
+python3 -m pip install missionforge-deepresearch
+```
+
+For source-tree development, use editable installs instead of `PYTHONPATH`:
+
+```bash
+python3 -m pip install -e .
+python3 -m pip install -e integrations/deepresearch
+```
 
 If the research request is already clear, run the active kernel-v2 command
 directly:
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
+missionforge-deepresearch academic kernel-v2-run \
   --topic "调研主题" \
   --request-id research-001 \
   --workspace /tmp/mf-dr \
@@ -62,8 +77,7 @@ snapshot refs. They are not frozen contract authority; scope or acceptance
 changes still require explicit revision.
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic frontdesk-tui \
+missionforge-deepresearch academic frontdesk-tui \
   --request-id research-001 \
   --workspace /tmp/mf-dr \
   --research-intensity intensive \
@@ -76,8 +90,7 @@ python3 -m missionforge_deepresearch.cli academic frontdesk-tui \
 The lower-level non-interactive FrontDesk commands remain available for scripts:
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic frontdesk-step \
+missionforge-deepresearch academic frontdesk-step \
   --initial-input "我想研究一个方向，但还没想清楚范围" \
   --request-id research-001 \
   --workspace /tmp/mf-dr \
@@ -90,8 +103,7 @@ python3 -m missionforge_deepresearch.cli academic frontdesk-step \
 Continue scripted FrontDesk with another message:
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic frontdesk-step \
+missionforge-deepresearch academic frontdesk-step \
   --message "补充回答或修正需求" \
   --request-id research-001 \
   --workspace /tmp/mf-dr \
@@ -105,8 +117,7 @@ When scripted FrontDesk returns `ready_for_approval` and the user agrees, launch
 DeepResearch from the approved requirements document:
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic frontdesk-run \
+missionforge-deepresearch academic frontdesk-run \
   --request-id research-001 \
   --workspace /tmp/mf-dr \
   --live-extension-mode \
@@ -197,8 +208,7 @@ runs/{request_id}/metrics/usage_summary.json
 Use fixture mode only to test wiring without a live PiWorker:
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src \
-python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
+missionforge-deepresearch academic kernel-v2-run \
   --topic "compiler autotuning survey" \
   --request-id demo-kernel-v2-fixture \
   --workspace /tmp/mf-dr-kernel-v2-fixture \
@@ -208,7 +218,7 @@ python3 -m missionforge_deepresearch.cli academic kernel-v2-run \
 ## Validate
 
 ```bash
-PYTHONPATH=src:integrations/deepresearch/src python3 -m unittest \
+python3 -m unittest \
   integrations.deepresearch.tests.test_frontdesk \
   integrations.deepresearch.tests.test_tui \
   integrations.deepresearch.tests.test_kernel_v2 \

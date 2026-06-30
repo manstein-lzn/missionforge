@@ -24,12 +24,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by plain fallback te
     Panel = None  # type: ignore[assignment]
     Table = None  # type: ignore[assignment]
 
-from missionforge import FileControlPort, UserEvent
-from missionforge.contracts import ContractValidationError
-from missionforge.adapters.cli import MissionRunView, build_mission_run_view
-from missionforge.interaction import FileInteractionPort
-from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
-from missionforge.piworker_runtime import PiWorkerCallAdapter
+import missionforge as mf
 
 from .frontdesk import (
     FRONTDESK_ASSISTANT_TURN_REF,
@@ -70,8 +65,8 @@ class FrontDeskTuiConfig:
 def run_frontdesk_tui(
     *,
     config: FrontDeskTuiConfig,
-    frontdesk_adapter: PiWorkerCallAdapter,
-    kernel_adapter_factory: Callable[[ResearchIntensity | str], PiWorkerCallAdapter],
+    frontdesk_adapter: mf.PiWorkerCallAdapter,
+    kernel_adapter_factory: Callable[[ResearchIntensity | str], mf.PiWorkerCallAdapter],
     input_stream: TextIO = sys.stdin,
     output_stream: TextIO = sys.stdout,
     progress_runner: Callable[[Any], DeepResearchKernelV2Result] | None = None,
@@ -136,7 +131,7 @@ def run_frontdesk_tui(
                 if config.stream_progress
                 else None,
             )
-        except ContractValidationError as exc:
+        except mf.ContractValidationError as exc:
             output_stream.write(f"FrontDesk 调用失败：{exc}\n")
             continue
         initial_seen = True
@@ -280,7 +275,7 @@ def _print_assistant_message(output_stream: TextIO, config: FrontDeskTuiConfig) 
 def _print_requirements(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:
     try:
         text = read_text_ref(_run_root(config), FRONTDESK_REQUIREMENTS_REF)
-    except ContractValidationError as exc:
+    except mf.ContractValidationError as exc:
         _error(output_stream, f"无法读取需求文档：{exc}")
         return
     rich_console = _rich_console(output_stream)
@@ -308,7 +303,7 @@ def _print_status(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:
 def _run_approved_research(
     *,
     config: FrontDeskTuiConfig,
-    kernel_adapter_factory: Callable[[ResearchIntensity | str], PiWorkerCallAdapter],
+    kernel_adapter_factory: Callable[[ResearchIntensity | str], mf.PiWorkerCallAdapter],
     input_stream: TextIO,
     output_stream: TextIO,
     progress_runner: Callable[[Any], DeepResearchKernelV2Result] | None = None,
@@ -318,7 +313,7 @@ def _run_approved_research(
             request_id=config.request_id,
             workspace=config.workspace,
         )
-    except ContractValidationError as exc:
+    except mf.ContractValidationError as exc:
         _error(output_stream, f"审批失败：{exc}")
         return 1
     _section(output_stream, "已批准需求文档")
@@ -409,20 +404,20 @@ def _tui_runtime_progress_sink(output_stream: TextIO, label: str):
 
 
 def _tui_kernel_event_sink(output_stream: TextIO):
-    def emit(event: FlowLedgerEvent) -> None:
+    def emit(event: mf.FlowLedgerEvent) -> None:
         rich_console = _rich_console(output_stream)
-        if event.kind == FlowLedgerEventKind.STEP_STARTED:
+        if event.kind == mf.FlowLedgerEventKind.STEP_STARTED:
             text = f"  [kernel] {event.step_id} started"
-        elif event.kind == FlowLedgerEventKind.STEP_RECORDED:
+        elif event.kind == mf.FlowLedgerEventKind.STEP_RECORDED:
             text = f"  [kernel] {event.step_id} status={event.status}"
-        elif event.kind == FlowLedgerEventKind.ROUTED:
+        elif event.kind == mf.FlowLedgerEventKind.ROUTED:
             text = f"  [kernel] {event.step_id} -> {event.route_target} ({event.route_value})"
-        elif event.kind == FlowLedgerEventKind.INTERACTION_RECORDED:
+        elif event.kind == mf.FlowLedgerEventKind.INTERACTION_RECORDED:
             count = event.metadata.get("event_count") if isinstance(event.metadata, dict) else None
             text = f"  [kernel] interaction safe point for {event.step_id or 'flow'}"
             if isinstance(count, int):
                 text += f" events={count}"
-        elif event.kind == FlowLedgerEventKind.STOPPED:
+        elif event.kind == mf.FlowLedgerEventKind.STOPPED:
             text = f"  [kernel] stopped status={event.status}"
         else:
             return
@@ -443,7 +438,7 @@ class _ResearchInputListener:
         self.input_stream = input_stream
         self.output_stream = output_stream
         self.run_id = deepresearch_kernel_v2_flow_run_id(config.request_id)
-        self.control_port = FileControlPort(FileInteractionPort(_run_root(config)))
+        self.control_port = mf.FileControlPort(mf.FileInteractionPort(_run_root(config)))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -506,7 +501,7 @@ class _ResearchInputListener:
                 continue
             self._record_event(self.control_port.inject_message(run_id=self.run_id, text=message))
 
-    def _record_event(self, event: UserEvent) -> None:
+    def _record_event(self, event: mf.UserEvent) -> None:
         rich_console = _rich_console(self.output_stream)
         if rich_console is not None:
             rich_console.print(f"[dim]已记录用户插入：{event.kind.value} -> {event.event_id}[/dim]")
@@ -668,7 +663,7 @@ def _print_rich_project_board(
     claim_count: int,
     usage: dict[str, Any],
     interaction_line: str,
-    kernel_view: MissionRunView | None,
+    kernel_view: mf.MissionRunView | None,
     state: dict[str, Any],
     researcher_control: dict[str, Any],
     reviewer_observation: dict[str, Any],
@@ -766,17 +761,17 @@ def _print_rich_feedback(rich_console: Any, label: str, payload: dict[str, Any])
     rich_console.print(Panel(body, title=label, border_style=_phase_border_style(decision)))
 
 
-def _kernel_run_view(run_root: Path, run_status: dict[str, Any]) -> MissionRunView | None:
+def _kernel_run_view(run_root: Path, run_status: dict[str, Any]) -> mf.MissionRunView | None:
     flow_result_ref = _string_value(run_status, "flow_result_ref")
     if not flow_result_ref:
         return None
     try:
-        return build_mission_run_view(run_root, flow_result_ref=flow_result_ref)
-    except (ContractValidationError, OSError, json.JSONDecodeError):
+        return mf.build_mission_run_view(run_root, flow_result_ref=flow_result_ref)
+    except (mf.ContractValidationError, OSError, json.JSONDecodeError):
         return None
 
 
-def _print_kernel_view(output_stream: TextIO, view: MissionRunView | None) -> None:
+def _print_kernel_view(output_stream: TextIO, view: mf.MissionRunView | None) -> None:
     if view is None:
         return
     current = view.current_step_id or "<none>"
@@ -799,7 +794,7 @@ def _print_kernel_view(output_stream: TextIO, view: MissionRunView | None) -> No
         output_stream.write(f"    observation={ref}\n")
 
 
-def _print_rich_kernel_view(rich_console: Any, view: MissionRunView | None) -> None:
+def _print_rich_kernel_view(rich_console: Any, view: mf.MissionRunView | None) -> None:
     if view is None:
         return
     body = Table.grid(padding=(0, 1))
@@ -852,7 +847,7 @@ def _read_project_json(run_root: Path, key: str) -> dict[str, Any]:
     ref = PROJECT_PROGRESS_REFS[key]
     try:
         payload = read_json_ref(run_root, ref, key)
-    except (ContractValidationError, OSError, json.JSONDecodeError):
+    except (mf.ContractValidationError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -984,7 +979,7 @@ def _usage_totals(usage_summary: dict[str, Any]) -> dict[str, Any]:
     return totals if isinstance(totals, dict) else {}
 
 
-def _kernel_observer_rows(view: MissionRunView | None) -> list[tuple[str, str]]:
+def _kernel_observer_rows(view: mf.MissionRunView | None) -> list[tuple[str, str]]:
     if view is None:
         return []
     rows: list[tuple[str, str]] = []
@@ -1075,12 +1070,12 @@ def _force_rich_terminal(output_stream: TextIO) -> bool | None:
     return False
 
 
-def _optional_dict(view: MissionRunView, attr_name: str) -> dict[str, Any]:
+def _optional_dict(view: mf.MissionRunView, attr_name: str) -> dict[str, Any]:
     value = getattr(view, attr_name, None)
     return value if isinstance(value, dict) else {}
 
 
-def _optional_context_pressure(view: MissionRunView) -> str:
+def _optional_context_pressure(view: mf.MissionRunView) -> str:
     value = getattr(view, "context_pressure", None)
     if isinstance(value, (int, float)):
         return str(value)
@@ -1102,7 +1097,7 @@ def _optional_context_pressure(view: MissionRunView) -> str:
     return ""
 
 
-def _optional_event_age(view: MissionRunView) -> str:
+def _optional_event_age(view: mf.MissionRunView) -> str:
     for attr_name in ("latest_event_age_seconds", "latest_event_age_s", "latest_event_age"):
         value = getattr(view, attr_name, None)
         if isinstance(value, (int, float)) and value > 0:
@@ -1120,7 +1115,7 @@ def _optional_event_age(view: MissionRunView) -> str:
     return ""
 
 
-def _optional_ref_list(view: MissionRunView, *attr_names: str) -> list[str]:
+def _optional_ref_list(view: mf.MissionRunView, *attr_names: str) -> list[str]:
     for attr_name in attr_names:
         value = getattr(view, attr_name, None)
         if isinstance(value, list):
@@ -1132,7 +1127,7 @@ def _optional_ref_list(view: MissionRunView, *attr_names: str) -> list[str]:
     return []
 
 
-def _optional_safe_point_details(view: MissionRunView) -> str:
+def _optional_safe_point_details(view: mf.MissionRunView) -> str:
     details_ref = _first_non_empty(
         _string_value(_optional_dict(view, "last_safe_point"), "ref"),
         _string_value(_optional_dict(view, "last_safe_point_details"), "ref"),
@@ -1195,14 +1190,14 @@ def _read_existing_status(config: FrontDeskTuiConfig) -> str:
 def _read_control(config: FrontDeskTuiConfig) -> dict[str, Any]:
     try:
         return read_json_ref(_run_root(config), FRONTDESK_CONTROL_REF, "frontdesk_control")
-    except (ContractValidationError, OSError, json.JSONDecodeError):
+    except (mf.ContractValidationError, OSError, json.JSONDecodeError):
         return {}
 
 
 def _read_assistant_turn(config: FrontDeskTuiConfig) -> dict[str, Any]:
     try:
         return read_json_ref(_run_root(config), FRONTDESK_ASSISTANT_TURN_REF, "frontdesk_assistant_turn")
-    except (ContractValidationError, OSError, json.JSONDecodeError):
+    except (mf.ContractValidationError, OSError, json.JSONDecodeError):
         return {}
 
 

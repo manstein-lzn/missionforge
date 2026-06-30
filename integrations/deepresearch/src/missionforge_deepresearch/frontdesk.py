@@ -13,17 +13,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from missionforge.contracts import ContractValidationError, stable_json_hash, validate_ref
-from missionforge.extensions import npm_install_extension
-from missionforge.kernel import Toolset
-from missionforge.kernel.compiler import CompiledStep, StepCompileContext, compile_step
-from missionforge.kernel.contracts import Step
-from missionforge.kernel.extensions import ExtensionInstaller, prepare_extension_lock
-from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole, PiWorkerCallResultStatus
-from missionforge.piworker_progress import PiWorkerProgressSink
-from missionforge.piworker_runtime import PiWorkerCallAdapter, run_piworker_call
-from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
-from missionforge.task_contract import ExtensionCapability
+import missionforge as mf
 
 from .product_contract import AcademicResearchRequest, ResearchIntensity
 from .workspace import read_json_ref, read_text_ref, resolve_workspace_ref, write_json_ref, write_text_ref
@@ -85,7 +75,7 @@ class DeepResearchFrontDeskResult:
 
     def validate(self) -> None:
         if self.schema_version != "missionforge_deepresearch.frontdesk_result.v1":
-            raise ContractValidationError("deepresearch_frontdesk_result.schema_version is unsupported")
+            raise mf.ContractValidationError("deepresearch_frontdesk_result.schema_version is unsupported")
         for field_name in (
             "run_workspace_ref",
             "result_ref",
@@ -95,13 +85,13 @@ class DeepResearchFrontDeskResult:
             "assistant_turn_ref",
             "session_state_ref",
         ):
-            validate_ref(getattr(self, field_name), f"deepresearch_frontdesk_result.{field_name}")
+            mf.validate_ref(getattr(self, field_name), f"deepresearch_frontdesk_result.{field_name}")
         if self.research_request_ref:
-            validate_ref(self.research_request_ref, "deepresearch_frontdesk_result.research_request_ref")
+            mf.validate_ref(self.research_request_ref, "deepresearch_frontdesk_result.research_request_ref")
         for ref in [*self.evidence_refs, *self.metric_refs]:
-            validate_ref(ref, "deepresearch_frontdesk_result.refs[]")
+            mf.validate_ref(ref, "deepresearch_frontdesk_result.refs[]")
         if not self.contract_hash.startswith("sha256:"):
-            raise ContractValidationError("deepresearch_frontdesk_result.contract_hash must be sha256")
+            raise mf.ContractValidationError("deepresearch_frontdesk_result.contract_hash must be sha256")
 
 
 def run_deepresearch_frontdesk_turn(
@@ -110,18 +100,18 @@ def run_deepresearch_frontdesk_turn(
     user_message: str | None = None,
     request_id: str = "deepresearch-frontdesk",
     workspace: str | Path = ".",
-    adapter: PiWorkerCallAdapter | None = None,
+    adapter: mf.PiWorkerCallAdapter | None = None,
     audience: str = "R&D team",
     language: str = "zh",
     research_intensity: ResearchIntensity | str = ResearchIntensity.STANDARD,
     live_extension_mode: bool = False,
-    extension_installer: ExtensionInstaller | None = None,
-    runtime_progress_sink: PiWorkerProgressSink | None = None,
+    extension_installer: mf.ExtensionInstaller | None = None,
+    runtime_progress_sink: mf.PiWorkerProgressSink | None = None,
 ) -> DeepResearchFrontDeskResult:
     """Run one FrontDesk turn and persist the current requirements document."""
 
     if adapter is None:
-        raise ContractValidationError("deepresearch_frontdesk requires an explicit PiWorker adapter")
+        raise mf.ContractValidationError("deepresearch_frontdesk requires an explicit PiWorker adapter")
     root = Path(workspace).resolve()
     run_ref = f"runs/{request_id}"
     run_root = root / run_ref
@@ -129,7 +119,7 @@ def run_deepresearch_frontdesk_turn(
     if initial_input is not None and not (run_root / FRONTDESK_INITIAL_INPUT_REF).exists():
         write_text_ref(run_root, FRONTDESK_INITIAL_INPUT_REF, initial_input.strip() + "\n")
     if not (run_root / FRONTDESK_INITIAL_INPUT_REF).exists():
-        raise ContractValidationError("deepresearch_frontdesk requires initial_input for a new session")
+        raise mf.ContractValidationError("deepresearch_frontdesk requires initial_input for a new session")
     _append_dialogue(run_root, "user", user_message or initial_input or "")
     contract = _frontdesk_contract(
         request_id=request_id,
@@ -138,7 +128,7 @@ def run_deepresearch_frontdesk_turn(
         research_intensity=research_intensity,
         live_extension_mode=live_extension_mode,
     )
-    contract_hash = stable_json_hash(contract)
+    contract_hash = mf.stable_json_hash(contract)
     _write_frontdesk_workspace(run_root, contract=contract)
     call_id = _next_frontdesk_call_id(run_root, request_id)
     compiled = _compile_frontdesk_call(
@@ -149,16 +139,16 @@ def run_deepresearch_frontdesk_turn(
     )
     write_json_ref(run_root, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
     write_json_ref(run_root, "frontdesk/kernel/step_spec.json", compiled.step.to_dict())
-    extension_lock = prepare_extension_lock(
+    extension_lock = mf.prepare_extension_lock(
         compiled.permission_manifest,
         source_permission_manifest_ref=compiled.permission_manifest_ref,
         workspace=run_root,
         ref_prefix=f"frontdesk/attempts/{call_id}",
         mode="install" if live_extension_mode else "verify-installed",
-        installer=extension_installer if extension_installer is not None else npm_install_extension,
+        installer=extension_installer if extension_installer is not None else mf.npm_install_extension,
     )
     write_json_ref(run_root, f"frontdesk/attempts/{call_id}/piworker_call.json", compiled.piworker_call.to_dict())
-    call_result = run_piworker_call(
+    call_result = mf.run_piworker_call(
         compiled.piworker_call,
         workspace=run_root,
         adapter=adapter,
@@ -218,11 +208,11 @@ def approve_frontdesk_requirements(
     run_root = root / run_ref
     control = read_json_ref(run_root, FRONTDESK_CONTROL_REF, "frontdesk_control")
     if control.get("decision") != "ready_for_approval":
-        raise ContractValidationError("frontdesk requirements are not ready for approval")
+        raise mf.ContractValidationError("frontdesk requirements are not ready for approval")
     projection = read_json_ref(run_root, FRONTDESK_RESEARCH_PROJECTION_REF, "frontdesk_research_projection")
     requirements = read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
     if projection.get("requirements_hash") != _text_hash(requirements):
-        raise ContractValidationError("frontdesk requirements changed after research request projection")
+        raise mf.ContractValidationError("frontdesk requirements changed after research request projection")
     request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
     request = AcademicResearchRequest.from_dict(request_payload)
     write_json_ref(
@@ -245,7 +235,7 @@ class FrontDeskFixtureAdapter:
 
     adapter_family = "fixture_deepresearch_frontdesk"
 
-    def run_call(self, call: PiWorkerCall, *, workspace: str | Path = ".", **_kwargs: Any) -> WorkerAdapterResult:
+    def run_call(self, call: mf.PiWorkerCall, *, workspace: str | Path = ".", **_kwargs: Any) -> mf.WorkerAdapterResult:
         root = Path(workspace)
         dialogue = _read_dialogue(root)
         if len([item for item in dialogue if item.get("role") == "user"]) <= 1:
@@ -279,7 +269,7 @@ class FrontDeskFixtureAdapter:
         report_ref = f"attempts/{call.call_id}/execution_report.json"
         metrics_ref = f"attempts/{call.call_id}/metrics.json"
         write_json_ref(root, metrics_ref, {"fixture": True, "step_id": "frontdesk"})
-        report = ExecutionReport(
+        report = mf.ExecutionReport(
             report_id=f"{call.call_id}-execution-report",
             call_id=call.call_id,
             status="completed",
@@ -307,9 +297,9 @@ class FrontDeskFixtureAdapter:
             metrics={"metric_ref": metrics_ref},
         )
         write_json_ref(root, report_ref, report.to_dict())
-        return WorkerAdapterResult(
+        return mf.WorkerAdapterResult(
             execution_report=report,
-            worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
+            worker_result=mf.WorkerResult(status="completed", execution_report_ref=report_ref),
             metrics={"metric_ref": metrics_ref},
         )
 
@@ -366,9 +356,9 @@ def _compile_frontdesk_call(
     contract: Mapping[str, Any],
     contract_hash: str,
     live_extension_mode: bool,
-) -> CompiledStep:
+) -> mf.CompiledStep:
     tools = ["read", "write", "edit", "academic"] if live_extension_mode else ["read", "write", "edit"]
-    step = Step(
+    step = mf.Step(
         id="frontdesk",
         brief=(
             "Interact with the user as a DeepResearch FrontDesk. Clarify the research need, "
@@ -401,9 +391,9 @@ def _compile_frontdesk_call(
         tools=tools,
         runtime_budget={"timeout_seconds": 900},
         network=live_extension_mode,
-        role=PiWorkerCallRole.FRONTDESK_AUTHOR,
+        role=mf.PiWorkerCallRole.FRONTDESK_AUTHOR,
     )
-    context = StepCompileContext(
+    context = mf.StepCompileContext(
         flow_id=f"deepresearch-frontdesk-{contract['contract_id']}",
         contract_id=str(contract["contract_id"]),
         contract_hash=contract_hash,
@@ -414,15 +404,15 @@ def _compile_frontdesk_call(
         call_id=call_id,
     )
     toolsets = {"academic": _frontdesk_academic_toolset()} if live_extension_mode else {}
-    return compile_step(step, context=context, toolsets=toolsets)
+    return mf.compile_step(step, context=context, toolsets=toolsets)
 
 
-def _frontdesk_academic_toolset() -> Toolset:
-    return Toolset(
+def _frontdesk_academic_toolset() -> mf.Toolset:
+    return mf.Toolset(
         id="academic",
         package="local:extensions/pi-academic-sources",
         tools=["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
-        capability=ExtensionCapability.WEB,
+        capability=mf.ExtensionCapability.WEB,
         network=True,
     )
 
@@ -530,11 +520,11 @@ def _next_frontdesk_call_id(run_root: Path, request_id: str) -> str:
 
 
 def _frontdesk_status(run_root: Path, call_status: str) -> str:
-    if call_status != PiWorkerCallResultStatus.COMPLETED.value:
+    if call_status != mf.PiWorkerCallResultStatus.COMPLETED.value:
         return call_status
     try:
         control = read_json_ref(run_root, FRONTDESK_CONTROL_REF, "frontdesk_control")
-    except ContractValidationError:
+    except mf.ContractValidationError:
         return "blocked"
     decision = control.get("decision")
     if decision in {"needs_user_answer", "ready_for_approval"}:
@@ -585,7 +575,7 @@ def _topic_from_requirements(requirements: str) -> str:
 
 
 def _text_hash(text: str) -> str:
-    return stable_json_hash({"text": text})
+    return mf.stable_json_hash({"text": text})
 
 
 def _fixture_requirements(initial: str, *, decision: str) -> str:
@@ -694,7 +684,7 @@ def _empty_session_state() -> dict[str, Any]:
 
 
 def _outer_ref(run_ref: str, inner_ref: str) -> str:
-    return validate_ref(f"{run_ref}/{inner_ref}", "deepresearch_frontdesk.outer_ref")
+    return mf.validate_ref(f"{run_ref}/{inner_ref}", "deepresearch_frontdesk.outer_ref")
 
 
 def _dedupe_refs(refs: list[str]) -> list[str]:
@@ -703,7 +693,7 @@ def _dedupe_refs(refs: list[str]) -> list[str]:
     for ref in refs:
         if not ref:
             continue
-        safe_ref = validate_ref(ref, "deepresearch_frontdesk.ref")
+        safe_ref = mf.validate_ref(ref, "deepresearch_frontdesk.ref")
         if safe_ref not in seen:
             result.append(safe_ref)
             seen.add(safe_ref)

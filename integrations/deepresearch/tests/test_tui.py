@@ -20,7 +20,7 @@ from missionforge_deepresearch.tui import (
     _run_root,
     run_frontdesk_tui,
 )
-from missionforge.adapters.cli import MissionRunView
+import missionforge as mf
 
 
 class FrontDeskTuiTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class FrontDeskTuiTests(unittest.TestCase):
         input_mock.assert_not_called()
 
     def test_kernel_view_helpers_render_optional_observer_fields(self) -> None:
-        view = MissionRunView(
+        view = mf.MissionRunView(
             flow_id="flow",
             run_id="run",
             status="running",
@@ -88,7 +88,7 @@ class FrontDeskTuiTests(unittest.TestCase):
         self.assertIn("safe_point_details: ref=state/safe_point.json, step_id=step-12, status=stable", rendered)
 
     def test_kernel_view_helpers_ignore_absent_optional_fields(self) -> None:
-        view = MissionRunView(
+        view = mf.MissionRunView(
             flow_id="flow",
             run_id="run",
             status="running",

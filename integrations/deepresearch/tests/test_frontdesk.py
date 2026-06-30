@@ -5,8 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge.extensions import ExtensionLock
-from missionforge.contracts import ContractValidationError
+import missionforge as mf
 from missionforge_deepresearch.frontdesk import (
     FRONTDESK_APPROVAL_REF,
     FRONTDESK_ASSISTANT_TURN_REF,
@@ -71,7 +70,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
                 adapter=FrontDeskFixtureAdapter(),
             )
 
-            with self.assertRaisesRegex(ContractValidationError, "not ready"):
+            with self.assertRaisesRegex(mf.ContractValidationError, "not ready"):
                 approve_frontdesk_requirements(request_id="frontdesk-not-ready", workspace=root)
 
     def test_frontdesk_result_uses_outer_refs(self) -> None:
@@ -104,7 +103,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
             run_root = root / result.run_workspace_ref
             manifest = _read_json(run_root, FRONTDESK_PERMISSION_MANIFEST_REF)
             lock_ref = next(ref.removeprefix(result.run_workspace_ref + "/") for ref in result.evidence_refs if ref.endswith("extension_lock.json"))
-            lock = ExtensionLock.from_dict(_read_json(run_root, lock_ref))
+            lock = mf.ExtensionLock.from_dict(_read_json(run_root, lock_ref))
 
         self.assertEqual(result.status, "needs_user_answer")
         self.assertEqual(manifest["network_policy"], "enabled")
@@ -172,7 +171,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ContractValidationError, "changed after research request projection"):
+            with self.assertRaisesRegex(mf.ContractValidationError, "changed after research request projection"):
                 approve_frontdesk_requirements(request_id="frontdesk-stale", workspace=root)
 
 

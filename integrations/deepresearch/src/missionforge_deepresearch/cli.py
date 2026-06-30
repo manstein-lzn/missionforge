@@ -9,10 +9,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Sequence
 
-from missionforge.adapters.pi_agent_runtime import PiAgentRuntimeAdapter, PiAgentRuntimeConfig
-from missionforge.kernel import FlowLedgerEvent, FlowLedgerEventKind
-from missionforge.piworker_progress import PiWorkerProgressSink
-from missionforge.progress_stream import DEFAULT_PROGRESS_REF, ProgressStreamWriter, stream_progress
+import missionforge as mf
 
 from .frontdesk import (
     FRONTDESK_ASSISTANT_TURN_REF,
@@ -45,7 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         adapter = (
             KernelV2FixtureAdapter()
             if args.kernel_v2_adapter_mode == "fixture"
-            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
+            else mf.create_default_piworker_adapter(piworker_config, environ=piworker_env)
         )
         return _run_and_emit_result(
             args,
@@ -69,7 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         adapter = (
             FrontDeskFixtureAdapter()
             if args.frontdesk_adapter_mode == "fixture"
-            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
+            else mf.create_default_piworker_adapter(piworker_config, environ=piworker_env)
         )
         result = run_deepresearch_frontdesk_turn(
             initial_input=args.initial_input,
@@ -94,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         adapter = (
             KernelV2FixtureAdapter()
             if args.kernel_v2_adapter_mode == "fixture"
-            else PiAgentRuntimeAdapter(piworker_config, environ=piworker_env)
+            else mf.create_default_piworker_adapter(piworker_config, environ=piworker_env)
         )
         return _run_and_emit_result(
             args,
@@ -118,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         frontdesk_adapter = (
             FrontDeskFixtureAdapter()
             if args.frontdesk_adapter_mode == "fixture"
-            else PiAgentRuntimeAdapter(frontdesk_config, environ=frontdesk_env)
+            else mf.create_default_piworker_adapter(frontdesk_config, environ=frontdesk_env)
         )
 
         def kernel_adapter_factory(research_intensity: ResearchIntensity | str):
@@ -126,7 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return (
                 KernelV2FixtureAdapter()
                 if args.kernel_v2_adapter_mode == "fixture"
-                else PiAgentRuntimeAdapter(kernel_config, environ=kernel_env)
+                else mf.create_default_piworker_adapter(kernel_config, environ=kernel_env)
             )
 
         return run_frontdesk_tui(
@@ -223,7 +220,7 @@ def _run_and_emit_result(
     args: argparse.Namespace,
     runner: Callable[[], Any],
     *,
-    progress_runner: Callable[[ProgressStreamWriter], Any] | None = None,
+    progress_runner: Callable[[mf.ProgressStreamWriter], Any] | None = None,
 ) -> int:
     result = _run_with_optional_progress(args, runner, progress_runner=progress_runner)
     _emit_user_artifact_summary(args, result)
@@ -377,12 +374,12 @@ def _run_with_optional_progress(
     args: argparse.Namespace,
     runner: Callable[[], Any],
     *,
-    progress_runner: Callable[[ProgressStreamWriter], Any] | None = None,
+    progress_runner: Callable[[mf.ProgressStreamWriter], Any] | None = None,
 ) -> Any:
     if not args.stream_progress:
         return runner()
     workspace = Path(args.workspace) / "runs" / args.request_id
-    progress = ProgressStreamWriter(workspace, stream_ref=DEFAULT_PROGRESS_REF)
+    progress = mf.ProgressStreamWriter(workspace, stream_ref=mf.DEFAULT_PROGRESS_REF)
 
     def wrapped_runner() -> Any:
         progress.emit(
@@ -404,16 +401,16 @@ def _run_with_optional_progress(
         )
         return result
 
-    return stream_progress(
+    return mf.stream_progress(
         wrapped_runner,
         workspace=workspace,
-        stream_ref=DEFAULT_PROGRESS_REF,
+        stream_ref=mf.DEFAULT_PROGRESS_REF,
         interval_seconds=args.progress_interval,
     )
 
 
-def _kernel_v2_progress_event_sink(progress: ProgressStreamWriter) -> Callable[[FlowLedgerEvent], None]:
-    def emit(event: FlowLedgerEvent) -> None:
+def _kernel_v2_progress_event_sink(progress: mf.ProgressStreamWriter) -> Callable[[mf.FlowLedgerEvent], None]:
+    def emit(event: mf.FlowLedgerEvent) -> None:
         progress_event = _kernel_v2_progress_event(event)
         if progress_event is None:
             return
@@ -422,7 +419,7 @@ def _kernel_v2_progress_event_sink(progress: ProgressStreamWriter) -> Callable[[
     return emit
 
 
-def _kernel_v2_runtime_progress_sink(progress: ProgressStreamWriter) -> PiWorkerProgressSink:
+def _kernel_v2_runtime_progress_sink(progress: mf.ProgressStreamWriter) -> mf.PiWorkerProgressSink:
     def emit(event: dict[str, Any]) -> None:
         state = event.get("state") if event.get("state") in {"pending", "running", "completed", "failed", "blocked"} else "running"
         progress.emit(
@@ -437,10 +434,10 @@ def _kernel_v2_runtime_progress_sink(progress: ProgressStreamWriter) -> PiWorker
     return emit
 
 
-def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
+def _kernel_v2_progress_event(event: mf.FlowLedgerEvent) -> dict[str, Any] | None:
     step_label = _kernel_v2_step_label(event.step_id)
     progress_hint = f"kernel {event.metadata.get('step_index')}" if event.metadata.get("step_index") else "kernel"
-    if event.kind == FlowLedgerEventKind.STEP_STARTED:
+    if event.kind == mf.FlowLedgerEventKind.STEP_STARTED:
         return {
             "stage": f"kernel_{event.step_id or 'step'}",
             "state": "running",
@@ -449,7 +446,7 @@ def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
             "progress_hint": progress_hint,
             "refs": event.refs,
         }
-    if event.kind == FlowLedgerEventKind.STEP_RECORDED:
+    if event.kind == mf.FlowLedgerEventKind.STEP_RECORDED:
         state = _progress_state_from_kernel_status(event.status)
         return {
             "stage": f"kernel_{event.step_id or 'step'}",
@@ -459,7 +456,7 @@ def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
             "progress_hint": progress_hint,
             "refs": event.refs,
         }
-    if event.kind == FlowLedgerEventKind.ROUTED:
+    if event.kind == mf.FlowLedgerEventKind.ROUTED:
         state = _progress_state_from_kernel_status(event.status)
         return {
             "stage": f"kernel_{event.step_id or 'route'}_route",
@@ -469,7 +466,7 @@ def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
             "progress_hint": progress_hint,
             "refs": event.refs,
         }
-    if event.kind == FlowLedgerEventKind.INTERACTION_RECORDED:
+    if event.kind == mf.FlowLedgerEventKind.INTERACTION_RECORDED:
         event_count = event.metadata.get("event_count") if isinstance(event.metadata, dict) else None
         detail = "用户插入已在安全点投影给后续 worker。"
         if isinstance(event_count, int):
@@ -482,7 +479,7 @@ def _kernel_v2_progress_event(event: FlowLedgerEvent) -> dict[str, Any] | None:
             "progress_hint": progress_hint,
             "refs": event.refs,
         }
-    if event.kind == FlowLedgerEventKind.PROJECTIONS_RECORDED:
+    if event.kind == mf.FlowLedgerEventKind.PROJECTIONS_RECORDED:
         return {
             "stage": "kernel_projections",
             "state": "completed",
@@ -551,7 +548,7 @@ def _progress_result_refs(result: Any) -> list[str]:
     return refs
 
 
-def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, PiAgentRuntimeConfig, dict[str, str]]:
+def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest, object, dict[str, str]]:
     request = AcademicResearchRequest(
         request_id=args.request_id,
         topic=args.topic,
@@ -564,7 +561,7 @@ def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest
     return request, piworker_config, piworker_env
 
 
-def _piworker_inputs(args: argparse.Namespace, research_intensity: ResearchIntensity | str) -> tuple[PiAgentRuntimeConfig, dict[str, str]]:
+def _piworker_inputs(args: argparse.Namespace, research_intensity: ResearchIntensity | str) -> tuple[object, dict[str, str]]:
     intensity_profile = research_intensity_profile(research_intensity)
     piworker_metadata = {}
     if args.piworker_base_url:
@@ -575,7 +572,7 @@ def _piworker_inputs(args: argparse.Namespace, research_intensity: ResearchInten
     if args.piworker_max_turns is not None:
         piworker_env["MISSIONFORGE_PI_AGENT_MAX_TURNS"] = str(args.piworker_max_turns)
     piworker_env["MISSIONFORGE_PI_AGENT_REASONING"] = effective_reasoning
-    piworker_config = PiAgentRuntimeConfig(
+    piworker_config = mf.create_piagent_runtime_config(
         timeout_seconds=effective_timeout,
         provider_mode="live",
         provider_config_source=args.piworker_provider_config_source,

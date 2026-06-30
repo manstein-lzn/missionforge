@@ -5,11 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from missionforge.extensions import ExtensionLock
-from missionforge.interaction import FileInteractionPort, UserEventKind
-from missionforge.kernel import FlowLedgerEventKind
-from missionforge.piworker_call import PiWorkerCallRole
-from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
+import missionforge as mf
 from missionforge_deepresearch import kernel_v2 as kernel_v2_module
 from missionforge_deepresearch.kernel_v2 import (
     AcademicResearchRequest,
@@ -113,20 +109,20 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(
             [event["kind"] for event in ledger_events],
             [
-                FlowLedgerEventKind.STARTED.value,
-                FlowLedgerEventKind.STEP_STARTED.value,
-                FlowLedgerEventKind.STEP_RECORDED.value,
-                FlowLedgerEventKind.ROUTED.value,
-                FlowLedgerEventKind.STEP_STARTED.value,
-                FlowLedgerEventKind.STEP_RECORDED.value,
-                FlowLedgerEventKind.ROUTED.value,
-                FlowLedgerEventKind.STEP_STARTED.value,
-                FlowLedgerEventKind.STEP_RECORDED.value,
-                FlowLedgerEventKind.ROUTED.value,
-                FlowLedgerEventKind.STEP_STARTED.value,
-                FlowLedgerEventKind.STEP_RECORDED.value,
-                FlowLedgerEventKind.ROUTED.value,
-                FlowLedgerEventKind.STOPPED.value,
+                mf.FlowLedgerEventKind.STARTED.value,
+                mf.FlowLedgerEventKind.STEP_STARTED.value,
+                mf.FlowLedgerEventKind.STEP_RECORDED.value,
+                mf.FlowLedgerEventKind.ROUTED.value,
+                mf.FlowLedgerEventKind.STEP_STARTED.value,
+                mf.FlowLedgerEventKind.STEP_RECORDED.value,
+                mf.FlowLedgerEventKind.ROUTED.value,
+                mf.FlowLedgerEventKind.STEP_STARTED.value,
+                mf.FlowLedgerEventKind.STEP_RECORDED.value,
+                mf.FlowLedgerEventKind.ROUTED.value,
+                mf.FlowLedgerEventKind.STEP_STARTED.value,
+                mf.FlowLedgerEventKind.STEP_RECORDED.value,
+                mf.FlowLedgerEventKind.ROUTED.value,
+                mf.FlowLedgerEventKind.STOPPED.value,
             ],
         )
         self.assertEqual(ledger_events[-2]["step_id"], "judge")
@@ -144,7 +140,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             run_root = root / "runs/kernel-v2-interaction"
-            port = FileInteractionPort(run_root)
+            port = mf.FileInteractionPort(run_root)
             event = port.submit_text(
                 "请优先关注用户体验和进度可观测性。",
                 run_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
@@ -172,7 +168,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(snapshot["events"][0]["event_id"], event.event_id)
         self.assertEqual(acks[0]["event_id"], event.event_id)
         self.assertEqual(acks[0]["snapshot_ref"], snapshot_ref)
-        self.assertTrue(any(item["kind"] == FlowLedgerEventKind.INTERACTION_RECORDED.value for item in ledger_events))
+        self.assertTrue(any(item["kind"] == mf.FlowLedgerEventKind.INTERACTION_RECORDED.value for item in ledger_events))
 
     def test_pause_intervention_blocks_before_researcher_call(self) -> None:
         request = AcademicResearchRequest(
@@ -186,12 +182,12 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             run_root = root / "runs/kernel-v2-pause"
-            port = FileInteractionPort(run_root)
+            port = mf.FileInteractionPort(run_root)
             port.submit_text(
                 "暂停。",
                 run_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
                 target="flow",
-                kind=UserEventKind.PAUSE_REQUEST,
+                kind=mf.UserEventKind.PAUSE_REQUEST,
             )
             result = run_deepresearch_kernel_v2(
                 request,
@@ -316,10 +312,10 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(flow.routes["reviewer.revise_report"], "researcher")
         self.assertEqual(flow.routes["reviewer.continue"], "source_mapper")
         self.assertEqual(flow.routes["judge.repair"], "researcher")
-        self.assertEqual(flow.steps[0].role, PiWorkerCallRole.EXECUTOR)
-        self.assertEqual(flow.steps[1].role, PiWorkerCallRole.EXECUTOR)
-        self.assertEqual(flow.steps[2].role, PiWorkerCallRole.EXECUTOR)
-        self.assertEqual(flow.steps[3].role, PiWorkerCallRole.JUDGE)
+        self.assertEqual(flow.steps[0].role, mf.PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(flow.steps[1].role, mf.PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(flow.steps[2].role, mf.PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(flow.steps[3].role, mf.PiWorkerCallRole.JUDGE)
         self.assertEqual(flow.steps[0].route_on, "state/source_control.json")
         self.assertEqual(flow.steps[1].route_on, "state/researcher_control.json")
         self.assertEqual(flow.steps[2].route_on, "reviews/reviewer_observation.json")
@@ -460,7 +456,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             source_mapper_record = _read_json(run_root, flow_result["step_record_refs"][0])
             researcher_record = _read_json(run_root, flow_result["step_record_refs"][1])
             reviewer_record = _read_json(run_root, flow_result["step_record_refs"][2])
-            lock = ExtensionLock.from_dict(_read_json(run_root, source_mapper_record["extension_lock_ref"]))
+            lock = mf.ExtensionLock.from_dict(_read_json(run_root, source_mapper_record["extension_lock_ref"]))
 
         self.assertEqual(result.status, "accepted")
         self.assertIsNone(researcher_record["extension_lock_ref"])
@@ -714,7 +710,7 @@ class ReviewerProviderBlockedKernelV2Adapter(KernelV2FixtureAdapter):
         if str(call.metadata.get("kernel_step_id", "")) != "reviewer":
             return super().run_call(call, workspace=workspace, **kwargs)
         report_ref = f"attempts/{call.call_id}/execution_report.json"
-        report = ExecutionReport(
+        report = mf.ExecutionReport(
             report_id=f"deepresearch-kernel-v2-{call.call_id}",
             call_id=call.call_id,
             status="failed",
@@ -727,9 +723,9 @@ class ReviewerProviderBlockedKernelV2Adapter(KernelV2FixtureAdapter):
             },
         )
         kernel_v2_module.write_json_ref(workspace, report_ref, report.to_dict())
-        return WorkerAdapterResult(
+        return mf.WorkerAdapterResult(
             execution_report=report,
-            worker_result=WorkerResult(status="failed", execution_report_ref=report_ref),
+            worker_result=mf.WorkerResult(status="failed", execution_report_ref=report_ref),
         )
 
 

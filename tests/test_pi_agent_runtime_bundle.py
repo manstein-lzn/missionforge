@@ -7,13 +7,16 @@ import unittest
 
 from missionforge import (
     PiAgentRuntimeCapabilityStatus,
+    create_piagent_runtime_config,
     default_pi_agent_runtime_command,
     find_pi_agent_runtime_dir,
+    create_default_piworker_adapter,
     preflight_pi_agent_runtime,
 )
 from missionforge.pi_agent_runtime_bundle import (
     PI_AGENT_RUNTIME_ENV,
     PI_AGENT_RUNTIME_HOME_ENV,
+    prepare_pi_agent_runtime,
     prepared_pi_agent_runtime_command,
 )
 
@@ -87,6 +90,43 @@ class PiAgentRuntimeBundleTests(unittest.TestCase):
             self.assertEqual(command[0], "node")
             self.assertEqual(Path(command[1]).parent, report.runtime_dir / "dist")
             self.assertIn("ci --ignore-scripts", npm_log.read_text(encoding="utf-8"))
+
+    def test_runtime_config_factory_returns_public_options_for_default_adapter(self) -> None:
+        config = create_piagent_runtime_config(
+            command=("pi-agent-runtime",),
+            timeout_seconds=42,
+            provider_mode="live",
+            provider_config_source="env",
+            model="gpt-test",
+            metadata={"purpose": "test"},
+        )
+
+        adapter = create_default_piworker_adapter(config)
+
+        self.assertEqual(config.timeout_seconds, 42)
+        self.assertEqual(adapter.config.timeout_seconds, 42)
+        self.assertEqual(adapter.config.provider_mode, "live")
+        self.assertEqual(adapter.config.provider_config_source, "env")
+        self.assertEqual(adapter.config.model, "gpt-test")
+        self.assertEqual(adapter.config.metadata, {"purpose": "test"})
+
+    def test_prepare_runtime_reports_missing_npm_when_build_artifact_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            runtime_dir = root / "runtime"
+            runtime_home = root / "runtime-home"
+            _write_runtime_fixture(runtime_dir, with_node_modules=True)
+            (runtime_dir / "dist" / "main.js").unlink()
+            env = {
+                "PATH": "",
+                PI_AGENT_RUNTIME_HOME_ENV: str(runtime_home),
+            }
+
+            report = prepare_pi_agent_runtime(runtime_dir, env=env, timeout_seconds=1)
+
+        self.assertFalse(report.available)
+        capabilities = {item.name: item for item in report.capabilities}
+        self.assertEqual(capabilities["npm"].status, PiAgentRuntimeCapabilityStatus.UNAVAILABLE)
 
     def test_development_runtime_runs_in_place(self) -> None:
         runtime_dir = find_pi_agent_runtime_dir()

@@ -14,7 +14,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from .contracts import ContractValidationError, require_non_empty_str
 
@@ -32,6 +32,74 @@ class PiAgentRuntimeCapabilityStatus(StrEnum):
     AVAILABLE = "available"
     UNAVAILABLE = "unavailable"
     UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class PiAgentRuntimeOptions:
+    """Opaque options for the package-provided PiAgent PiWorker runtime."""
+
+    command: Sequence[str] = ()
+    timeout_seconds: int = 300
+    provider_mode: str = "faux"
+    provider_config_source: str = "codex_current"
+    runtime_name: str = "missionforge.pi_agent_runtime"
+    model: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    repair_mode: str = "none"
+    verifier_failures: Sequence[str] = ()
+    failed_constraints: Sequence[str] = ()
+    previous_output_ref: str | None = None
+    repair_prompt: str | None = None
+    resume_mode: str = "none"
+    resume_boundary: str | None = None
+    resume_savepoint_ref: str | None = None
+    resume_session_ref: str | None = None
+    resume_events_ref: str | None = None
+    resume_checkpoint_refs: Sequence[str] = ()
+    resume_summary_artifact_refs: Sequence[str] = ()
+    resume_prompt: str | None = None
+    context_large_observation_bytes: int = 8 * 1024
+    context_soft_compact_ratio: float = 0.8
+    context_hard_compact_ratio: float = 0.9
+    context_cache_aware: bool = True
+    long_memory_packet_ref: str | None = None
+
+    def to_adapter_kwargs(self) -> dict[str, Any]:
+        """Return constructor kwargs for the default adapter's internal config."""
+
+        return {
+            "command": tuple(self.command),
+            "timeout_seconds": self.timeout_seconds,
+            "provider_mode": self.provider_mode,
+            "provider_config_source": self.provider_config_source,
+            "runtime_name": self.runtime_name,
+            "model": self.model,
+            "metadata": dict(self.metadata),
+            "repair_mode": self.repair_mode,
+            "verifier_failures": tuple(self.verifier_failures),
+            "failed_constraints": tuple(self.failed_constraints),
+            "previous_output_ref": self.previous_output_ref,
+            "repair_prompt": self.repair_prompt,
+            "resume_mode": self.resume_mode,
+            "resume_boundary": self.resume_boundary,
+            "resume_savepoint_ref": self.resume_savepoint_ref,
+            "resume_session_ref": self.resume_session_ref,
+            "resume_events_ref": self.resume_events_ref,
+            "resume_checkpoint_refs": tuple(self.resume_checkpoint_refs),
+            "resume_summary_artifact_refs": tuple(self.resume_summary_artifact_refs),
+            "resume_prompt": self.resume_prompt,
+            "context_large_observation_bytes": self.context_large_observation_bytes,
+            "context_soft_compact_ratio": self.context_soft_compact_ratio,
+            "context_hard_compact_ratio": self.context_hard_compact_ratio,
+            "context_cache_aware": self.context_cache_aware,
+            "long_memory_packet_ref": self.long_memory_packet_ref,
+        }
+
+
+def create_piagent_runtime_config(**kwargs: object) -> PiAgentRuntimeOptions:
+    """Create opaque options for MissionForge's default PiAgent runtime."""
+
+    return PiAgentRuntimeOptions(**kwargs)
 
 
 @dataclass(frozen=True)
@@ -168,6 +236,7 @@ def prepare_pi_agent_runtime(
                 ),
             )
     if not (target_dir / "dist" / "main.js").is_file():
+        report = preflight_pi_agent_runtime(target_dir, env=effective_env)
         npm = npm_executable(env=effective_env)
         if npm is None:
             return _with_failure(

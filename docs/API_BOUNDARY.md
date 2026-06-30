@@ -12,6 +12,11 @@ backends remain explicit capabilities: Linux `bubblewrap`/`seccomp` sandboxing
 may be required by a task, but its absence must not make `import missionforge`
 fail or create implicit filesystem side effects.
 
+Product examples must use MissionForge like external developers do. The
+DeepResearch integration is the reference example: its source imports
+`missionforge` from the package root only, never `missionforge.kernel`,
+`missionforge.adapters`, or other implementation modules directly.
+
 ## Root Exports
 
 Task authority:
@@ -47,9 +52,11 @@ PiWorker invocation:
 - `create_default_piworker_adapter`
 - `run_piworker_call`
 - `run_piworker_call_batch`
+- `create_piagent_runtime_config`
 
 Packaged PiAgent runtime preflight:
 
+- `PiAgentRuntimeOptions`
 - `PiAgentRuntimeCapability`
 - `PiAgentRuntimeCapabilityStatus`
 - `PiAgentRuntimePreflightReport`
@@ -60,12 +67,16 @@ Packaged PiAgent runtime preflight:
 Evidence, extensions, sandbox, and progress primitives may be exported when
 they are product-neutral and refs-first.
 
-## Explicit Modules
+## Implementation Modules
+
+These modules back the root API and remain importable for maintainers and
+advanced debugging, but product examples should not depend on them directly:
 
 - `missionforge.adapters.pi_agent_runtime`: Pi sidecar adapter internals.
 - `missionforge.pi_agent_runtime_bundle`: packaged runtime discovery,
   materialization, and host capability preflight.
-- `missionforge.kernel`: compact flow-building API for product integrations.
+- `missionforge.kernel`: compact flow-building implementation behind the
+  root-exported flow API.
 - `missionforge.decision_ledger`: refs-first ledger/package primitives retained
   as product-neutral evidence contracts.
 
@@ -92,7 +103,8 @@ Product integrations should:
 2. Compile facts into `TaskContract`, `WorkspacePolicy`, and
    `PermissionManifest`.
 3. Invoke PiWorker through `PiWorkerCall` / `run_piworker_call(...)` or the
-   compact `missionforge.kernel` API.
+   compact root-exported flow API (`Flow`, `Step`, `compile_step`,
+   `run_flow`, and related primitives).
 4. Keep product hard checks, rubrics, and semantic judgment outside
    `src/missionforge`.
 5. Record refs-only evidence and final product packages.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from missionforge.contracts import ContractValidationError
+import missionforge as mf
 from missionforge_deepresearch.product_contract import (
     AcademicResearchRequest,
     ResearchIntensity,
@@ -107,7 +107,7 @@ class ProductContractTests(unittest.TestCase):
 
     def test_quick_is_not_a_current_public_research_intensity(self) -> None:
         self.assertEqual([item.value for item in ResearchIntensity], ["standard", "intensive"])
-        with self.assertRaisesRegex(ContractValidationError, "research_intensity"):
+        with self.assertRaisesRegex(mf.ContractValidationError, "research_intensity"):
             AcademicResearchRequest(
                 request_id="quick-is-not-public",
                 topic="compiler autotuning",
@@ -115,7 +115,7 @@ class ProductContractTests(unittest.TestCase):
             )
 
     def test_request_rejects_unknown_research_intensity(self) -> None:
-        with self.assertRaisesRegex(ContractValidationError, "research_intensity"):
+        with self.assertRaisesRegex(mf.ContractValidationError, "research_intensity"):
             AcademicResearchRequest(
                 request_id="bad-intensity",
                 topic="compiler autotuning",
@@ -123,7 +123,7 @@ class ProductContractTests(unittest.TestCase):
             )
 
     def test_request_rejects_nested_request_id(self) -> None:
-        with self.assertRaisesRegex(ContractValidationError, "one ref segment"):
+        with self.assertRaisesRegex(mf.ContractValidationError, "one ref segment"):
             AcademicResearchRequest(request_id="bad/id", topic="compiler autotuning").validate()
 
 

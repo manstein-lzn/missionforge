@@ -1,7 +1,7 @@
 """Kernel-backed DeepResearch v2 prototype.
 
 This module is intentionally small: product code writes the academic request,
-briefs, rubrics, and artifact refs, then lets ``missionforge.kernel`` own the
+briefs, rubrics, and artifact refs, then lets MissionForge's root flow API own the
 step execution, routing, retry, extension lock, and flow ledger boundaries.
 """
 
@@ -13,27 +13,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from missionforge.contracts import ContractValidationError, assert_refs_only_payload, stable_json_hash, validate_ref
-from missionforge.interaction import FileInteractionPort
-from missionforge.kernel import (
-    Artifact,
-    ArtifactRole,
-    FailurePolicy,
-    Flow,
-    FlowLedgerEvent,
-    FlowLedgerEventKind,
-    FlowRunResult,
-    Step,
-    StepCompileContext,
-    StepStatus,
-    Toolset,
-    run_flow,
-)
-from missionforge.piworker_call import PiWorkerCall, PiWorkerCallRole
-from missionforge.piworker_runtime import PiWorkerCallAdapter
-from missionforge.piworker_progress import PiWorkerProgressSink
-from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
-from missionforge.task_contract import ExtensionCapability
+import missionforge as mf
 
 from .product_contract import (
     AcademicResearchRequest,
@@ -137,7 +117,7 @@ class DeepResearchKernelV2Result:
 
     def validate(self) -> None:
         if self.schema_version != "missionforge_deepresearch.kernel_v2_result.v1":
-            raise ContractValidationError("deepresearch_kernel_v2_result.schema_version is unsupported")
+            raise mf.ContractValidationError("deepresearch_kernel_v2_result.schema_version is unsupported")
         for field_name in (
             "run_workspace_ref",
             "result_ref",
@@ -156,24 +136,24 @@ class DeepResearchKernelV2Result:
             "usage_summary_ref",
             "run_status_ref",
         ):
-            validate_ref(getattr(self, field_name), f"deepresearch_kernel_v2_result.{field_name}")
+            mf.validate_ref(getattr(self, field_name), f"deepresearch_kernel_v2_result.{field_name}")
         for ref in [*self.draft_artifact_refs, *self.evidence_refs, *self.metric_refs]:
-            validate_ref(ref, "deepresearch_kernel_v2_result.refs[]")
+            mf.validate_ref(ref, "deepresearch_kernel_v2_result.refs[]")
         if not self.contract_hash.startswith("sha256:"):
-            raise ContractValidationError("deepresearch_kernel_v2_result.contract_hash must be a sha256 hash")
-        assert_refs_only_payload(self.to_dict_without_validation(), "deepresearch_kernel_v2_result")
+            raise mf.ContractValidationError("deepresearch_kernel_v2_result.contract_hash must be a sha256 hash")
+        mf.assert_refs_only_payload(self.to_dict_without_validation(), "deepresearch_kernel_v2_result")
 
 
 def run_deepresearch_kernel_v2(
     request: AcademicResearchRequest,
     *,
     workspace: str | Path = ".",
-    adapter: PiWorkerCallAdapter | None = None,
+    adapter: mf.PiWorkerCallAdapter | None = None,
     live_extension_mode: bool = False,
     extension_installer: Any | None = None,
     resume: bool = True,
-    event_sink: Callable[[FlowLedgerEvent], None] | None = None,
-    runtime_progress_sink: PiWorkerProgressSink | None = None,
+    event_sink: Callable[[mf.FlowLedgerEvent], None] | None = None,
+    runtime_progress_sink: mf.PiWorkerProgressSink | None = None,
 ) -> DeepResearchKernelV2Result:
     """Run the thin Kernel-backed DeepResearch v2 flow."""
 
@@ -183,18 +163,18 @@ def run_deepresearch_kernel_v2(
     run_root = root / run_ref
     run_root.mkdir(parents=True, exist_ok=True)
     contract = _task_contract(request)
-    contract_hash = stable_json_hash(contract)
+    contract_hash = mf.stable_json_hash(contract)
     flow = build_deepresearch_kernel_v2_flow(request, live_extension_mode=live_extension_mode)
     profile = research_intensity_profile(request.research_intensity)
     _write_kernel_v2_workspace(request, run_root=run_root, contract=contract)
-    context = StepCompileContext(
+    context = mf.StepCompileContext(
         flow_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
         contract_id=contract["contract_id"],
         contract_hash=contract_hash,
         contract_ref=KERNEL_V2_CONTRACT_REF,
         workspace_policy_ref=KERNEL_V2_WORKSPACE_POLICY_REF,
     )
-    flow_result = run_flow(
+    flow_result = mf.run_flow(
         flow,
         context=context,
         workspace=run_root,
@@ -204,7 +184,7 @@ def run_deepresearch_kernel_v2(
         max_steps=_kernel_v2_max_steps(profile.max_review_rounds),
         resume=resume,
         event_sink=event_sink,
-        interaction_port=FileInteractionPort(run_root),
+        interaction_port=mf.FileInteractionPort(run_root),
         runtime_progress_sink=runtime_progress_sink,
     )
     _write_kernel_v2_report_html(run_root)
@@ -233,21 +213,21 @@ def build_deepresearch_kernel_v2_flow(
     request: AcademicResearchRequest,
     *,
     live_extension_mode: bool = False,
-) -> Flow:
+) -> mf.Flow:
     """Declare the product flow without product-specific Python routing."""
 
     profile = research_intensity_profile(request.research_intensity)
     tools = ["read", "write", "edit", "academic"] if live_extension_mode else ["read", "write", "edit"]
     toolsets = [
-        Toolset(
+        mf.Toolset(
             id="academic",
             package="local:extensions/pi-academic-sources",
             tools=["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
-            capability=ExtensionCapability.WEB,
+            capability=mf.ExtensionCapability.WEB,
             network=True,
         )
     ] if live_extension_mode else []
-    source_mapper = Step(
+    source_mapper = mf.Step(
         id="source_mapper",
         brief="Map the DeepResearch evidence base, write a durable source packet and research state, then hand off to synthesis.",
         inputs=[
@@ -274,9 +254,9 @@ def build_deepresearch_kernel_v2_flow(
             "max_turns": _source_mapper_max_turns(profile.intensity),
         },
         network=live_extension_mode,
-        failure=FailurePolicy(retries=0, on_exhausted=StepStatus.BLOCKED),
+        failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
     )
-    researcher = Step(
+    researcher = mf.Step(
         id="researcher",
         brief="Own DeepResearch synthesis: turn the source packet into insight, claim audit, final report, and hand off to review.",
         inputs=[
@@ -306,9 +286,9 @@ def build_deepresearch_kernel_v2_flow(
         route_fields=["decision"],
         runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
         network=False,
-        failure=FailurePolicy(retries=0, on_exhausted=StepStatus.BLOCKED),
+        failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
     )
-    reviewer = Step(
+    reviewer = mf.Step(
         id="reviewer",
         brief="Review the researcher-owned DeepResearch workspace and decide whether it needs another researcher pass or judge handoff.",
         inputs=[
@@ -327,13 +307,13 @@ def build_deepresearch_kernel_v2_flow(
         outputs=[KERNEL_V2_REVIEWER_OBSERVATION_REF],
         read=["contract", "product_contract", "rubrics", "sources", "reports", "analysis", "claims", "state"],
         write=["reviews"],
-        role=PiWorkerCallRole.EXECUTOR,
+        role=mf.PiWorkerCallRole.EXECUTOR,
         route_on=KERNEL_V2_REVIEWER_OBSERVATION_REF,
         route_fields=["decision"],
         runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
-        failure=FailurePolicy(retries=1, on_exhausted=StepStatus.BLOCKED),
+        failure=mf.FailurePolicy(retries=1, on_exhausted=mf.StepStatus.BLOCKED),
     )
-    judge = Step(
+    judge = mf.Step(
         id="judge",
         brief="Independently judge the final DeepResearch package against the frozen contract and rubric.",
         inputs=[
@@ -352,47 +332,47 @@ def build_deepresearch_kernel_v2_flow(
         outputs=[KERNEL_V2_JUDGE_REPORT_REF],
         read=["contract", "product_contract", "rubrics", "sources", "reports", "analysis", "claims", "reviews", "state"],
         write=["judge"],
-        role=PiWorkerCallRole.JUDGE,
+        role=mf.PiWorkerCallRole.JUDGE,
         route_on=KERNEL_V2_JUDGE_REPORT_REF,
         route_fields=["decision"],
         runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
-        failure=FailurePolicy(retries=1, on_exhausted=StepStatus.BLOCKED),
+        failure=mf.FailurePolicy(retries=1, on_exhausted=mf.StepStatus.BLOCKED),
     )
-    return Flow(
+    return mf.Flow(
         id="deepresearch-v2",
         steps=[source_mapper, researcher, reviewer, judge],
         routes={
             "source_mapper.ready_for_synthesis": "researcher",
             "source_mapper.continue": "source_mapper",
-            "source_mapper.blocked": Flow.stop("blocked"),
+            "source_mapper.blocked": mf.Flow.stop("blocked"),
             "researcher.ready_for_review": "reviewer",
             "researcher.continue": "researcher",
-            "researcher.blocked": Flow.stop("blocked"),
+            "researcher.blocked": mf.Flow.stop("blocked"),
             "reviewer.ready_for_judge": "judge",
             "reviewer.revise_report": "researcher",
             "reviewer.continue": "source_mapper",
-            "reviewer.blocked": Flow.stop("blocked"),
-            "reviewer.rejected": Flow.stop("failed"),
-            "judge.accepted": Flow.stop("accepted"),
+            "reviewer.blocked": mf.Flow.stop("blocked"),
+            "reviewer.rejected": mf.Flow.stop("failed"),
+            "judge.accepted": mf.Flow.stop("accepted"),
             "judge.repair": "researcher",
-            "judge.revision_required": Flow.stop("blocked"),
-            "judge.rejected": Flow.stop("failed"),
+            "judge.revision_required": mf.Flow.stop("blocked"),
+            "judge.rejected": mf.Flow.stop("failed"),
         },
         artifacts=[
-            Artifact(KERNEL_V2_SOURCE_PACKET_REF, role=ArtifactRole.STATE, owner="piworker"),
-            Artifact(KERNEL_V2_FINAL_REPORT_REF, role=ArtifactRole.OUTPUT, owner="piworker"),
-            Artifact(KERNEL_V2_EVIDENCE_INDEX_REF, role=ArtifactRole.OUTPUT, owner="piworker"),
-            Artifact(KERNEL_V2_SOURCE_GAPS_REF, role=ArtifactRole.OUTPUT, owner="piworker"),
-            Artifact(KERNEL_V2_INSIGHT_MAP_REF, role=ArtifactRole.STATE, owner="piworker"),
-            Artifact(KERNEL_V2_CLAIM_INDEX_REF, role=ArtifactRole.STATE, owner="piworker"),
-            Artifact(KERNEL_V2_CLAIM_INDEX_VALIDATION_REF, role=ArtifactRole.PROJECTION, owner="runtime"),
-            Artifact(KERNEL_V2_REPORT_HTML_REF, role=ArtifactRole.PROJECTION, owner="runtime"),
-            Artifact(KERNEL_V2_RESEARCH_STATE_REF, role=ArtifactRole.STATE, owner="piworker"),
-            Artifact(KERNEL_V2_RUN_STATUS_REF, role=ArtifactRole.STATE, owner="runtime"),
-            Artifact(KERNEL_V2_SOURCE_CONTROL_REF, role=ArtifactRole.DECISION, owner="piworker"),
-            Artifact(KERNEL_V2_RESEARCHER_CONTROL_REF, role=ArtifactRole.DECISION, owner="piworker"),
-            Artifact(KERNEL_V2_REVIEWER_OBSERVATION_REF, role=ArtifactRole.DECISION, owner="piworker"),
-            Artifact(KERNEL_V2_JUDGE_REPORT_REF, role=ArtifactRole.DECISION, owner="piworker"),
+            mf.Artifact(KERNEL_V2_SOURCE_PACKET_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_FINAL_REPORT_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(KERNEL_V2_EVIDENCE_INDEX_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(KERNEL_V2_SOURCE_GAPS_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(KERNEL_V2_INSIGHT_MAP_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CLAIM_INDEX_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CLAIM_INDEX_VALIDATION_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_REPORT_HTML_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_RESEARCH_STATE_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_RUN_STATUS_REF, role=mf.ArtifactRole.STATE, owner="runtime"),
+            mf.Artifact(KERNEL_V2_SOURCE_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
+            mf.Artifact(KERNEL_V2_RESEARCHER_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
+            mf.Artifact(KERNEL_V2_REVIEWER_OBSERVATION_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
+            mf.Artifact(KERNEL_V2_JUDGE_REPORT_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
         ],
         toolsets=toolsets,
     )
@@ -405,11 +385,11 @@ class KernelV2FixtureAdapter:
 
     def run_call(
         self,
-        call: PiWorkerCall,
+        call: mf.PiWorkerCall,
         *,
         workspace: str | Path = ".",
         **_kwargs: Any,
-    ) -> WorkerAdapterResult:
+    ) -> mf.WorkerAdapterResult:
         step_id = str(call.metadata.get("kernel_step_id", ""))
         if step_id == "source_mapper":
             self._write_source_mapper_outputs(Path(workspace), call)
@@ -420,11 +400,11 @@ class KernelV2FixtureAdapter:
         elif step_id == "judge":
             self._write_judge_outputs(Path(workspace), call)
         else:
-            raise ContractValidationError(f"unknown kernel v2 fixture step: {step_id}")
+            raise mf.ContractValidationError(f"unknown kernel v2 fixture step: {step_id}")
         report_ref = f"attempts/{call.call_id}/execution_report.json"
         metrics_ref = f"attempts/{call.call_id}/metrics.json"
         write_json_ref(workspace, metrics_ref, {"fixture": True, "step_id": step_id})
-        report = ExecutionReport(
+        report = mf.ExecutionReport(
             report_id=f"deepresearch-kernel-v2-{step_id}",
             call_id=call.call_id,
             status="completed",
@@ -434,13 +414,13 @@ class KernelV2FixtureAdapter:
             metrics={"metric_ref": metrics_ref},
         )
         write_json_ref(workspace, report_ref, report.to_dict())
-        return WorkerAdapterResult(
+        return mf.WorkerAdapterResult(
             execution_report=report,
-            worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
+            worker_result=mf.WorkerResult(status="completed", execution_report_ref=report_ref),
             metrics={"metric_ref": metrics_ref},
         )
 
-    def _write_source_mapper_outputs(self, workspace: Path, call: PiWorkerCall) -> None:
+    def _write_source_mapper_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
         source_packet = _fixture_source_packet(request)
         write_json_ref(workspace, KERNEL_V2_SOURCE_PACKET_REF, source_packet)
@@ -459,7 +439,7 @@ class KernelV2FixtureAdapter:
             },
         )
 
-    def _write_researcher_outputs(self, workspace: Path, call: PiWorkerCall) -> None:
+    def _write_researcher_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
         source_packet = read_json_ref(workspace, KERNEL_V2_SOURCE_PACKET_REF, "kernel_v2_source_packet")
         write_text_ref(workspace, KERNEL_V2_FINAL_REPORT_REF, _fixture_report(request, source_packet))
@@ -481,7 +461,7 @@ class KernelV2FixtureAdapter:
             },
         )
 
-    def _write_reviewer_outputs(self, workspace: Path, call: PiWorkerCall) -> None:
+    def _write_reviewer_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         write_json_ref(
             workspace,
             KERNEL_V2_REVIEWER_OBSERVATION_REF,
@@ -494,7 +474,7 @@ class KernelV2FixtureAdapter:
             },
         )
 
-    def _write_judge_outputs(self, workspace: Path, call: PiWorkerCall) -> None:
+    def _write_judge_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         write_json_ref(
             workspace,
             KERNEL_V2_JUDGE_REPORT_REF,
@@ -540,9 +520,9 @@ def _task_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     }
 
 
-def _require_adapter(adapter: PiWorkerCallAdapter | None) -> PiWorkerCallAdapter:
+def _require_adapter(adapter: mf.PiWorkerCallAdapter | None) -> mf.PiWorkerCallAdapter:
     if adapter is None:
-        raise ContractValidationError("deepresearch_kernel_v2 requires an explicit PiWorker adapter")
+        raise mf.ContractValidationError("deepresearch_kernel_v2 requires an explicit PiWorker adapter")
     return adapter
 
 
@@ -602,7 +582,7 @@ def _source_mapper_max_turns(intensity: ResearchIntensity) -> int:
     try:
         return _SOURCE_MAPPER_RUNTIME_MAX_TURNS[intensity]
     except KeyError as exc:
-        raise ContractValidationError(f"unsupported research intensity for source mapper runtime: {intensity}") from exc
+        raise mf.ContractValidationError(f"unsupported research intensity for source mapper runtime: {intensity}") from exc
 
 
 def _source_mapper_intensity_guidance(intensity: ResearchIntensity) -> list[str]:
@@ -618,7 +598,7 @@ def _source_mapper_intensity_guidance(intensity: ResearchIntensity) -> list[str]
             "For standard runs, public metadata, papers, docs, release notes, and repository summaries are sufficient when limits are explicit.",
             "Do not require clone-level or file-by-file code audit.",
         ]
-    raise ContractValidationError(f"unsupported research intensity for source mapper brief: {intensity}")
+    raise mf.ContractValidationError(f"unsupported research intensity for source mapper brief: {intensity}")
 
 
 def _researcher_brief(request: AcademicResearchRequest) -> str:
@@ -698,7 +678,7 @@ def _researcher_intensity_guidance(intensity: ResearchIntensity) -> list[str]:
             "Do not require clone-level or file-by-file code audit for standard mode.",
             "Do not claim implementation-level verification unless specific repository files or paths were inspected.",
         ]
-    raise ContractValidationError(f"unsupported research intensity for researcher brief: {intensity}")
+    raise mf.ContractValidationError(f"unsupported research intensity for researcher brief: {intensity}")
 
 
 def _reviewer_rubric(request: AcademicResearchRequest) -> str:
@@ -747,7 +727,7 @@ def _reviewer_intensity_guidance(intensity: ResearchIntensity) -> list[str]:
             "For standard runs, do not block solely because there was no clone-level or file-by-file code audit.",
             "Block only unsupported implementation-level claims, missing citations, missing structure, or undisclosed evidence gaps.",
         ]
-    raise ContractValidationError(f"unsupported research intensity for reviewer rubric: {intensity}")
+    raise mf.ContractValidationError(f"unsupported research intensity for reviewer rubric: {intensity}")
 
 
 def _judge_rubric(request: AcademicResearchRequest) -> str:
@@ -787,7 +767,7 @@ def _judge_intensity_guidance(intensity: ResearchIntensity) -> list[str]:
             "For standard runs, accept a strong metadata/web/docs/paper survey when claims are cited and limits are explicit.",
             "Do not require repo/code audit as an acceptance condition for standard mode.",
         ]
-    raise ContractValidationError(f"unsupported research intensity for judge rubric: {intensity}")
+    raise mf.ContractValidationError(f"unsupported research intensity for judge rubric: {intensity}")
 
 
 def _empty_source_packet(request: AcademicResearchRequest) -> dict[str, Any]:
@@ -1113,7 +1093,7 @@ def _write_kernel_v2_run_status(
     request: AcademicResearchRequest,
     *,
     run_root: Path,
-    flow_result: FlowRunResult,
+    flow_result: mf.FlowRunResult,
 ) -> str:
     status_payload = _kernel_v2_run_status(
         request,
@@ -1127,7 +1107,7 @@ def _write_kernel_v2_run_status(
 def _kernel_v2_run_status(
     request: AcademicResearchRequest,
     *,
-    flow_result: FlowRunResult,
+    flow_result: mf.FlowRunResult,
     interaction_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     status = _kernel_v2_projected_status(flow_result)
@@ -1166,7 +1146,7 @@ def _kernel_v2_run_status(
     }
 
 
-def _kernel_v2_interaction_summary(run_root: Path, *, flow_result: FlowRunResult) -> dict[str, Any]:
+def _kernel_v2_interaction_summary(run_root: Path, *, flow_result: mf.FlowRunResult) -> dict[str, Any]:
     if not flow_result.flow_result.ledger_refs:
         return {}
     ledger_ref = flow_result.flow_result.ledger_refs[0]
@@ -1182,7 +1162,7 @@ def _kernel_v2_interaction_summary(run_root: Path, *, flow_result: FlowRunResult
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if event.get("kind") != FlowLedgerEventKind.INTERACTION_RECORDED.value:
+        if event.get("kind") != mf.FlowLedgerEventKind.INTERACTION_RECORDED.value:
             continue
         metadata = event.get("metadata")
         refs = event.get("refs")
@@ -1200,7 +1180,7 @@ def _kernel_v2_interaction_summary(run_root: Path, *, flow_result: FlowRunResult
     }
 
 
-def _kernel_v2_projected_status(flow_result: FlowRunResult) -> str:
+def _kernel_v2_projected_status(flow_result: mf.FlowRunResult) -> str:
     flow_status = flow_result.flow_result.status
     if flow_status == "accepted":
         return "accepted"
@@ -1240,7 +1220,7 @@ def _kernel_v2_result(
     request: AcademicResearchRequest,
     run_ref: str,
     contract_hash: str,
-    flow_result: FlowRunResult,
+    flow_result: mf.FlowRunResult,
     usage_summary_ref: str,
     status_ref: str,
 ) -> DeepResearchKernelV2Result:
@@ -1287,7 +1267,7 @@ def _write_kernel_v2_usage_summary(
     request: AcademicResearchRequest,
     *,
     run_root: Path,
-    flow_result: FlowRunResult,
+    flow_result: mf.FlowRunResult,
 ) -> str:
     summary = _kernel_v2_usage_summary(request, run_root=run_root, flow_result=flow_result)
     write_json_ref(run_root, KERNEL_V2_USAGE_SUMMARY_REF, summary)
@@ -1298,7 +1278,7 @@ def _kernel_v2_usage_summary(
     request: AcademicResearchRequest,
     *,
     run_root: Path,
-    flow_result: FlowRunResult,
+    flow_result: mf.FlowRunResult,
 ) -> dict[str, Any]:
     step_summaries: list[dict[str, Any]] = []
     totals = _empty_usage_totals()
@@ -1306,18 +1286,18 @@ def _kernel_v2_usage_summary(
     for step_record_ref in flow_result.flow_result.step_record_refs:
         try:
             step_record = read_json_ref(run_root, step_record_ref, "kernel_step_record")
-        except (OSError, json.JSONDecodeError, ContractValidationError):
+        except (OSError, json.JSONDecodeError, mf.ContractValidationError):
             continue
         step_totals = _empty_usage_totals()
         step_metric_refs: list[str] = []
         for metric_ref in step_record.get("metric_refs", []):
             if not isinstance(metric_ref, str) or not metric_ref:
                 continue
-            step_metric_refs.append(validate_ref(metric_ref, "kernel_v2_usage_summary.step.metric_refs[]"))
+            step_metric_refs.append(mf.validate_ref(metric_ref, "kernel_v2_usage_summary.step.metric_refs[]"))
             metric_refs.append(metric_ref)
             try:
                 metrics = read_json_ref(run_root, metric_ref, "piworker_metrics")
-            except (OSError, json.JSONDecodeError, ContractValidationError):
+            except (OSError, json.JSONDecodeError, mf.ContractValidationError):
                 continue
             _add_usage_metrics(step_totals, metrics)
             _add_usage_metrics(totals, metrics)
@@ -1414,7 +1394,7 @@ def _non_negative_float(value: Any) -> float:
     return 0.0
 
 
-def _kernel_v2_product_evidence_refs(flow_result: FlowRunResult) -> list[str]:
+def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult) -> list[str]:
     refs: list[str] = [
         KERNEL_V2_SOURCE_PACKET_REF,
         KERNEL_V2_INSIGHT_MAP_REF,
@@ -1440,19 +1420,19 @@ def _kernel_v2_product_evidence_refs(flow_result: FlowRunResult) -> list[str]:
 def _flow_metadata_ref(metadata: Mapping[str, Any], key: str, fallback: str) -> str:
     value = metadata.get(key)
     if isinstance(value, str) and value:
-        return validate_ref(value, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
-    return validate_ref(fallback, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
+        return mf.validate_ref(value, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
+    return mf.validate_ref(fallback, f"deepresearch_kernel_v2.flow_result.metadata.{key}")
 
 
 def _outer_ref(run_ref: str, inner_ref: str) -> str:
-    return validate_ref(f"{run_ref}/{inner_ref}", "deepresearch_kernel_v2.outer_ref")
+    return mf.validate_ref(f"{run_ref}/{inner_ref}", "deepresearch_kernel_v2.outer_ref")
 
 
 def _dedupe_refs(refs: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for ref in refs:
-        safe_ref = validate_ref(ref, "deepresearch_kernel_v2.ref")
+        safe_ref = mf.validate_ref(ref, "deepresearch_kernel_v2.ref")
         if safe_ref not in seen:
             result.append(safe_ref)
             seen.add(safe_ref)
