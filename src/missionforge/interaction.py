@@ -15,11 +15,13 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from .contracts import ContractValidationError, assert_refs_only_payload, ensure_json_value, require_non_empty_str, validate_ref
+from .ref_store import RefStore
 
 
 USER_EVENTS_REF = "interaction/user_events.jsonl"
 AGENT_EVENTS_REF = "interaction/agent_events.jsonl"
 ACKS_REF = "interaction/user_event_acks.jsonl"
+InteractionStoreTarget = RefStore | str | Path
 
 
 class UserEventKind(StrEnum):
@@ -298,17 +300,11 @@ class UserEventAck:
         }
 
 
-class FileInteractionPort:
-    """Append-only workspace-backed interaction port.
+class InteractionPort:
+    """Append-only interaction port backed by an explicit ref store target."""
 
-    The port is deliberately file-backed because MissionForge workers consume
-    refs today. Hosts can still use it as a tiny API instead of manipulating
-    files directly.
-    """
-
-    def __init__(self, workspace: str | Path) -> None:
-        self.workspace = Path(workspace).resolve()
-        self.workspace.mkdir(parents=True, exist_ok=True)
+    def __init__(self, workspace: InteractionStoreTarget) -> None:
+        self.workspace: InteractionStoreTarget = Path(workspace).resolve() if isinstance(workspace, (str, Path)) else workspace
 
     def submit_user_event(self, event: UserEvent) -> UserEvent:
         event.validate()
@@ -430,18 +426,53 @@ class FileInteractionPort:
         return [ack for ack in acks if ack.run_id == safe_run_id]
 
 
-def _append_jsonl(root: Path, ref: str, payload: Mapping[str, Any]) -> None:
-    path = _resolve_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(ensure_json_value(payload, "interaction.payload"), ensure_ascii=False, sort_keys=True) + "\n")
+class StoreInteractionPort(InteractionPort):
+    """Append-only interaction port backed by a caller-provided RefStore."""
+
+    def __init__(self, store: RefStore) -> None:
+        super().__init__(store)
 
 
-def _read_jsonl(root: Path, ref: str) -> list[Mapping[str, Any]]:
-    path = _resolve_ref(root, ref)
+class FileInteractionPort(InteractionPort):
+    """Append-only filesystem-backed interaction port.
+
+    Constructing this port is an explicit filesystem materialization choice.
+    """
+
+    def __init__(self, workspace: str | Path) -> None:
+        root = Path(workspace).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        super().__init__(root)
+
+
+def _append_jsonl(workspace: InteractionStoreTarget, ref: str, payload: Mapping[str, Any]) -> None:
+    safe_ref = validate_ref(ref, "interaction.ref")
+    compatible = ensure_json_value(payload, "interaction.payload")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_ref(Path(workspace).resolve(), safe_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(compatible, ensure_ascii=False, sort_keys=True) + "\n")
+        return
+    workspace.append_jsonl(safe_ref, compatible)
+
+
+def _read_jsonl(workspace: InteractionStoreTarget, ref: str) -> list[Mapping[str, Any]]:
+    safe_ref = validate_ref(ref, "interaction.ref")
+    if not isinstance(workspace, (str, Path)):
+        if not workspace.exists(safe_ref):
+            return []
+        result: list[Mapping[str, Any]] = []
+        for payload in workspace.read_jsonl(safe_ref):
+            if not isinstance(payload, Mapping):
+                raise ContractValidationError("interaction JSONL record must be an object")
+            result.append(payload)
+        return result
+
+    path = _resolve_ref(Path(workspace).resolve(), safe_ref)
     if not path.exists():
         return []
-    result = []
+    result: list[Mapping[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -452,13 +483,18 @@ def _read_jsonl(root: Path, ref: str) -> list[Mapping[str, Any]]:
     return result
 
 
-def _write_json(root: Path, ref: str, payload: Mapping[str, Any]) -> None:
-    path = _resolve_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(ensure_json_value(payload, "interaction.payload"), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _write_json(workspace: InteractionStoreTarget, ref: str, payload: Mapping[str, Any]) -> None:
+    safe_ref = validate_ref(ref, "interaction.ref")
+    compatible = ensure_json_value(payload, "interaction.payload")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_ref(Path(workspace).resolve(), safe_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(compatible, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+    workspace.write_json(safe_ref, compatible)
 
 
 def _resolve_ref(root: Path, ref: str) -> Path:

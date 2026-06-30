@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import json
-from pathlib import Path
 from typing import Any, Mapping
 
 from ..contracts import ContractValidationError, assert_refs_only_payload, ensure_json_value, validate_ref
 from ..context import ContextView, ToolObservation
+from ..context_engine import ContextThrashDiagnostics
 from ..observation import RunEvent, RunSnapshot, read_run_events, read_run_snapshot
 from .contracts import FlowLedgerEvent, FlowResult, StepRecord
-from .io import read_json_ref, ref_exists, resolve_workspace_ref
+from .io import RefStoreTarget, read_json_ref, read_jsonl_ref, ref_exists
 
 
 _USAGE_KEYS = (
@@ -30,6 +30,8 @@ _CONTEXT_ENGINE_REF_KEYS = (
     "context_source_snapshot_ref",
     "context_epoch_ref",
     "context_cache_layout_ref",
+    "context_pressure_ref",
+    "context_checkpoint_ref",
     "context_turn_safe_point_ref",
     "context_turn_boundary_ref",
     "context_compile_result_ref",
@@ -51,6 +53,7 @@ class KernelStepInspection:
     context_projection_ref: str = ""
     context_hash: str = ""
     context_engine_refs: list[str] = field(default_factory=list)
+    context_thrash_diagnostics_refs: list[str] = field(default_factory=list)
     metric_refs: list[str] = field(default_factory=list)
     runtime_refs: list[str] = field(default_factory=list)
     failure_refs: list[str] = field(default_factory=list)
@@ -71,6 +74,7 @@ class KernelStepInspection:
             context_projection_ref=_metadata_ref(record.metadata, "context_projection_ref"),
             context_hash=_metadata_text(record.metadata, "context_hash"),
             context_engine_refs=_metadata_context_engine_refs(record.metadata),
+            context_thrash_diagnostics_refs=_metadata_refs(record.metadata, "context_thrash_diagnostics_refs"),
             metric_refs=list(record.metric_refs),
             runtime_refs=_metadata_refs(record.metadata, "runtime_refs"),
             failure_refs=list(record.failure_refs),
@@ -89,6 +93,7 @@ class KernelStepInspection:
             "context_projection_ref": self.context_projection_ref,
             "context_hash": self.context_hash,
             "context_engine_refs": list(self.context_engine_refs),
+            "context_thrash_diagnostics_refs": list(self.context_thrash_diagnostics_refs),
             "metric_refs": list(self.metric_refs),
             "runtime_refs": list(self.runtime_refs),
             "failure_refs": list(self.failure_refs),
@@ -161,9 +166,13 @@ class KernelToolActivityInspection:
     """Refs-only tool activity summary from runtime refs and observations."""
 
     tool_observation_refs: list[str] = field(default_factory=list)
+    context_thrash_diagnostics_refs: list[str] = field(default_factory=list)
     observed_tool_names: list[str] = field(default_factory=list)
     observation_count: int = 0
     error_count: int = 0
+    read_observation_count: int = 0
+    repeated_read_count: int = 0
+    thrash_recommended_action: str = "continue"
     latest_tool_name: str = ""
     latest_tool_status: str = ""
     latest_source_ref: str = ""
@@ -171,9 +180,13 @@ class KernelToolActivityInspection:
     def to_dict(self) -> dict[str, Any]:
         payload = {
             "tool_observation_refs": list(self.tool_observation_refs),
+            "context_thrash_diagnostics_refs": list(self.context_thrash_diagnostics_refs),
             "observed_tool_names": list(self.observed_tool_names),
             "observation_count": self.observation_count,
             "error_count": self.error_count,
+            "read_observation_count": self.read_observation_count,
+            "repeated_read_count": self.repeated_read_count,
+            "thrash_recommended_action": self.thrash_recommended_action,
             "latest_tool_name": self.latest_tool_name,
             "latest_tool_status": self.latest_tool_status,
             "latest_source_ref": self.latest_source_ref,
@@ -285,7 +298,7 @@ class KernelRunInspection:
         return dict(assert_refs_only_payload(ensure_json_value(payload, "kernel_run_inspection"), "kernel_run_inspection"))
 
 
-def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRunInspection:
+def inspect_kernel_run(workspace: RefStoreTarget, flow_result_ref: str) -> KernelRunInspection:
     """Inspect one Kernel run through refs-only records.
 
     The flow result is the authority for run identity and final status. Snapshot
@@ -338,7 +351,8 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
         record.execution_report_ref for record in step_records if record.execution_report_ref
     )
     runtime_refs = _dedupe_refs(ref for record in step_records for ref in record.runtime_refs)
-    tool_activity = _inspect_tool_activity(workspace, runtime_refs)
+    explicit_thrash_refs = _dedupe_refs(ref for record in step_records for ref in record.context_thrash_diagnostics_refs)
+    tool_activity = _inspect_tool_activity(workspace, runtime_refs, explicit_thrash_refs)
     observation_refs = _dedupe_refs(
         ref
         for ref in [
@@ -346,6 +360,7 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
             run_snapshot_ref,
             _snapshot_text(run_snapshot, "last_safe_point_ref"),
             *tool_activity.tool_observation_refs,
+            *tool_activity.context_thrash_diagnostics_refs,
         ]
         if ref
     )
@@ -400,33 +415,30 @@ def inspect_kernel_run(workspace: str | Path, flow_result_ref: str) -> KernelRun
     )
 
 
-def _read_run_events_if_present(workspace: str | Path, events_ref: str, run_id: str) -> list[RunEvent]:
+def _read_run_events_if_present(workspace: RefStoreTarget, events_ref: str, run_id: str) -> list[RunEvent]:
     if not events_ref or not ref_exists(workspace, events_ref):
         return []
     return read_run_events(workspace, run_id=run_id, events_ref=events_ref)
 
 
-def _read_run_snapshot_if_present(workspace: str | Path, snapshot_ref: str) -> RunSnapshot | None:
+def _read_run_snapshot_if_present(workspace: RefStoreTarget, snapshot_ref: str) -> RunSnapshot | None:
     if not snapshot_ref or not ref_exists(workspace, snapshot_ref):
         return None
     return read_run_snapshot(workspace, snapshot_ref=snapshot_ref)
 
 
-def _read_flow_ledger_if_present(workspace: str | Path, ledger_ref: str) -> list[FlowLedgerEvent]:
+def _read_flow_ledger_if_present(workspace: RefStoreTarget, ledger_ref: str) -> list[FlowLedgerEvent]:
     if not ledger_ref or not ref_exists(workspace, ledger_ref):
         return []
     events: list[FlowLedgerEvent] = []
-    for line in resolve_workspace_ref(workspace, ledger_ref).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
+    for payload in read_jsonl_ref(workspace, ledger_ref):
         if not isinstance(payload, Mapping):
             raise ContractValidationError("kernel flow ledger record must be a JSON object")
         events.append(FlowLedgerEvent.from_dict(payload))
     return events
 
 
-def _inspect_usage(workspace: str | Path, metric_refs: list[str]) -> KernelUsageInspection:
+def _inspect_usage(workspace: RefStoreTarget, metric_refs: list[str]) -> KernelUsageInspection:
     totals: dict[str, int | float] = {key: 0 for key in _USAGE_KEYS}
     safe_metric_refs: list[str] = []
     for metric_ref in metric_refs:
@@ -473,7 +485,7 @@ def _inspect_usage(workspace: str | Path, metric_refs: list[str]) -> KernelUsage
 
 
 def _inspect_context(
-    workspace: str | Path,
+    workspace: RefStoreTarget,
     context_projection_refs: list[str],
     runtime_refs: list[str],
     context_engine_refs: list[str],
@@ -486,6 +498,7 @@ def _inspect_context(
     token_budget = 0
     pressure_ratio = 0.0
     recommended_action = "continue"
+    engine_pressure = _context_engine_pressure(workspace, context_engine_refs)
     for ref in context_projection_refs:
         if not ref_exists(workspace, ref):
             continue
@@ -512,22 +525,28 @@ def _inspect_context(
         estimated += sum(segment.token_estimate for segment in view.all_segments)
         if view.token_budget is not None:
             token_budget = max(token_budget, view.token_budget)
-    for ref in runtime_refs:
-        if not ref.endswith("/context/projection.json") and not ref.endswith("context/projection.json"):
-            continue
-        if not ref_exists(workspace, ref):
-            continue
-        try:
-            payload = read_json_ref(workspace, ref)
-        except (ContractValidationError, OSError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, Mapping):
-            estimated += _non_negative_int(payload.get("estimated_input_tokens"))
-            token_budget = max(token_budget, _context_budget(payload))
-            ratio = _non_negative_float(payload.get("pressure_ratio"))
-            if ratio >= pressure_ratio:
-                pressure_ratio = ratio
-                recommended_action = _safe_action(payload.get("recommended_action"))
+    if engine_pressure is not None:
+        estimated = engine_pressure["estimated_input_tokens"]
+        token_budget = engine_pressure["token_budget"]
+        pressure_ratio = engine_pressure["pressure_ratio"]
+        recommended_action = engine_pressure["recommended_action"]
+    else:
+        for ref in runtime_refs:
+            if not ref.endswith("/context/projection.json") and not ref.endswith("context/projection.json"):
+                continue
+            if not ref_exists(workspace, ref):
+                continue
+            try:
+                payload = read_json_ref(workspace, ref)
+            except (ContractValidationError, OSError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, Mapping):
+                estimated += _non_negative_int(payload.get("estimated_input_tokens"))
+                token_budget = max(token_budget, _context_budget(payload))
+                ratio = _non_negative_float(payload.get("pressure_ratio"))
+                if ratio >= pressure_ratio:
+                    pressure_ratio = ratio
+                    recommended_action = _safe_action(payload.get("recommended_action"))
     if token_budget == 0 and estimated > 0:
         token_budget = estimated
     if pressure_ratio == 0.0 and token_budget > 0:
@@ -546,8 +565,38 @@ def _inspect_context(
     )
 
 
-def _inspect_tool_activity(workspace: str | Path, runtime_refs: list[str]) -> KernelToolActivityInspection:
+def _context_engine_pressure(workspace: RefStoreTarget, context_engine_refs: list[str]) -> dict[str, Any] | None:
+    selected: dict[str, Any] | None = None
+    for ref in context_engine_refs:
+        if not ref.endswith("/context/pressure.json") or not ref_exists(workspace, ref):
+            continue
+        try:
+            payload = read_json_ref(workspace, ref)
+        except (ContractValidationError, OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        pressure = {
+            "estimated_input_tokens": _non_negative_int(payload.get("estimated_input_tokens")),
+            "token_budget": _context_budget(payload),
+            "pressure_ratio": _non_negative_float(payload.get("pressure_ratio")),
+            "recommended_action": _safe_action(payload.get("recommended_action")),
+        }
+        if selected is None or pressure["pressure_ratio"] >= selected["pressure_ratio"]:
+            selected = pressure
+    return selected
+
+
+def _inspect_tool_activity(
+    workspace: RefStoreTarget,
+    runtime_refs: list[str],
+    explicit_thrash_refs: list[str] | None = None,
+) -> KernelToolActivityInspection:
     observation_refs = _dedupe_refs(ref for ref in runtime_refs if ref.endswith("tool_observations.jsonl"))
+    thrash_refs = _dedupe_refs([
+        *(explicit_thrash_refs or []),
+        *(ref for ref in runtime_refs if ref.endswith("context/thrash_diagnostics.json")),
+    ])
     observations: list[ToolObservation] = []
     for ref in observation_refs:
         if not ref_exists(workspace, ref):
@@ -557,26 +606,38 @@ def _inspect_tool_activity(workspace: str | Path, runtime_refs: list[str]) -> Ke
                 observations.append(ToolObservation.from_dict(payload))
             except ContractValidationError:
                 continue
+    thrash_diagnostics: list[ContextThrashDiagnostics] = []
+    for ref in thrash_refs:
+        if not ref_exists(workspace, ref):
+            continue
+        try:
+            thrash_diagnostics.append(ContextThrashDiagnostics.from_dict(read_json_ref(workspace, ref)))
+        except (ContractValidationError, OSError, json.JSONDecodeError):
+            continue
     latest = observations[-1] if observations else None
+    repeated_read_count = sum(len(diagnostics.repeated_observation_ids) for diagnostics in thrash_diagnostics)
+    read_observation_count = sum(len(diagnostics.observations) for diagnostics in thrash_diagnostics)
+    thrash_action = "prepare_checkpoint" if repeated_read_count else "continue"
     return KernelToolActivityInspection(
         tool_observation_refs=observation_refs,
+        context_thrash_diagnostics_refs=thrash_refs,
         observed_tool_names=sorted({observation.tool_name for observation in observations}),
         observation_count=len(observations),
         error_count=sum(1 for observation in observations if observation.status.value == "error"),
+        read_observation_count=read_observation_count,
+        repeated_read_count=repeated_read_count,
+        thrash_recommended_action=thrash_action,
         latest_tool_name=latest.tool_name if latest else "",
         latest_tool_status=latest.status.value if latest else "",
         latest_source_ref=latest.source_ref or latest.raw_ref or "" if latest else "",
     )
 
 
-def _read_jsonl_ref(workspace: str | Path, ref: str) -> list[Mapping[str, Any]]:
+def _read_jsonl_ref(workspace: RefStoreTarget, ref: str) -> list[Mapping[str, Any]]:
     if not ref_exists(workspace, ref):
         return []
     result: list[Mapping[str, Any]] = []
-    for line in resolve_workspace_ref(workspace, ref).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
+    for payload in read_jsonl_ref(workspace, ref):
         if isinstance(payload, Mapping):
             result.append(payload)
     return result

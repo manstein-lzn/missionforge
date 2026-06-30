@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from missionforge import MemoryRefStore
 from missionforge.contracts import ContractValidationError
 from missionforge.interaction import (
     ACKS_REF,
@@ -13,6 +14,7 @@ from missionforge.interaction import (
     AgentEventKind,
     FileInteractionPort,
     InteractionDelivery,
+    StoreInteractionPort,
     UserEventKind,
 )
 
@@ -54,6 +56,43 @@ class InteractionTests(unittest.TestCase):
         self.assertTrue(acks_exists)
         self.assertEqual(empty_projection["event_count"], 0)
 
+    def test_store_interaction_port_projects_and_acknowledges_without_filesystem_writes(self) -> None:
+        store = MemoryRefStore()
+        port = StoreInteractionPort(store)
+
+        with TemporaryDirectory() as tmpdir:
+            before = _snapshot(tmpdir)
+            event = port.submit_text(
+                "等一下，范围改成近三年。",
+                run_id="run-001",
+                target="researcher",
+                kind=UserEventKind.CORRECTION,
+                delivery=InteractionDelivery.NEXT_SAFE_POINT,
+            )
+            ref = port.write_pending_projection(
+                run_id="run-001",
+                target="researcher",
+                step_id="researcher",
+                ref="interaction/safe_points/001-researcher-user_events.json",
+            )
+            projection = store.read_json(ref)
+            port.acknowledge([event], consumed_by="001-researcher")
+            empty_ref = port.write_pending_projection(
+                run_id="run-001",
+                target="researcher",
+                step_id="researcher",
+                ref="interaction/safe_points/002-researcher-user_events.json",
+            )
+            empty_projection = store.read_json(empty_ref)
+            after = _snapshot(tmpdir)
+
+        self.assertEqual(before, after)
+        self.assertEqual(projection["event_count"], 1)
+        self.assertEqual(projection["events"][0]["text"], "等一下，范围改成近三年。")
+        self.assertTrue(store.exists(USER_EVENTS_REF))
+        self.assertTrue(store.exists(ACKS_REF))
+        self.assertEqual(empty_projection["event_count"], 0)
+
     def test_agent_events_are_separate_from_user_events(self) -> None:
         with TemporaryDirectory() as tmpdir:
             port = FileInteractionPort(tmpdir)
@@ -80,6 +119,18 @@ class InteractionTests(unittest.TestCase):
                     ref="../outside.json",
                 )
 
+    def test_store_interaction_port_validates_ref_before_custom_store_call(self) -> None:
+        port = StoreInteractionPort(_RecordingStore())
+
+        with self.assertRaises(ContractValidationError):
+            port.write_pending_projection(
+                run_id="run-001",
+                target="researcher",
+                ref="../outside.json",
+            )
+
+        self.assertEqual(port.workspace.calls, [])
+
     def test_user_event_metadata_is_refs_only(self) -> None:
         with TemporaryDirectory() as tmpdir:
             port = FileInteractionPort(tmpdir)
@@ -90,6 +141,33 @@ class InteractionTests(unittest.TestCase):
                     target="researcher",
                     metadata={"raw_transcript": "must not enter metadata"},
                 )
+
+
+def _snapshot(root: str) -> list[str]:
+    return sorted(path.relative_to(root).as_posix() for path in Path(root).rglob("*"))
+
+
+class _RecordingStore:
+    store_id = "recording"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def exists(self, ref: str) -> bool:
+        self.calls.append(("exists", ref))
+        return False
+
+    def read_jsonl(self, ref: str):
+        self.calls.append(("read_jsonl", ref))
+        return []
+
+    def write_json(self, ref: str, value, *, metadata=None):
+        self.calls.append(("write_json", ref))
+        raise AssertionError("store should not be called")
+
+    def append_jsonl(self, ref: str, item, *, metadata=None):
+        self.calls.append(("append_jsonl", ref))
+        raise AssertionError("store should not be called")
 
 
 if __name__ == "__main__":

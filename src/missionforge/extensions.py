@@ -23,6 +23,7 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
+from .ref_store import RefStore
 from .task_contract import (
     ExtensionAdapterMode,
     ExtensionCapability,
@@ -377,6 +378,7 @@ class ExtensionCompileReport:
 
 
 InstallExtension = Callable[[ExtensionGrant, Path], Mapping[str, Any]]
+ExtensionLockTarget = RefStore | Path | str
 
 
 def npm_install_extension(grant: ExtensionGrant, install_root: Path) -> Mapping[str, Any]:
@@ -488,8 +490,27 @@ def verify_extension_lock(permission_manifest: PermissionManifest, extension_loc
     permission_manifest.validate()
     extension_lock.validate()
     locked_by_id = {entry.grant_id: entry for entry in extension_lock.extensions}
+    manifest_ids = {grant.grant_id for grant in permission_manifest.extension_grants}
+    extra_lock_ids = sorted(set(locked_by_id) - manifest_ids)
     loaded: list[ExtensionLoadRecord] = []
     rejected: list[ExtensionLoadRecord] = []
+    for entry in extension_lock.extensions:
+        if entry.grant_id in extra_lock_ids:
+            rejected.append(
+                ExtensionLoadRecord(
+                    grant_id=entry.grant_id,
+                    package=entry.package,
+                    capability=entry.capability,
+                    status="rejected",
+                    adapter_mode=entry.adapter_mode,
+                    reason="extra_lock_entry",
+                    version=entry.version,
+                    integrity=entry.integrity,
+                    requires_network=entry.requires_network,
+                    network_policy_at_load=permission_manifest.network_policy,
+                    tool_names=[],
+                )
+            )
     for grant in permission_manifest.extension_grants:
         entry = locked_by_id.get(grant.grant_id)
         if entry is None:
@@ -565,18 +586,41 @@ def extension_load_report_from_lock(
     )
 
 
-def read_extension_lock(path: Path | str) -> ExtensionLock:
-    import json
+def read_extension_lock(target: ExtensionLockTarget, ref: str | None = None) -> ExtensionLock:
+    """Read an extension lock from an explicit path or RefStore ref."""
 
-    return ExtensionLock.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    if isinstance(target, (str, Path)):
+        path = Path(target)
+        if ref is not None:
+            safe_ref = validate_ref(ref, "extension_lock.ref")
+            path = _resolve_workspace_ref(path, safe_ref)
+        return ExtensionLock.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    if ref is None:
+        raise ContractValidationError("extension lock store reads require a ref")
+    safe_ref = validate_ref(ref, "extension_lock.ref")
+    return ExtensionLock.from_dict(target.read_json(safe_ref))
 
 
-def write_extension_lock(path: Path | str, extension_lock: ExtensionLock) -> None:
-    import json
+def write_extension_lock(target: ExtensionLockTarget, extension_lock: ExtensionLock, ref: str | None = None) -> None:
+    """Write an extension lock to an explicit path or RefStore ref."""
 
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(extension_lock.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    extension_lock.validate()
+    if isinstance(target, (str, Path)):
+        path = Path(target)
+        if ref is not None:
+            safe_ref = validate_ref(ref, "extension_lock.ref")
+            path = _resolve_workspace_ref(path, safe_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(extension_lock.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return
+    if ref is None:
+        raise ContractValidationError("extension lock store writes require a ref")
+    safe_ref = validate_ref(ref, "extension_lock.ref")
+    target.write_bytes(
+        safe_ref,
+        (json.dumps(extension_lock.to_dict(), indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        media_type="application/json",
+    )
 
 
 def _lock_entry_from_grant(

@@ -183,6 +183,27 @@ worker must read. Their refs and hashes stay in call metadata and step records.
 The adapter also fails closed if a visible ref is not readable through the
 effective permission manifest.
 
+### Step Batch
+
+`run_steps_batch(...)` runs a caller-supplied list of independent `Step`
+declarations concurrently through the existing `run_step(...)` path.
+
+It is a fan-out/fan-in primitive, not a graph runtime:
+
+- each step receives a derived batch ref prefix under
+  `kernel/{flow_id}/batches/{batch_id}/steps/{NNN}-{step_id}/`;
+- each step receives a distinct PiWorker `call_id`;
+- declared `outputs` and `write` refs are conflict-checked before any step
+  starts;
+- ContextEngine compile records, permission manifests, step records, evidence
+  stores, and progress sinks remain per-step;
+- partial failures are collected structurally in `StepBatchResult`.
+
+The batch wrapper does not merge outputs, reduce shared state, infer product
+semantics, or add parallel route semantics to `run_flow(...)`. If several step
+outputs need synthesis, the product or host Python should declare a later
+explicit synthesis, writer, reviewer, or judge step.
+
 ### Flow
 
 `Flow` composes steps and routes between them.
@@ -245,6 +266,9 @@ MVP `run_flow(...)` semantics:
   writes the flow result and ledger instead of surfacing a Python traceback;
 - records each step under an attempt-specific prefix so loops do not overwrite
   prior step records;
+- carries bounded `ToolOutputProjection` record refs from a completed step into
+  the next step's ContextEngine compile request, without granting raw-output
+  access or bypassing the next step's read permissions;
 - writes `kernel/{flow_id}/runs/{run_id}/executions/{NNN}/flow_ledger.jsonl`
   with refs-first events for start, step record, route, projection, and stop
   boundaries. Each rerun gets a new execution ledger/result ref.
@@ -394,6 +418,10 @@ Implemented MVP semantics:
   `blocked`;
 - retry metadata is refs-first: attempt refs, attempt count, and final attempt
   ref, not raw provider payloads.
+- when a step has already compiled a ContextEngine provider-turn boundary, retry
+  attempts reuse that same preflight boundary explicitly with
+  `context_boundary_reuse: "same_preflight_boundary"` and parent compile/turn
+  refs. Retry does not silently imply a fresh context compile.
 
 Do not add broad recovery semantics initially. Product-specific repair should be
 another explicit step, not hidden controller magic.

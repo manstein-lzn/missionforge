@@ -44,6 +44,8 @@ class RecordingRunner:
     write_savepoints: bool = True
     captured_env: dict[str, str] | None = None
     captured_input: dict[str, object] | None = None
+    projected_observations: tuple[dict[str, object], ...] = ()
+    context_observation_lines: tuple[dict[str, object], ...] = ()
 
     def run(self, command, *, input_path: Path, cwd: Path, timeout_seconds: int, env) -> PiAgentCommandResult:
         self.captured_env = dict(env)
@@ -127,7 +129,10 @@ class RecordingRunner:
             _write_text(cwd / session_ref, "{}\n")
             _write_text(cwd / events_ref, "{}\n")
             _write_text(cwd / metrics_ref, json.dumps(metrics, sort_keys=True) + "\n")
-            _write_text(cwd / context_observations_ref, "")
+            _write_text(
+                cwd / context_observations_ref,
+                "".join(json.dumps(item, sort_keys=True) + "\n" for item in self.context_observation_lines),
+            )
             _write_text(
                 cwd / context_projection_ref,
                 json.dumps(
@@ -141,7 +146,7 @@ class RecordingRunner:
                         "input_message_count": 0,
                         "projected_message_count": 0,
                         "context_projection_config": context_projection_config,
-                        "projected_observations": [],
+                        "projected_observations": list(self.projected_observations),
                         "active_observations": [],
                         "warnings": [],
                     },
@@ -187,6 +192,17 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
         self.assertEqual(spec.visible_refs, ["mission/frozen_contract.json"])
         self.assertNotIn("policy/permission_manifest.json", spec.visible_refs)
+
+    def test_adapter_requires_explicit_filesystem_workspace(self) -> None:
+        runner = RecordingRunner()
+
+        with self.assertRaisesRegex(ContractValidationError, "explicit filesystem workspace"):
+            PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run_call(sample_piworker_call(), evidence_store=InMemoryEvidenceStore())
+
+        self.assertIsNone(runner.captured_input)
 
     def test_adapter_rejects_visible_ref_outside_runtime_permission_manifest_before_runner(self) -> None:
         runner = RecordingRunner()
@@ -277,6 +293,25 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             self.assertEqual(input_payload["context_raw_dir_ref"], "attempts/WU-000001/context/raw")
             self.assertIsNone(input_payload["long_memory_packet_ref"])
             self.assertEqual(
+                input_payload["context_engine"],
+                {
+                    "schema_version": "missionforge.pi_agent_context_engine.v1",
+                    "enabled": False,
+                    "context_view_ref": None,
+                    "context_compile_request_ref": None,
+                    "context_compile_result_ref": None,
+                    "context_baseline_ref": None,
+                    "context_source_snapshot_ref": None,
+                    "context_epoch_ref": None,
+                    "context_cache_layout_ref": None,
+                    "context_pressure_ref": None,
+                    "context_turn_safe_point_ref": None,
+                    "context_turn_boundary_ref": None,
+                    "context_hash": None,
+                    "context_compile_action": "",
+                },
+            )
+            self.assertEqual(
                 input_payload["context_projection_config"],
                 {
                     "schema_version": "missionforge.pi_agent_context_projection_config.v1",
@@ -334,6 +369,198 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                 "sandbox_profile.v1",
             )
             self.assertEqual([record.evidence_ref.kind for record in store.snapshot().records], ["pi_agent_runtime_event"] * 3)
+
+    def test_adapter_passes_kernel_context_engine_refs_to_sidecar_input(self) -> None:
+        runner = RecordingRunner()
+        call = replace(
+            sample_piworker_call(),
+            metadata={
+                "context_projection_ref": "kernel/demo-flow/steps/researcher/context_projection.json",
+                "context_compile_request_ref": "kernel/demo-flow/steps/researcher/context/compile_request.json",
+                "context_compile_result_ref": "kernel/demo-flow/steps/researcher/context/compile_result.json",
+                "context_baseline_ref": "kernel/demo-flow/steps/researcher/context/baseline.json",
+                "context_source_snapshot_ref": "kernel/demo-flow/steps/researcher/context/source_snapshot.json",
+                "context_epoch_ref": "kernel/demo-flow/steps/researcher/context/epoch.json",
+                "context_cache_layout_ref": "kernel/demo-flow/steps/researcher/context/cache_layout.json",
+                "context_pressure_ref": "kernel/demo-flow/steps/researcher/context/pressure.json",
+                "context_turn_safe_point_ref": "kernel/demo-flow/steps/researcher/context/turn_safe_point.json",
+                "context_turn_boundary_ref": "kernel/demo-flow/steps/researcher/context/turn_boundary.json",
+                "context_hash": "sha256:" + "b" * 64,
+                "context_compile_action": "continue",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run_call(call, workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+
+        context_engine = runner.captured_input["context_engine"]
+        self.assertTrue(context_engine["enabled"])
+        self.assertEqual(
+            context_engine["context_view_ref"],
+            "kernel/demo-flow/steps/researcher/context_projection.json",
+        )
+        self.assertEqual(
+            context_engine["context_compile_result_ref"],
+            "kernel/demo-flow/steps/researcher/context/compile_result.json",
+        )
+        self.assertEqual(
+            context_engine["context_cache_layout_ref"],
+            "kernel/demo-flow/steps/researcher/context/cache_layout.json",
+        )
+        self.assertEqual(context_engine["context_hash"], "sha256:" + "b" * 64)
+        self.assertEqual(context_engine["context_compile_action"], "continue")
+
+    def test_adapter_rejects_retry_context_engine_refs_without_same_boundary_declaration(self) -> None:
+        runner = RecordingRunner()
+        call = replace(
+            sample_piworker_call(),
+            call_id="WU-000001-attempt-001",
+            metadata={
+                "kernel_parent_call_id": "WU-000001",
+                "context_projection_ref": "kernel/demo-flow/steps/researcher/context_projection.json",
+                "context_compile_result_ref": "kernel/demo-flow/steps/researcher/context/compile_result.json",
+                "context_turn_boundary_ref": "kernel/demo-flow/steps/researcher/context/turn_boundary.json",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            with self.assertRaisesRegex(ContractValidationError, "same_preflight_boundary"):
+                PiAgentRuntimeAdapter(
+                    PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                    runner=runner,
+                ).run_call(call, workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+
+        self.assertIsNone(runner.captured_input)
+
+    def test_adapter_accepts_retry_context_engine_refs_with_same_boundary_declaration(self) -> None:
+        runner = RecordingRunner()
+        call = replace(
+            sample_piworker_call(),
+            call_id="WU-000001-attempt-001",
+            metadata={
+                "kernel_parent_call_id": "WU-000001",
+                "context_boundary_reuse": "same_preflight_boundary",
+                "context_parent_call_id": "WU-000001",
+                "context_parent_compile_result_ref": "kernel/demo-flow/steps/researcher/context/compile_result.json",
+                "context_parent_turn_boundary_ref": "kernel/demo-flow/steps/researcher/context/turn_boundary.json",
+                "context_parent_epoch_ref": "kernel/demo-flow/steps/researcher/context/epoch.json",
+                "context_projection_ref": "kernel/demo-flow/steps/researcher/context_projection.json",
+                "context_compile_result_ref": "kernel/demo-flow/steps/researcher/context/compile_result.json",
+                "context_epoch_ref": "kernel/demo-flow/steps/researcher/context/epoch.json",
+                "context_turn_boundary_ref": "kernel/demo-flow/steps/researcher/context/turn_boundary.json",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run_call(call, workspace=tempdir, evidence_store=InMemoryEvidenceStore())
+
+        self.assertIsNotNone(runner.captured_input)
+        self.assertTrue(runner.captured_input["context_engine"]["enabled"])
+        self.assertEqual(
+            runner.captured_input["context_engine"]["context_compile_result_ref"],
+            "kernel/demo-flow/steps/researcher/context/compile_result.json",
+        )
+
+    def test_adapter_materializes_tool_output_projection_records_from_sidecar_diagnostics(self) -> None:
+        runner = RecordingRunner(
+            projected_observations=(
+                {
+                    "observation_id": "tool-observation-000001",
+                    "tool_call_id": "call-1",
+                    "tool_name": "bash",
+                    "status": "ok",
+                    "inline_policy": "demote_after_turn",
+                    "content_hash": "sha256:" + "1" * 64,
+                    "content_bytes": 12000,
+                    "content_lines": 200,
+                    "raw_ref": "attempts/WU-000001/context/raw/000001-bash-call-1-output.txt",
+                    "projected_bytes": 400,
+                },
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            result = PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run_call(sample_piworker_call(), workspace=root, evidence_store=InMemoryEvidenceStore())
+            report_payload = json.loads(
+                (root / "attempts/WU-000001/pi_agent_execution_report.json").read_text(encoding="utf-8")
+            )
+            index_ref = report_payload["metrics"]["tool_output_projection_index_ref"]
+            index_payload = json.loads((root / index_ref).read_text(encoding="utf-8"))
+            record_ref = index_payload["record_refs"][0]
+            projection_ref = index_payload["projection_refs"][0]
+            record_payload = json.loads((root / record_ref).read_text(encoding="utf-8"))
+            projection_text = (root / projection_ref).read_text(encoding="utf-8")
+
+        self.assertEqual(result.execution_report.metrics["tool_output_projection_count"], 1)
+        self.assertEqual(index_payload["schema_version"], "missionforge.tool_output_projection_index.v1")
+        self.assertEqual(record_payload["schema_version"], "missionforge.tool_output_projection.v1")
+        self.assertEqual(record_payload["policy"], "ref_stub")
+        self.assertEqual(record_payload["raw_ref"], "attempts/WU-000001/context/raw/000001-bash-call-1-output.txt")
+        self.assertIn("raw_ref: attempts/WU-000001/context/raw/000001-bash-call-1-output.txt", projection_text)
+        self.assertIn(index_ref, report_payload["changed_refs"])
+        self.assertIn(record_ref, report_payload["changed_refs"])
+        self.assertIn(projection_ref, report_payload["changed_refs"])
+
+    def test_adapter_builds_thrash_diagnostics_from_repeated_read_observations(self) -> None:
+        source_hash = "sha256:" + "2" * 64
+        read_observation = {
+            "schema_version": "missionforge.pi_agent_tool_observation.v1",
+            "observation_id": "tool-observation-000001",
+            "call_id": "WU-000001",
+            "turn_index": 1,
+            "tool_call_id": "read-call-1",
+            "tool_name": "read",
+            "status": "ok",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "content_hash": "sha256:" + "1" * 64,
+            "content_bytes": 10,
+            "content_lines": 1,
+            "inline_policy": "keep",
+            "source_ref": "sources/source_packet.json",
+            "source_range": {"offset": 1, "limit": 20},
+            "source_hash": source_hash,
+            "source_bytes": 200,
+        }
+        runner = RecordingRunner(
+            context_observation_lines=(
+                read_observation,
+                {**read_observation, "observation_id": "tool-observation-000002", "tool_call_id": "read-call-2"},
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            result = PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(command=("pi-agent-runtime",)),
+                runner=runner,
+            ).run_call(sample_piworker_call(), workspace=root, evidence_store=InMemoryEvidenceStore())
+            report_payload = json.loads(
+                (root / "attempts/WU-000001/pi_agent_execution_report.json").read_text(encoding="utf-8")
+            )
+            diagnostics_ref = report_payload["metrics"]["context_thrash_diagnostics_ref"]
+            diagnostics_payload = json.loads((root / diagnostics_ref).read_text(encoding="utf-8"))
+
+        self.assertEqual(result.execution_report.metrics["context_read_observation_count"], 1)
+        self.assertEqual(result.execution_report.metrics["context_repeated_read_count"], 1)
+        self.assertEqual(diagnostics_payload["schema_version"], "missionforge.context_thrash_diagnostics.v1")
+        self.assertEqual(diagnostics_payload["recommended_action"], "prepare_checkpoint")
+        self.assertEqual(diagnostics_payload["repeated_observation_ids"], ["read-000001"])
+        self.assertEqual(diagnostics_payload["observations"][0]["source_ref"], "sources/source_packet.json")
+        self.assertEqual(diagnostics_payload["observations"][0]["source_hash"], source_hash)
+        self.assertEqual(diagnostics_payload["observations"][0]["source_range"], {"limit": 20, "offset": 1})
+        self.assertEqual(diagnostics_payload["observations"][0]["count"], 2)
+        self.assertNotIn("source body", json.dumps(diagnostics_payload).lower())
+        self.assertIn(diagnostics_ref, report_payload["changed_refs"])
 
     def test_adapter_treats_existing_expected_refs_as_output_package_refs(self) -> None:
         runner = RecordingRunner()
@@ -604,8 +831,13 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertEqual(result.worker_result.status, "failed")
         self.assertEqual(runner.captured_env["MISSIONFORGE_PI_AGENT_API_KEY"], secret)
         self.assertNotIn(secret, serialized_workspace)
-        self.assertNotIn(secret, json.dumps(store.snapshot().to_dict(), sort_keys=True))
-        self.assertNotIn("MISSIONFORGE_PI_AGENT_API_KEY", json.dumps(store.snapshot().to_dict(), sort_keys=True))
+        serialized_evidence = json.dumps(store.snapshot().to_dict(), sort_keys=True)
+        self.assertNotIn(secret, serialized_evidence)
+        self.assertNotIn("MISSIONFORGE_PI_AGENT_API_KEY", serialized_evidence)
+        self.assertNotIn('"stdout"', serialized_evidence)
+        self.assertNotIn('"stderr"', serialized_evidence)
+        self.assertIn("stdout_summary", serialized_evidence)
+        self.assertIn("stderr_summary", serialized_evidence)
         self.assertIn("<redacted>", serialized_workspace)
 
     def test_live_config_failure_happens_before_child_process_invocation(self) -> None:

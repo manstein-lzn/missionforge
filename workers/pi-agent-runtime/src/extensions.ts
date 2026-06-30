@@ -145,8 +145,14 @@ export function extensionLoadReportFromLock(
     };
   }
   const lockedByGrantId = new Map(extensionLock.extensions.map((entry) => [entry.grant_id, entry]));
+  const manifestGrantIds = new Set(extensionGrants.map((grant) => grant.grant_id));
   const loaded: ExtensionLoadRecord[] = [];
   const rejected: ExtensionLoadRecord[] = [];
+  for (const entry of extensionLock.extensions) {
+    if (!manifestGrantIds.has(entry.grant_id)) {
+      rejected.push(rejectedRecordFromLockEntry(entry, manifest, "extra_lock_entry"));
+    }
+  }
   for (const grant of extensionGrants) {
     const entry = lockedByGrantId.get(grant.grant_id);
     if (!entry) {
@@ -194,6 +200,26 @@ function emptyExtensionLoadReport(input: RuntimeInput): ExtensionLoadReport {
     permission_manifest_ref: input.piworker_call.permission_manifest_ref,
     loaded_extensions: [],
     rejected_extensions: [],
+  };
+}
+
+function rejectedRecordFromLockEntry(
+  entry: ExtensionLockEntry,
+  manifest: PermissionManifest,
+  reason: string,
+): ExtensionLoadRecord {
+  return {
+    grant_id: entry.grant_id,
+    package: entry.package,
+    capability: entry.capability,
+    status: "rejected",
+    adapter_mode: entry.adapter_mode,
+    reason,
+    version: entry.version,
+    integrity: entry.integrity,
+    requires_network: entry.requires_network,
+    network_policy_at_load: manifest.network_policy,
+    tool_names: [],
   };
 }
 

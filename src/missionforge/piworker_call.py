@@ -35,6 +35,7 @@ class PiWorkerCallRole(StrEnum):
     FRONTDESK_AUTHOR = "frontdesk_author_piworker"
     EXECUTOR = "executor_piworker"
     JUDGE = "judge_piworker"
+    CONTEXT_REDUCER = "context_reducer_piworker"
     REPAIR = "repair_piworker"
     REVISION_DRAFTER = "revision_drafter_piworker"
 
@@ -406,7 +407,14 @@ def _metadata(value: Any, field_name: str = "piworker_call.metadata") -> dict[st
 
 def _runtime_budget(value: Any) -> dict[str, Any]:
     budget = _refs_only_mapping(require_mapping(value, "piworker_call.runtime_budget"), "piworker_call.runtime_budget")
-    allowed_fields = {"max_turns", "timeout_seconds", "max_tool_calls", "max_output_refs"}
+    allowed_fields = {
+        "context_token_budget",
+        "max_input_tokens",
+        "max_output_refs",
+        "max_tool_calls",
+        "max_turns",
+        "timeout_seconds",
+    }
     _reject_unknown_fields(budget, allowed_fields, "piworker_call.runtime_budget")
     result: dict[str, Any] = {}
     for key, item in budget.items():

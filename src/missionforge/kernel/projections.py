@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..contracts import validate_ref
+from ..ref_store import FileRefStore, RefStore
 from .contracts import KernelValidationError, Projection, ProjectionRecord
 from .io import hash_ref, hash_refs, ref_exists, resolve_workspace_ref, write_projection_value
 
@@ -40,13 +41,18 @@ class ProjectionRunResult:
 def run_projection(
     projection: Projection,
     *,
-    workspace: str | Path,
+    workspace: RefStore | str | Path,
     projectors: Mapping[str, ProjectionProjector],
     record_ref: str | None = None,
 ) -> ProjectionRunResult:
     """Run one runtime-owned projection using a product-supplied projector."""
 
     projection.validate()
+    effective_record_ref = (
+        validate_ref(record_ref, "kernel_projection.record_ref")
+        if record_ref is not None
+        else _projection_record_ref(projection.output)
+    )
     projector = projectors.get(projection.projector)
     if projector is None:
         raise KernelValidationError(f"kernel_projection projector is not registered: {projection.projector}")
@@ -54,7 +60,7 @@ def run_projection(
     if missing:
         raise KernelValidationError(f"kernel_projection source refs are missing: {missing}")
     source_hashes = hash_refs(workspace, projection.from_)
-    value = projector({ref: str(resolve_workspace_ref(workspace, ref)) for ref in projection.from_}, projection)
+    value = projector(_projector_sources(workspace, projection.from_), projection)
     write_projection_value(workspace, projection.output, value)
     output_hash = hash_ref(workspace, projection.output)
     record = ProjectionRecord(
@@ -65,7 +71,6 @@ def run_projection(
         output_hash=output_hash,
         metadata={"projection_metadata": dict(projection.metadata)},
     )
-    effective_record_ref = record_ref or _projection_record_ref(projection.output)
     write_projection_value(workspace, effective_record_ref, record.to_dict())
     result = ProjectionRunResult(projection=projection, record=record, record_ref=effective_record_ref)
     result.validate()
@@ -75,7 +80,7 @@ def run_projection(
 def run_projections(
     projections: list[Projection],
     *,
-    workspace: str | Path,
+    workspace: RefStore | str | Path,
     projectors: Mapping[str, ProjectionProjector],
     record_prefix: str = "kernel/projections",
 ) -> list[ProjectionRunResult]:
@@ -86,6 +91,14 @@ def run_projections(
         record_ref = f"{validate_ref(record_prefix, 'kernel_projection.record_prefix')}/{index:03d}-{projection.projector}.json"
         results.append(run_projection(projection, workspace=workspace, projectors=projectors, record_ref=record_ref))
     return results
+
+
+def _projector_sources(workspace: RefStore | str | Path, refs: list[str]) -> dict[str, str]:
+    if isinstance(workspace, (str, Path)):
+        return {ref: str(resolve_workspace_ref(workspace, ref)) for ref in refs}
+    if isinstance(workspace, FileRefStore):
+        return {ref: str(resolve_workspace_ref(workspace.root, ref)) for ref in refs}
+    return {ref: ref for ref in refs}
 
 
 def _projection_record_ref(output_ref: str) -> str:

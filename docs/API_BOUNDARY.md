@@ -31,12 +31,15 @@ Role projections:
 PiWorker invocation:
 
 - `PiWorkerCall`
+- `PiWorkerCallBatch`
+- `PiWorkerCallBatchResult`
 - `PiWorkerCallRole`
 - `PiWorkerCallResult`
 - `PiWorkerCallResultStatus`
 - `PiWorkerCallAdapter`
 - `create_default_piworker_adapter`
 - `run_piworker_call`
+- `run_piworker_call_batch`
 
 Evidence, extensions, sandbox, and progress primitives may be exported when
 they are product-neutral and refs-first.

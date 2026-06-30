@@ -1,5 +1,6 @@
 """Small white-box orchestration facade over MissionForge core primitives."""
 
+from .batch import StepBatchResult, run_steps_batch
 from .compiler import CompiledStep, StepCompileContext, compile_step
 from .contracts import (
     Artifact,
@@ -28,8 +29,9 @@ from .debug import (
 )
 from .inspect import KernelRunInspection, KernelStepInspection, inspect_kernel_run
 from .projections import ProjectionRunResult, run_projection, run_projections
+from .results import FlowRunResult, StepRunResult
 from .routing import KernelRouteDecision
-from .runner import FlowRunResult, StepRunResult, run_flow, run_step
+from .runner import run_flow, run_step
 
 __all__ = [
     "Artifact",
@@ -53,6 +55,7 @@ __all__ = [
     "ProjectionRecord",
     "ProjectionRunResult",
     "Step",
+    "StepBatchResult",
     "StepCompileContext",
     "StepRecord",
     "StepRunResult",
@@ -67,4 +70,5 @@ __all__ = [
     "run_projection",
     "run_projections",
     "run_step",
+    "run_steps_batch",
 ]

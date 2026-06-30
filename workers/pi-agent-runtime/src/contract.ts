@@ -5,6 +5,7 @@ export const CAPABILITY_GRANT_SCHEMA_VERSION = "runtime_capability_grant.v1";
 export const SANDBOX_PROFILE_SCHEMA_VERSION = "sandbox_profile.v1";
 export const EXTENSION_LOCK_SCHEMA_VERSION = "missionforge_extension_lock.v1";
 export const EXTENSION_LOAD_REPORT_SCHEMA_VERSION = "missionforge_extension_load_report.v1";
+export const CONTEXT_ENGINE_SCHEMA_VERSION = "missionforge.pi_agent_context_engine.v1";
 export const CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1";
 export const RUNTIME_CONTEXT_CHECKPOINT_SCHEMA_VERSION = "missionforge.runtime_context_checkpoint.v1";
 export const LONG_MEMORY_PACKET_SCHEMA_VERSION = "missionforge.long_memory_packet.v1";
@@ -46,6 +47,23 @@ export const DEFAULT_CONTEXT_PROJECTION_CONFIG: ContextProjectionConfig = {
   cache_aware: DEFAULT_CONTEXT_CACHE_AWARE,
 };
 
+export interface ContextEngineInput {
+  schema_version: typeof CONTEXT_ENGINE_SCHEMA_VERSION;
+  enabled: boolean;
+  context_view_ref: string | null;
+  context_compile_request_ref: string | null;
+  context_compile_result_ref: string | null;
+  context_baseline_ref: string | null;
+  context_source_snapshot_ref: string | null;
+  context_epoch_ref: string | null;
+  context_cache_layout_ref: string | null;
+  context_pressure_ref: string | null;
+  context_turn_safe_point_ref: string | null;
+  context_turn_boundary_ref: string | null;
+  context_hash: string | null;
+  context_compile_action: string;
+}
+
 export interface PiAgentCallSpec {
   call_id: string;
   mission_id: string;
@@ -76,6 +94,7 @@ export interface RuntimeInput {
   context_raw_dir_ref: string;
   long_memory_packet_ref: string | null;
   context_projection_config: ContextProjectionConfig;
+  context_engine: ContextEngineInput;
   extension_lock_ref: string | null;
   extension_load_report_ref: string;
   piworker_call: PiWorkerCall;
@@ -355,6 +374,7 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
         ? null
         : requireRef(data.long_memory_packet_ref, "long_memory_packet_ref"),
     context_projection_config: parseContextProjectionConfig(data.context_projection_config),
+    context_engine: parseContextEngineInput(data.context_engine),
     extension_lock_ref:
       data.extension_lock_ref === undefined || data.extension_lock_ref === null
         ? null
@@ -407,6 +427,62 @@ export function parseRuntimeInput(value: unknown): RuntimeInput {
   }
   validateRuntimeAuthority(result);
   return result;
+}
+
+export function parseContextEngineInput(value: unknown): ContextEngineInput {
+  if (value === undefined || value === null) {
+    return emptyContextEngineInput();
+  }
+  const data = requireObject(value, "context_engine");
+  const schemaVersion = requireString(
+    data.schema_version ?? CONTEXT_ENGINE_SCHEMA_VERSION,
+    "context_engine.schema_version",
+  );
+  if (schemaVersion !== CONTEXT_ENGINE_SCHEMA_VERSION) {
+    throw new Error(`Unsupported context_engine.schema_version: ${schemaVersion}`);
+  }
+  const enabled = requireBoolean(data.enabled ?? false, "context_engine.enabled");
+  const contextViewRef = optionalRef(data.context_view_ref, "context_engine.context_view_ref");
+  const compileResultRef = optionalRef(data.context_compile_result_ref, "context_engine.context_compile_result_ref");
+  const result: ContextEngineInput = {
+    schema_version: CONTEXT_ENGINE_SCHEMA_VERSION,
+    enabled,
+    context_view_ref: contextViewRef,
+    context_compile_request_ref: optionalRef(data.context_compile_request_ref, "context_engine.context_compile_request_ref"),
+    context_compile_result_ref: compileResultRef,
+    context_baseline_ref: optionalRef(data.context_baseline_ref, "context_engine.context_baseline_ref"),
+    context_source_snapshot_ref: optionalRef(data.context_source_snapshot_ref, "context_engine.context_source_snapshot_ref"),
+    context_epoch_ref: optionalRef(data.context_epoch_ref, "context_engine.context_epoch_ref"),
+    context_cache_layout_ref: optionalRef(data.context_cache_layout_ref, "context_engine.context_cache_layout_ref"),
+    context_pressure_ref: optionalRef(data.context_pressure_ref, "context_engine.context_pressure_ref"),
+    context_turn_safe_point_ref: optionalRef(data.context_turn_safe_point_ref, "context_engine.context_turn_safe_point_ref"),
+    context_turn_boundary_ref: optionalRef(data.context_turn_boundary_ref, "context_engine.context_turn_boundary_ref"),
+    context_hash: optionalSha256(data.context_hash, "context_engine.context_hash"),
+    context_compile_action: optionalString(data.context_compile_action, "context_engine.context_compile_action"),
+  };
+  if (enabled && (!contextViewRef || !compileResultRef)) {
+    throw new Error("context_engine enabled requires context_view_ref and context_compile_result_ref");
+  }
+  return result;
+}
+
+function emptyContextEngineInput(): ContextEngineInput {
+  return {
+    schema_version: CONTEXT_ENGINE_SCHEMA_VERSION,
+    enabled: false,
+    context_view_ref: null,
+    context_compile_request_ref: null,
+    context_compile_result_ref: null,
+    context_baseline_ref: null,
+    context_source_snapshot_ref: null,
+    context_epoch_ref: null,
+    context_cache_layout_ref: null,
+    context_pressure_ref: null,
+    context_turn_safe_point_ref: null,
+    context_turn_boundary_ref: null,
+    context_hash: null,
+    context_compile_action: "",
+  };
 }
 
 export function parsePermissionManifest(value: unknown): PermissionManifest {
@@ -775,6 +851,21 @@ export function requireRef(value: unknown, field: string): string {
     throw new Error(`${field} must be a workspace-relative ref`);
   }
   return ref;
+}
+
+function optionalRef(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return requireRef(value, field);
+}
+
+function optionalSha256(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return requireSha256(value, field);
+}
+
+function optionalString(value: unknown, field: string): string {
+  if (value === undefined || value === null || value === "") return "";
+  return requireString(value, field);
 }
 
 function parsePiAgentCallSpec(value: unknown): PiAgentCallSpec {

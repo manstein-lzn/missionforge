@@ -4,13 +4,20 @@ import unittest
 
 from missionforge import (
     ContextCachePolicy,
+    ContextCheckpoint,
+    ContextCheckpointCreator,
     ContextCompactionRecord,
     ContextCompactionStatus,
     ContextCompileAction,
+    ContextCompileRequest,
     ContextCompileResult,
     ContextEpoch,
     ContextInlinePolicy,
     ContextReadObservation,
+    ContextReductionReason,
+    ContextReductionRequest,
+    ContextReductionResult,
+    ContextReductionStatus,
     ContextSource,
     ContextSourceKind,
     ContextSourceSnapshot,
@@ -29,7 +36,9 @@ from missionforge import (
     build_context_cache_layout,
     build_context_epoch,
     build_thrash_diagnostics,
+    compile_context_request,
     filter_context_sources,
+    reconcile_context_epoch,
 )
 
 
@@ -161,7 +170,7 @@ class ContextEngineTests(unittest.TestCase):
         self.assertNotEqual(layout1.volatile_strata_hash, layout2.volatile_strata_hash)
         self.assertIn("contract/task_contract.json", layout1.epoch_invalidation_refs)
 
-    def test_epoch_turn_compile_and_compaction_records_are_refs_only(self) -> None:
+    def test_epoch_turn_compile_checkpoint_and_compaction_records_are_refs_only(self) -> None:
         epoch = build_context_epoch(
             epoch_id="epoch1",
             role="executor_piworker",
@@ -191,6 +200,22 @@ class ContextEngineTests(unittest.TestCase):
             action=ContextCompileAction.CONTINUE,
             epoch_ref="context/epochs/epoch1.json",
         )
+        checkpoint = ContextCheckpoint(
+            checkpoint_id="checkpoint1",
+            reason_code="pressure_hard",
+            role="executor_piworker",
+            run_id="run1",
+            call_id="call-1",
+            source_snapshot_ref="context/epochs/epoch1/source_snapshot.json",
+            context_view_ref="kernel/demo/context_view.json",
+            context_hash=HASH3,
+            summary_refs=["context/summaries/summary1.json"],
+            recent_refs=["sources/source_packet.json"],
+            tool_observation_refs=["observations/tool_observation1.json"],
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            created_by=ContextCheckpointCreator.RUNTIME,
+            created_at="2026-06-27T00:00:00Z",
+        )
         compaction = ContextCompactionRecord(
             record_id="compact1",
             status=ContextCompactionStatus.ENDED,
@@ -209,8 +234,18 @@ class ContextEngineTests(unittest.TestCase):
         self.assertEqual(ContextEpoch.from_dict(epoch.to_dict()).epoch_hash, epoch.epoch_hash)
         self.assertEqual(ContextTurnBoundary.from_dict(boundary.to_dict()).status, ContextTurnBoundaryStatus.READY)
         self.assertEqual(ContextCompileResult.from_dict(result.to_dict()).action, ContextCompileAction.CONTINUE)
+        self.assertEqual(
+            ContextCheckpoint.from_dict(checkpoint.to_dict()).checkpoint_hash,
+            checkpoint.checkpoint_hash,
+        )
         self.assertEqual(ContextCompactionRecord.from_dict(compaction.to_dict()).status, ContextCompactionStatus.ENDED)
+        self.assertNotIn("raw_body", str(checkpoint.to_dict()))
         self.assertNotIn("provider_message", str(compaction.to_dict()))
+
+        payload = checkpoint.to_dict()
+        payload["metadata"] = {"raw_body": "must not be durable"}
+        with self.assertRaisesRegex(ContractValidationError, "raw_body"):
+            ContextCheckpoint.from_dict(payload)
 
     def test_compaction_ended_requires_output_refs(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "requires output"):
@@ -222,6 +257,75 @@ class ContextEngineTests(unittest.TestCase):
                 input_context_view_ref="kernel/demo/context_view.json",
                 checkpoint_ref="context/checkpoints/compact1.json",
                 producing_role="executor_piworker",
+                permission_manifest_ref="kernel/demo/permission_manifest.json",
+            )
+
+    def test_reduction_request_and_result_are_refs_only(self) -> None:
+        request = ContextReductionRequest(
+            reduction_id="reduce1",
+            reason=ContextReductionReason.PRESSURE_HARD,
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            context_view_ref="kernel/demo/context_view.json",
+            context_hash=HASH2,
+            source_snapshot_ref="kernel/demo/context/source_snapshot.json",
+            expected_output_refs=[
+                "kernel/demo/context/reduction_result.json",
+                "kernel/demo/context/working_set.json",
+            ],
+            worker_brief_ref="projections/worker_brief.json",
+            pressure_ref="kernel/demo/context/pressure.json",
+            current_working_set_ref="kernel/demo/context/working_set.previous.json",
+            thrash_diagnostics_refs=["kernel/demo/context/thrash.json"],
+            recent_projection_refs=["attempts/call/context/tool_output_projections/obs1.json"],
+            source_refs=["sources/source_packet.json"],
+            tool_observation_refs=["attempts/call/context/tool_observations.jsonl"],
+            checkpoint_refs=["kernel/demo/context/checkpoint.json"],
+        )
+        result = ContextReductionResult(
+            reduction_id="reduce1",
+            status=ContextReductionStatus.COMPLETED,
+            request_ref="kernel/demo/context/reduction_request.json",
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            checkpoint_ref="kernel/demo/context/checkpoint.json",
+            working_set_ref="kernel/demo/context/working_set.json",
+            summary_refs=["kernel/demo/context/summary.json"],
+            pinned_refs=["sources/source_packet.json"],
+            evicted_refs=["attempts/call/context/tool_output_projections/obs0.json"],
+            omitted_refs=["attempts/call/context/raw_large.txt"],
+            source_refs=["sources/source_packet.json"],
+            denied_source_refs=["secrets/private_source.json"],
+            compaction_record_ref="kernel/demo/context/compaction.json",
+            validation_report_ref="kernel/demo/context/reduction_validation.json",
+        )
+
+        self.assertEqual(
+            ContextReductionRequest.from_dict(request.to_dict()).reduction_request_hash,
+            request.reduction_request_hash,
+        )
+        self.assertEqual(
+            ContextReductionResult.from_dict(result.to_dict()).reduction_result_hash,
+            result.reduction_result_hash,
+        )
+
+        request_payload = request.to_dict()
+        request_payload["metadata"] = {"raw_prompt": "must not be durable"}
+        with self.assertRaisesRegex(ContractValidationError, "raw_prompt"):
+            ContextReductionRequest.from_dict(request_payload)
+
+        result_payload = result.to_dict()
+        result_payload["metadata"] = {"provider_payload": "must not be durable"}
+        with self.assertRaisesRegex(ContractValidationError, "provider_payload"):
+            ContextReductionResult.from_dict(result_payload)
+
+    def test_completed_reduction_result_requires_state_output_refs(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "state output"):
+            ContextReductionResult(
+                reduction_id="reduce1",
+                status=ContextReductionStatus.COMPLETED,
+                request_ref="kernel/demo/context/reduction_request.json",
                 permission_manifest_ref="kernel/demo/permission_manifest.json",
             )
 
@@ -256,6 +360,219 @@ class ContextEngineTests(unittest.TestCase):
                 source_ref="sources/a.json",
                 normalized_metadata={"query": "raw user text"},
             )
+
+    def test_compile_context_request_blocks_denied_required_source(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-context",
+                "readable_refs": ["contract"],
+                "denied_refs": ["contract/secret.json"],
+            }
+        )
+        request = ContextCompileRequest(
+            request_id="compile1",
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            context_sources=[
+                ContextSource(
+                    source_key="authority/secret",
+                    kind=ContextSourceKind.AUTHORITY,
+                    source_refs=["contract/secret.json"],
+                    source_hashes={"contract/secret.json": HASH2},
+                    cache_policy=ContextCachePolicy.STABLE,
+                    inline_policy=ContextInlinePolicy.REF_ONLY,
+                    required=True,
+                )
+            ],
+        )
+
+        compiled = compile_context_request(
+            request=request,
+            read_gate=ReadGate(manifest),
+            view_ref="kernel/demo/context_view.json",
+            pressure_ref="kernel/demo/context/pressure.json",
+            cache_layout_ref="kernel/demo/context/cache_layout.json",
+            result_id="compile1",
+            layout_id="layout1",
+        )
+
+        self.assertEqual(compiled.result.action, ContextCompileAction.BLOCKED_BY_DENIED_REQUIRED_SOURCE)
+        self.assertEqual(compiled.result.denied_source_refs, ["contract/secret.json"])
+        self.assertEqual(compiled.view.omitted_segments, [])
+        self.assertEqual(compiled.result.omitted_refs, [])
+
+    def test_compile_context_request_blocks_unavailable_required_source(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-context",
+                "readable_refs": ["contract", "context"],
+            }
+        )
+        request = ContextCompileRequest(
+            request_id="compile1",
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            context_sources=[
+                ContextSource(
+                    source_key="working_set/active",
+                    kind=ContextSourceKind.WORKING_SET,
+                    source_refs=["context/working_set.json"],
+                    cache_policy=ContextCachePolicy.SEMI_STABLE,
+                    inline_policy=ContextInlinePolicy.REF_ONLY,
+                    required=True,
+                    metadata={"unavailable": True, "reason_code": "working_set_unavailable"},
+                )
+            ],
+            working_set_ref="context/working_set.json",
+        )
+
+        compiled = compile_context_request(
+            request=request,
+            read_gate=ReadGate(manifest),
+            view_ref="kernel/demo/context_view.json",
+            pressure_ref="kernel/demo/context/pressure.json",
+            cache_layout_ref="kernel/demo/context/cache_layout.json",
+            result_id="compile1",
+            layout_id="layout1",
+        )
+
+        self.assertEqual(compiled.result.action, ContextCompileAction.BLOCKED_BY_UNAVAILABLE_AUTHORITY)
+        self.assertEqual(compiled.result.working_set_ref, "context/working_set.json")
+        self.assertEqual(compiled.result.metadata["unavailable_required_source_keys"], ["working_set/active"])
+
+    def test_compile_context_request_turns_hard_pressure_into_checkpoint_action(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-context",
+                "readable_refs": ["contract"],
+            }
+        )
+        request = ContextCompileRequest(
+            request_id="compile1",
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            context_sources=[
+                ContextSource(
+                    source_key="authority/contract",
+                    kind=ContextSourceKind.AUTHORITY,
+                    source_refs=["contract/task_contract.json"],
+                    source_hashes={"contract/task_contract.json": HASH1},
+                    cache_policy=ContextCachePolicy.STABLE,
+                    inline_policy=ContextInlinePolicy.REF_ONLY,
+                    required=True,
+                    token_estimate=90,
+                )
+            ],
+            token_budget=100,
+        )
+
+        compiled = compile_context_request(
+            request=request,
+            read_gate=ReadGate(manifest),
+            view_ref="kernel/demo/context_view.json",
+            pressure_ref="kernel/demo/context/pressure.json",
+            cache_layout_ref="kernel/demo/context/cache_layout.json",
+            result_id="compile1",
+            layout_id="layout1",
+        )
+
+        self.assertEqual(compiled.result.action, ContextCompileAction.CHECKPOINT_BEFORE_NEXT_TURN)
+        self.assertEqual(compiled.pressure.recommended_action.value, "checkpoint_before_next_turn")
+        self.assertEqual(compiled.result.pressure_ref, "kernel/demo/context/pressure.json")
+
+    def test_reconcile_context_epoch_preserves_compatible_stable_baseline(self) -> None:
+        manifest = PermissionManifest.from_dict(
+            {
+                "manifest_id": "perm-context",
+                "readable_refs": ["contract", "sources"],
+            }
+        )
+        request1 = ContextCompileRequest(
+            request_id="compile1",
+            role="executor_piworker",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/demo/permission_manifest.json",
+            context_sources=[
+                ContextSource(
+                    source_key="authority/contract",
+                    kind=ContextSourceKind.AUTHORITY,
+                    source_refs=["contract/task_contract.json"],
+                    source_hashes={"contract/task_contract.json": HASH1},
+                    cache_policy=ContextCachePolicy.STABLE,
+                    inline_policy=ContextInlinePolicy.REF_ONLY,
+                    required=True,
+                    priority=100,
+                ),
+                ContextSource(
+                    source_key="inputs/source_a",
+                    kind=ContextSourceKind.PRODUCT_STATE,
+                    source_refs=["sources/a.json"],
+                    source_hashes={"sources/a.json": HASH2},
+                    cache_policy=ContextCachePolicy.VOLATILE,
+                    inline_policy=ContextInlinePolicy.REF_ONLY,
+                    required=True,
+                    priority=50,
+                ),
+            ],
+        )
+        request2 = ContextCompileRequest.from_dict(
+            {
+                **request1.to_dict(),
+                "request_id": "compile2",
+                "context_sources": [
+                    request1.context_sources[0].to_dict(),
+                    {
+                        **request1.context_sources[1].to_dict(),
+                        "source_refs": ["sources/b.json"],
+                        "source_hashes": {"sources/b.json": HASH3},
+                    },
+                ],
+            }
+        )
+        compiled1 = compile_context_request(
+            request=request1,
+            read_gate=ReadGate(manifest),
+            view_ref="kernel/demo/context_view1.json",
+            pressure_ref="kernel/demo/context/pressure1.json",
+            cache_layout_ref="kernel/demo/context/cache_layout1.json",
+            result_id="compile1",
+            layout_id="layout1",
+        )
+        epoch1 = reconcile_context_epoch(
+            epoch_id="epoch1",
+            request=request1,
+            view=compiled1.view,
+            baseline_ref="kernel/demo/context/baseline1.json",
+            source_snapshot_ref="kernel/demo/context/source_snapshot1.json",
+        )
+        compiled2 = compile_context_request(
+            request=request2,
+            read_gate=ReadGate(manifest),
+            view_ref="kernel/demo/context_view2.json",
+            pressure_ref="kernel/demo/context/pressure2.json",
+            cache_layout_ref="kernel/demo/context/cache_layout2.json",
+            result_id="compile2",
+            layout_id="layout2",
+        )
+        epoch2 = reconcile_context_epoch(
+            epoch_id="epoch2",
+            request=request2,
+            view=compiled2.view,
+            baseline_ref="kernel/demo/context/baseline2.json",
+            source_snapshot_ref="kernel/demo/context/source_snapshot2.json",
+            previous_epoch=epoch1,
+        )
+
+        self.assertEqual(epoch2, epoch1)
+        self.assertEqual(compiled1.cache_layout.stable_strata_hash, compiled2.cache_layout.stable_strata_hash)
+        self.assertNotEqual(compiled1.cache_layout.volatile_strata_hash, compiled2.cache_layout.volatile_strata_hash)
 
 
 def _view_with_visible_refs(visible_refs: list[str]) -> ContextView:

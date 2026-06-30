@@ -58,20 +58,63 @@ model working context without turning refs into hidden memory:
 - `ContextCompileRequest` / `ContextCompileResult`: host boundary for context
   compilation.
 - `ContextTurnBoundary`: safe provider-turn boundary record.
+- `ContextCheckpoint`: durable refs-only checkpoint created by MissionForge at
+  context pressure boundaries.
+- `ContextReductionRequest` / `ContextReductionResult`: MissionForge-managed
+  reducer boundary records for package-owned context maintenance.
 - `ContextCompactionRecord`: durable compaction lifecycle record.
+- `ContextManagementPolicy`: mechanical pressure thresholds, reducer
+  enablement, retry behavior, and token caps.
 - `ContextReadObservation` / `ContextThrashDiagnostics`: repeated-read
-  diagnostics without raw query text.
+  diagnostics without raw query text. Pi agent runtime reports can materialize
+  these diagnostics from tool observations, and Kernel flow execution carries
+  active diagnostics into the next managed reducer request by policy.
 - `ToolOutputProjection`: bounded model-visible projection of full tool output.
+  The Pi agent adapter materializes sidecar `projected_observations` into
+  refs-only projection records and text stubs under each attempt's
+  `context/tool_output_projections/` directory. Kernel flow execution can carry
+  those projection record refs into the next step's `ContextCompileRequest`;
+  admission still depends on the next step's `ReadGate`.
+- `compile_context_request(...)`: product-neutral compile boundary that filters
+  sources through `ReadGate`, builds a deterministic `ContextView`, emits cache
+  layout and pressure diagnostics, and returns a non-semantic
+  `ContextCompileResult`.
+- `reconcile_context_epoch(...)`: stable-prefix epoch reconciliation helper.
 
 Core validates refs, hashes, permissions, layout, and lifecycle status. Product
 integrations own semantic summaries, source ranking, and domain-specific memory.
 
-Kernel `run_step()` currently emits a minimal ContextEngine record set beside
-the existing `context_projection.json`: source snapshot, epoch, cache layout,
-turn safe point, turn boundary, and compile result refs. These records are
-exposed through `StepRecord.metadata`, `inspect_kernel_run()`, and the read-only
-adapter CLI. They are diagnostic/control-plane refs and do not change provider
-prompt rendering yet.
+Kernel `run_step()` now constructs a `ContextCompileRequest` before PiWorker
+invocation and persists the compiled record set beside the existing
+`context_projection.json`: compile request, source snapshot, epoch, cache
+layout, pressure diagnostics, checkpoint, turn safe point, turn boundary, and
+compile result refs. Denied required sources block at this safe boundary before
+the PiWorker adapter is called.
+
+At hard pressure, Kernel first writes a checkpoint and invokes a managed
+`context_reducer_piworker` when policy allows it. Valid reducer output is
+checked against a scoped maintenance permission manifest, recorded as a
+refs-only state transition/compaction record, and followed by a fresh context
+compile before the original worker call. Invalid or failed reducer output blocks
+safely with diagnostic refs and leaves the previous context view/epoch active.
+These records are exposed through `StepRecord.metadata`, `inspect_kernel_run()`,
+and the read-only adapter CLI.
+
+The Pi agent runtime input now carries a first-class `context_engine` envelope
+with the Kernel compile refs. The sidecar reads the compiled `ContextView` and
+`ContextCompileResult` before provider invocation and lowers admitted
+stable/semi-stable/volatile segment refs into a bounded ephemeral provider-turn
+context summary. Admitted working-set and tool-output projection text is
+rendered only after sidecar read permission and compiled hash checks. Omitted
+and denied refs are not rendered, and durable state
+continues to avoid prompt bodies, provider payloads, and raw tool bodies.
+
+Bounded retry attempts reuse the parent call's compiled ContextEngine boundary
+only when that reuse is explicit. Kernel attempt calls include
+`context_boundary_reuse: "same_preflight_boundary"` plus parent call, compile
+result, turn boundary, and epoch refs. The Pi agent adapter rejects retry
+attempts that carry parent call metadata and ContextEngine refs without that
+same-boundary declaration.
 
 ## Kernel API
 

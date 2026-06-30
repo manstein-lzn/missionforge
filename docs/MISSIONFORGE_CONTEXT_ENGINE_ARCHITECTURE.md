@@ -1,8 +1,36 @@
 # MissionForge ContextEngine Architecture
 
-Status: draft architecture and implementation plan
+Status: package-managed architecture with Phase 7-9 runtime slice implemented
 
-Last updated: 2026-06-26
+Last updated: 2026-06-27
+
+## Implementation Status
+
+The package-managed ContextEngine baseline is now partially implemented in
+core:
+
+- Kernel compiles `ContextCompileRequest` automatically before provider turns.
+- Kernel writes refs-only checkpoint, source snapshot, epoch, pressure, cache
+  layout, turn boundary, and compile-result records.
+- Hard context pressure invokes a MissionForge-managed
+  `context_reducer_piworker` without host code.
+- Runtime repeated-read diagnostics from Pi agent tool observations are carried
+  into the next Kernel safe point and can invoke the same managed reducer path
+  by policy.
+- Valid reducer output is boundary-validated, recorded as a state transition and
+  compaction record, and followed by a fresh recompile before the executor
+  PiWorker is called.
+- Invalid or failed reducer output blocks safely with refs-only diagnostics and
+  leaves the previous context view/epoch active.
+- `ContextManagementPolicy` controls the default mechanical thresholds and
+  reducer enablement.
+
+Still intentionally incomplete:
+
+- no product-specific reducer prompts or semantics live in core;
+- broader observation coverage and long-running soak/restart validation remain
+  to be hardened;
+- richer working-set state semantics remain product/integration responsibility.
 
 ## Purpose
 
@@ -31,6 +59,14 @@ permission manifests, sandbox profiles, role separation, and independent judge
 boundaries. The correct design is to extract the general mechanism and adapt it
 to MissionForge's authority model.
 
+MissionForge is also intended to be used as a Python package and embedded
+toolkit. Context management pressure must not be pushed to ordinary package
+users. A host should be able to define contracts, steps, permissions, and
+artifacts, then rely on MissionForge to manage context compilation, projection,
+checkpointing, compaction lifecycle, and recovery by default. Product
+integrations may improve semantic reduction, but they must not be required for
+baseline ContextEngine safety and usability.
+
 ## Non-Goals
 
 The first ContextEngine design must not become:
@@ -41,7 +77,9 @@ The first ContextEngine design must not become:
 - a vector retrieval product;
 - a product-semantic reducer;
 - a hidden prompt mutation system;
-- an in-memory dataflow runtime that bypasses refs and permissions.
+- an in-memory dataflow runtime that bypasses refs and permissions;
+- a requirement that package users hand-maintain checkpoints, working sets, or
+  compaction records.
 
 MissionForge core should compile, validate, filter, project, checkpoint, and
 observe context. It must not decide what a research paper means, which evidence
@@ -180,6 +218,31 @@ The ContextEngine succeeds only if it preserves enough compiled working context
 for the model to continue reasoning without repeatedly rediscovering the same
 evidence.
 
+### 8. Context Management Is MissionForge-Owned
+
+MissionForge should provide ContextEngine as managed package infrastructure, not
+as a burden transferred to host applications.
+
+The default path should be:
+
+```text
+host defines contract / step / permissions
+  -> Kernel prepares context automatically
+  -> ContextEngine compiles and checks pressure
+  -> Kernel checkpoints or invokes managed reduction when needed
+  -> PiWorker receives bounded context
+```
+
+Users may configure policy thresholds or replace reducer prompts, but they
+should not need to understand prompt-cache strata, repeated-read diagnostics,
+checkpoint records, or working-set maintenance for ordinary use.
+
+This does not mean deterministic Python core should become a semantic expert.
+MissionForge owns the lifecycle and hard boundaries. Semantic compression, when
+needed, is produced by an internal MissionForge-managed PiWorker reducer or by
+an optional product integration. Core validates refs, permissions, hashes,
+schemas, roles, and lifecycle transitions.
+
 ## Lessons Extracted From opencode
 
 The opencode source audit produced six reusable ideas.
@@ -261,7 +324,7 @@ record artifacts
 refresh permitted context sources
 compile ContextView
 estimate pressure
-maybe checkpoint/compact
+maybe checkpoint / invoke managed reducer / compact
 emit RunEvent.CONTEXT_PROJECTED
 invoke PiWorker/provider
 ```
@@ -269,6 +332,12 @@ invoke PiWorker/provider
 This is where MissionForge can support pause, cancel, inject-message, request
 revision, force checkpoint, and debug stepping without corrupting a provider
 turn.
+
+Bounded retries may reuse a compiled provider-turn boundary only when the retry
+attempt records that it is using the same preflight boundary and cites the
+parent call, compile result, turn boundary, and epoch refs. A retry that needs
+different authority, permissions, or context must return to the safe point and
+compile a new boundary instead of silently inheriting stale context metadata.
 
 ### Bounded Tool Output
 
@@ -302,29 +371,41 @@ opencode compacts before a provider turn when the projected request exceeds
 budget. It emits durable started/ended events and keeps the previous context if
 compaction fails.
 
-MissionForge should split compaction into two layers:
+MissionForge should split compaction into three layers:
 
-1. Product-neutral historical compaction boundary:
-   - goal;
-   - constraints;
-   - progress;
-   - current blockers;
-   - key decisions;
-   - recent context refs;
-   - tool observation refs.
+1. Product-neutral lifecycle boundary owned by core:
+   - checkpoint and compaction attempt records;
+   - input/output context refs and hashes;
+   - source snapshot refs;
+   - permission manifest refs;
+   - started/ended/failed status;
+   - failure behavior;
+   - epoch replacement only after successful completion.
 
-2. Product-specific semantic reduction:
+2. MissionForge-managed generic reduction:
+   - frozen contract and role projection refs;
+   - current working-set refs;
+   - recent bounded projections;
+   - repeated-read diagnostics;
+   - tool observation refs;
+   - generic progress/blocker/decision/next-step summaries produced by an
+     internal reducer PiWorker.
+
+3. Optional product-specific semantic reduction:
    - DeepResearch `research_state`;
    - source packet;
    - claim index;
    - evidence gap map;
    - reviewer/judge observations.
 
-Core owns the first layer's schema and boundary events. It does not infer goal,
-progress, blockers, decisions, or relevance from raw chat or transcripts. Those
-fields must be populated from frozen contract refs, explicit user event refs, or
-PiWorker/Judge-authored summary artifacts. Product integrations own the second
-layer's semantics and prompts.
+Core owns lifecycle schemas, boundary events, permission checks, and state
+replacement rules. It does not infer goal, progress, blockers, decisions, or
+relevance from raw chat or transcripts with Python branching logic. Those fields
+must be populated from frozen contract refs, explicit user event refs, a
+MissionForge-managed reducer PiWorker, or product-authored summary artifacts.
+
+Product integrations own only product-specialized reduction. They are not a
+prerequisite for baseline compaction and checkpoint safety.
 
 ### Working Set And Anti-Thrashing
 
@@ -351,31 +432,42 @@ what remains unresolved
 which refs can recover the full evidence
 ```
 
-The generic core should provide the working-set container and diagnostics. The
-product integration should populate product-specific facts and interpretations.
+The generic core should provide the working-set container, policy hooks,
+diagnostics, and state replacement rules. MissionForge's managed reducer should
+be able to populate a generic working set from admitted projections and explicit
+refs. Product integrations may populate richer product-specific facts and
+interpretations, but ordinary package users should not need to do so.
 
 ## Target Architecture
 
 ```text
-Host Python / ProductIntegration
-  -> TaskContract + PermissionManifest + SandboxProfile
-  -> per-call ContextSource list/dict
-  -> ContextEngine.prepare_turn(...)
-      -> permission-filtered source snapshots
-      -> ContextEpoch baseline/reconcile
-      -> ToolOutput projection/demotion
-      -> ContextView
-      -> ContextPressureDiagnostics
-      -> optional ContextCheckpoint request
-  -> PiWorkerCall
+Host Python
+  -> Kernel Step / Flow / TaskContract / PermissionManifest
+  -> Kernel safe provider-turn boundary
+      -> ContextEngine.compile(...)
+          -> permission-filtered source snapshots
+          -> ContextEpoch baseline/reconcile
+          -> ToolOutput projection/demotion
+          -> ContextView
+          -> ContextPressureDiagnostics
+          -> ContextCheckpoint when needed
+      -> if pressure/thrash requires reduction:
+          -> MissionForge-managed ContextReducer PiWorker
+          -> ContextReductionResult
+          -> ContextCompactionRecord
+          -> new ContextWorkingSet / summary refs
+          -> recompile before provider call
+      -> PiWorkerCall
   -> ToolGateway settlements
   -> RunEvent / RunSnapshot / DecisionLedger
-  -> Judge PiWorker boundary
+  -> independent Judge PiWorker boundary when acceptance is required
 ```
 
-The ContextEngine is not the orchestrator. The host or Kernel API decides when
-to call it. ContextEngine returns records and decisions that the host/runtime can
-inspect.
+The ContextEngine is not a workflow framework. Kernel owns when to call it at
+safe boundaries. ContextEngine returns records and decisions that Kernel can
+apply mechanically. MissionForge may invoke its own internal reducer PiWorker
+for managed context maintenance, but that reducer is infrastructure, not product
+acceptance authority and not a requirement pushed to host applications.
 
 ## Core Primitives
 
@@ -615,6 +707,65 @@ Fields:
 Checkpoint records may cite semantic summaries, but the core checkpoint itself
 must stay refs-first.
 
+### ContextReductionRequest
+
+MissionForge-managed request for an internal reducer PiWorker.
+
+Fields:
+
+- reduction id;
+- reason:
+  - pressure_soft;
+  - pressure_hard;
+  - repeated_read_thrashing;
+  - operator_checkpoint;
+  - before_resume;
+- role being maintained;
+- contract ref/hash;
+- worker brief or judge rubric ref when applicable;
+- permission manifest ref;
+- current context view ref/hash;
+- source snapshot ref;
+- pressure diagnostics ref;
+- thrash diagnostics refs;
+- current working-set ref;
+- recent bounded projection refs;
+- tool observation refs;
+- checkpoint refs;
+- expected output refs for reducer artifacts.
+
+This request is generated by MissionForge infrastructure. Host applications may
+configure policy, but they should not need to author this request directly.
+
+### ContextReductionResult
+
+Refs-only result from a MissionForge-managed reducer PiWorker.
+
+Fields:
+
+- reduction id;
+- status:
+  - completed;
+  - failed;
+  - invalid_output;
+  - skipped;
+- input request ref;
+- checkpoint ref;
+- working-set ref when updated;
+- summary artifact refs;
+- pinned refs;
+- evicted refs;
+- omitted refs;
+- source refs;
+- denied source refs;
+- compaction record ref;
+- validation report ref;
+- permission manifest ref;
+
+Core must validate that all cited refs are readable or writable according to the
+reducer's permission manifest and that bounded projections remain within policy.
+Core must not judge whether the reducer's semantic summary is insightful.
+
 ### ContextCompactionRecord
 
 Durable lifecycle record for a compaction attempt.
@@ -723,6 +874,9 @@ Rules:
 - The full raw output is never repeatedly appended to model history.
 - The first immediate turn may keep a bounded result inline if useful.
 - Older large outputs are demoted to refs.
+- Materialized bounded projection records may feed the next provider-turn
+  compile request, but the next role's permission manifest still controls
+  whether projection records and projection text refs are admitted.
 - Product integrations may request semantic summaries, but those summaries must
   cite raw/source refs and permission manifests.
 - Judge roles do not automatically inherit executor raw refs.
@@ -839,12 +993,35 @@ Low-density or old segments move from inline/preview to ref stubs:
 
 ### Checkpointing
 
-At soft pressure, prepare checkpoint candidates.
+At soft pressure, MissionForge should prepare a checkpoint and may invoke the
+managed reducer when policy allows it.
 
-At hard pressure, stop at a completed safe point before the next provider call
-unless the host explicitly permits a compaction pass.
+At hard pressure, MissionForge should stop at a completed safe point before the
+next provider call, write a checkpoint record, and then try a managed reduction
+pass if a reducer adapter is available. If reduction succeeds, Kernel recompiles
+context and continues. If reduction fails or is unavailable, the previous active
+context remains valid and the step blocks with actionable diagnostics.
 
-### Product-Specific Reduction
+The host should not be required to write checkpoint or compaction records by
+hand. Host policy may disable automatic reduction, change thresholds, or provide
+a custom reducer, but the default package behavior should be managed by
+MissionForge.
+
+### Managed And Product-Specific Reduction
+
+MissionForge should ship a generic reducer path that can maintain baseline
+working context without product integration. The generic reducer may summarize:
+
+- frozen objective and constraints from contract/brief refs;
+- progress visible from bounded projections and explicit artifacts;
+- current blockers;
+- recent decisions;
+- next-step notes;
+- refs needed to recover full evidence.
+
+The generic reducer must cite source refs and hashes. It must not change task
+authority or acceptance criteria. If a user event changes task truth, normal
+contract revision rules still apply.
 
 DeepResearch should keep research state in product artifacts:
 
@@ -855,8 +1032,9 @@ DeepResearch should keep research state in product artifacts:
 - reviewer observations;
 - judge report.
 
-Those artifacts are the durable semantic memory. The generic ContextEngine only
-knows how to cite and project them.
+Those artifacts are product semantic memory. The generic ContextEngine knows how
+to cite and project them, and the generic reducer can preserve their refs, but
+DeepResearch-specific interpretation remains in the integration.
 
 ## Target Capability Level
 
@@ -871,8 +1049,10 @@ The target is:
 - explicit managed refs for full evidence;
 - automatic pressure diagnostics before provider turns;
 - durable compaction/checkpoint lifecycle records;
+- package-managed generic reduction when pressure or thrash requires it;
 - repeated-read/ref-thrashing diagnostics;
-- product-authored semantic state, not core-authored semantic judgment.
+- product-authored semantic state where available, not core-authored semantic
+  judgment.
 
 Out of scope:
 
@@ -881,6 +1061,8 @@ Out of scope:
 - a provider zoo;
 - a graph workflow engine;
 - full coding-agent file mutation UX parity with opencode.
+- requiring ordinary package users to implement context reducers before
+  MissionForge can run long tasks safely.
 
 ## Success Metrics
 
@@ -917,13 +1099,17 @@ still insufficient.
 DeepResearch should use ContextEngine as follows:
 
 1. FrontDesk creates a research request document and contract.
-2. Source mapper/researcher tools emit raw outputs and structured observations.
-3. ContextEngine demotes raw search/fetch/code-audit outputs after their
+2. Kernel uses MissionForge's default ContextEngine policy unless DeepResearch
+   provides a stricter product policy.
+3. Source mapper/researcher tools emit raw outputs and structured observations.
+4. ContextEngine demotes raw search/fetch/code-audit outputs after their
    immediate utility window.
-4. Researcher PiWorker updates `research_state` and source artifacts explicitly.
-5. Reviewer sees the research artifacts and selected evidence refs, not the
+5. The managed reducer preserves generic progress, blockers, decisions, and
+   active evidence refs when pressure or thrash requires it.
+6. Researcher PiWorker updates `research_state` and source artifacts explicitly.
+7. Reviewer sees the research artifacts and selected evidence refs, not the
    entire tool transcript.
-6. Judge sees final report, claim/evidence indexes, reviewer observation, and
+8. Judge sees final report, claim/evidence indexes, reviewer observation, and
    explicit source refs.
 
 This should reduce the current failure mode where a single PiWorker carries a
@@ -942,17 +1128,33 @@ src/missionforge/context_engine.py
   ContextSourceSnapshot
   ContextEpoch
   ContextWorkingSet
+  ContextCheckpoint
+  ContextReductionRequest
+  ContextReductionResult
   ContextCompileRequest
   ContextCompileResult
   ContextTurnBoundary
   ContextCompactionRecord
   compile_context_view(...)
   reconcile_context_epoch(...)
+  build_context_reduction_request(...)
+  validate_context_reduction_result(...)
 
 src/missionforge/tool_projection.py
   ToolOutputProjection
   bound_tool_output(...)
   build_tool_observation_segment(...)
+
+src/missionforge/context_policy.py
+  ContextManagementPolicy
+  pressure / thrash thresholds
+  reducer enablement
+  token caps and projection caps
+
+src/missionforge/context_reducer.py
+  build managed reducer PiWorkerCall
+  validate reducer outputs
+  apply reducer result as refs-only state transition
 
 src/missionforge/kernel/compiler.py
   compile Step -> ContextCompileRequest
@@ -960,12 +1162,14 @@ src/missionforge/kernel/compiler.py
 src/missionforge/kernel/runner.py
   call ContextEngine at safe provider-turn boundary
   write ContextView / pressure / checkpoint refs
+  invoke managed reducer when policy requires it
+  recompile after successful reduction before provider call
 
 src/missionforge/adapters/pi_agent_runtime.py
   translate runtime tool events into ToolObservation / ToolOutputProjection
 
 integrations/deepresearch/...
-  product semantic reducers and prompts only
+  optional product semantic reducers and prompts only
 ```
 
 If `context_engine.py` and `tool_projection.py` remain small, they can later be
@@ -973,8 +1177,14 @@ merged into `context.py`. Keep them separate while the architecture is still
 settling.
 
 `context_engine.py` should contain data contracts and pure boundary helpers, not
-a stateful runtime object. Host Python and Kernel API remain responsible for
-orchestration.
+a stateful runtime object. Kernel API remains responsible for orchestration at
+safe boundaries. Host Python should not need to orchestrate context maintenance
+directly.
+
+`context_reducer.py` is a small infrastructure bridge, not a second workflow
+engine. It should build one bounded reducer call, validate refs-only outputs,
+and return a state transition that Kernel either applies completely or rejects
+without mutating active context.
 
 ## Implementation Plan
 
@@ -1075,12 +1285,112 @@ Exit criteria:
 - user interruption lands at a safe boundary;
 - failed compaction/checkpoint leaves previous context active.
 
-### Phase 7: DeepResearch Adoption
+### Phase 7: Package-Managed Checkpoint Records
+
+Implementation status: implemented for Kernel `run_step()` soft/hard pressure
+boundaries.
+
+Deliverables:
+
+- first-class `ContextCheckpoint` contract;
+- Kernel writes checkpoint records at soft/hard pressure according to policy;
+- turn boundary and compile result cite checkpoint refs;
+- runtime pressure checkpoint artifacts are either aligned with or wrapped by
+  `ContextCheckpoint`;
+- inspection/status surfaces checkpoint refs without expanding bodies.
+
+Exit criteria:
+
+- ordinary `run_step()` callers do not manually create checkpoint records;
+- checkpoint records are refs-only and permission-bound;
+- hard pressure stops before provider invocation with a checkpoint ref;
+- checkpoint write failure leaves previous context active and produces
+  actionable diagnostics.
+
+### Phase 8: Managed Generic ContextReducer
+
+Implementation status: implemented as a bounded infrastructure PiWorker call
+boundary. The default path builds `ContextReductionRequest`, grants a scoped
+maintenance permission manifest, validates `ContextReductionResult`, and never
+treats reducer output as task acceptance.
+
+Deliverables:
+
+- internal infrastructure reducer role or equivalent managed reducer call path;
+- `ContextReductionRequest`;
+- `ContextReductionResult`;
+- default reducer prompt/brief packaged with MissionForge;
+- reducer permission manifest limited to admitted context and maintenance output
+  refs;
+- reducer output validation for working-set, summary, checkpoint, pinned,
+  evicted, and omitted refs.
+
+Exit criteria:
+
+- package users get automatic reduction without writing product integrations;
+- reducer cannot read denied refs or write outside context maintenance roots;
+- invalid reducer output blocks safely without changing active context;
+- reducer summaries cite source refs/hashes and do not change task authority;
+- reducer result is not treated as semantic task acceptance.
+
+### Phase 9: Compaction Lifecycle And Recompile
+
+Implementation status: implemented for hard-pressure Kernel preflight. Valid
+reducer output produces a completed state transition and compaction record, then
+Kernel recompiles before invoking the original worker. Invalid or failed reducer
+output writes failed diagnostics and blocks without publishing a new active
+context.
+
+Deliverables:
+
+- `ContextCompactionRecord` is written for started, ended, and failed attempts;
+- successful reduction can produce a new working set and summary refs;
+- Kernel recompiles context after successful reduction;
+- epoch replacement occurs only after completed compaction/reduction;
+- failed compaction leaves old context view, epoch, and working set active.
+
+Exit criteria:
+
+- hard pressure can be resolved by managed reduction and recompile in tests;
+- failed reduction/compaction produces a blocked result with refs-only
+  diagnostics;
+- no partial context mutation is published;
+- retry attempts either reuse the same preflight boundary explicitly or return
+  to a fresh safe boundary.
+
+### Phase 10: Policy-Controlled Working Set And Anti-Thrashing
+
+Implementation status: partially implemented. `ContextManagementPolicy` now
+controls default pressure thresholds and reducer enablement, and reducer-created
+working-set/summary refs can be admitted into the fresh compile after
+validation. Repeated-read diagnostics exist as refs-only contracts, but full
+policy routing from live read observations into reducer requests is still future
+work.
+
+Deliverables:
+
+- `ContextManagementPolicy` controls thresholds, caps, reducer enablement, and
+  retry behavior;
+- repeated-read diagnostics are derived from real tool/read observations;
+- diagnostics can trigger managed reducer requests;
+- reducer-created working-set updates are admitted into the next compile;
+- stale entries are evicted only through validated state transitions.
+
+Exit criteria:
+
+- repeated unchanged reads become visible and correctable without host code;
+- active evidence remains visible as bounded projections;
+- expected rereads after content changes are not flagged as pathological;
+- working-set updates preserve refs, hashes, permission manifests, and token
+  caps.
+
+### Phase 11: DeepResearch Adoption As Pressure Test
 
 Deliverables:
 
 - DeepResearch uses new diagnostics in TUI;
 - source mapper/researcher tool outputs become projections;
+- default managed reducer works even without DeepResearch-specific reducers;
 - product semantic state remains in integration artifacts;
 - reviewer/judge context consumes artifact refs rather than full transcript.
 
@@ -1117,11 +1427,26 @@ Kernel tests:
 - `run_step` writes context compile refs;
 - `preview_flow_step` can inspect context layout;
 - hard pressure stops before next provider turn;
+- hard pressure writes or cites a `ContextCheckpoint`;
+- managed reducer is invoked by policy without host code;
+- invalid reducer output does not mutate active context;
+- successful reducer output causes a fresh compile before provider invocation;
 - compaction failure does not mutate active context.
+
+Policy/reducer tests:
+
+- default `ContextManagementPolicy` requires no product integration;
+- reducer permission manifest cannot read denied refs;
+- reducer permission manifest can write only context maintenance refs;
+- `ContextReductionRequest` and `ContextReductionResult` are refs-only;
+- reducer summaries must cite source refs/hashes;
+- reducer result is never accepted as task completion or judge approval.
 
 DeepResearch tests:
 
 - source mapper large search output is demoted;
+- generic reducer can preserve research progress refs before product-specific
+  state exists;
 - reviewer sees source packet/claim refs, not raw transcript tail;
 - judge sees final report/evidence/claim refs;
 - TUI status shows context pressure/checkpoint refs.
@@ -1130,8 +1455,18 @@ DeepResearch tests:
 
 ### Risk: ContextEngine Becomes a Product Brain
 
-Mitigation: keep semantic reducers outside core. Core may compile refs and
-summaries, but only product integrations decide what a summary means.
+Mitigation: keep deterministic semantic judgment outside core. Core may compile
+refs, request managed reduction, validate reducer outputs, and apply refs-only
+state transitions. The managed reducer may produce generic summaries as a
+PiWorker role, but only product integrations decide product-specific meaning and
+only independent judge boundaries decide task acceptance.
+
+### Risk: Package Users Inherit Context Burden
+
+Mitigation: Kernel owns the default ContextEngine lifecycle. Ordinary package
+users should not manually create working sets, checkpoints, compaction records,
+or reducer calls. Expose policy configuration and extension hooks, not required
+orchestration steps.
 
 ### Risk: Cache Layout Leaks Provider-Specific Complexity
 
@@ -1148,6 +1483,13 @@ summaries, and final context views must be recoverable from refs and hashes.
 Mitigation: compaction output must cite source refs and hashes. Raw evidence
 remains accessible through permissions. Failed compaction leaves old context
 active.
+
+### Risk: Managed Reducer Silently Changes Task Truth
+
+Mitigation: reducer outputs may create summaries, working-set projections, and
+checkpoint refs only. They must not modify frozen contracts, acceptance
+criteria, permission manifests, or judge rubrics. Any task truth change still
+requires an explicit contract revision.
 
 ### Risk: Context Source Loading Bypasses Permissions
 
@@ -1180,10 +1522,11 @@ frozen contract authority
 + permission-filtered refs
 + sandbox/tool gateway boundary
 + observable context compiler
++ package-managed reducer PiWorker for context maintenance
 + PiWorker semantic nodes
 + independent judge
 ```
 
 The ContextEngine should make that value faster, more cache-friendly, and more
 usable for long-running agent products without turning MissionForge into a
-large framework.
+large framework or forcing host applications to own context lifecycle plumbing.

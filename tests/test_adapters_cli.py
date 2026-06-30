@@ -63,6 +63,8 @@ class AdapterCliTests(unittest.TestCase):
             metrics_ref = "attempts/observer/metrics.json"
             observations_ref = "attempts/observer/context/tool_observations.jsonl"
             projection_ref = "attempts/observer/context/projection.json"
+            thrash_ref = "attempts/observer/context/thrash_diagnostics.json"
+            checkpoint_ref = "kernel/demo-flow/steps/writer/context/checkpoint.json"
             (root / metrics_ref).parent.mkdir(parents=True, exist_ok=True)
             (root / metrics_ref).write_text(
                 json.dumps(
@@ -118,8 +120,39 @@ class AdapterCliTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            (root / thrash_ref).write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge.context_thrash_diagnostics.v1",
+                        "diagnostics_id": "thrash-observer",
+                        "phase_label": "runtime",
+                        "observations": [
+                            {
+                                "schema_version": "missionforge.context_read_observation.v1",
+                                "observation_id": "read-000001",
+                                "source_ref": "reports/implementation_brief.md",
+                                "source_hash": "sha256:" + "4" * 64,
+                                "source_range": {},
+                                "query_ref": None,
+                                "query_hash": None,
+                                "tool_name": "read",
+                                "count": 2,
+                                "normalized_metadata": {"origin": "pi_agent_runtime_tool_observations"},
+                            }
+                        ],
+                        "repeated_observation_ids": ["read-000001"],
+                        "expected_reread_observation_ids": [],
+                        "recommended_action": "prepare_checkpoint",
+                        "metadata": {},
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             first_step["metric_refs"] = [metrics_ref]
-            first_step["metadata"]["runtime_refs"] = [observations_ref, projection_ref]
+            first_step["metadata"]["runtime_refs"] = [observations_ref, projection_ref, thrash_ref]
+            first_step["metadata"]["context_checkpoint_ref"] = checkpoint_ref
             (root / first_step_ref).write_text(json.dumps(first_step, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
             view = build_mission_run_view(tmp, flow_result_ref=summary["flow_result_ref"])
@@ -127,13 +160,18 @@ class AdapterCliTests(unittest.TestCase):
 
         self.assertEqual(view.usage_totals["input_tokens"], 100)
         self.assertEqual(view.usage_totals["cached_input_tokens"], 20)
-        self.assertEqual(view.context_pressure["ratio"], "0.75")
-        self.assertEqual(view.context_pressure["remaining_tokens"], 30)
+        self.assertEqual(view.context_pressure["ratio"], "0.50")
+        self.assertEqual(view.context_pressure["remaining_tokens"], 199)
         self.assertEqual(view.tool_activity["latest_tool_name"], "read")
+        self.assertEqual(view.tool_activity["repeated_read_count"], 1)
+        self.assertIn(thrash_ref, view.tool_activity["context_thrash_diagnostics_refs"])
         self.assertTrue(view.context_engine_refs)
+        self.assertIn(checkpoint_ref, view.context_engine_refs)
         self.assertIn(observations_ref, view.tool_activity_refs)
         self.assertIn("usage: input=100 cached=20 output=30 total=130", rendered)
-        self.assertIn("context_pressure: ratio=0.75 used_tokens=90 limit_tokens=120", rendered)
+        self.assertIn("context_pressure: ratio=0.50 used_tokens=199 limit_tokens=398", rendered)
+        self.assertIn("repeated_reads=1", rendered)
+        self.assertIn("context_thrash_diagnostics:", rendered)
         self.assertIn("context_engine:", rendered)
         self.assertNotIn("The host application supplies the product logic.", rendered)
         assert_refs_only_payload(view.to_dict(), "adapter_cli.rich_view")

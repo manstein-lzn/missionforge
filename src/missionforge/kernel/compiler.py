@@ -28,6 +28,8 @@ class StepCompileContext:
     permission_manifest_ref: str | None = None
     ref_prefix: str | None = None
     call_id: str | None = None
+    context_feed_refs: list[str] | None = None
+    context_thrash_diagnostics_refs: list[str] | None = None
 
     def validate(self) -> None:
         _safe_id(self.flow_id, "kernel_step_compile_context.flow_id")
@@ -43,6 +45,10 @@ class StepCompileContext:
             _safe_id(self.call_id, "kernel_step_compile_context.call_id")
         for ref in self.denied_refs or []:
             validate_ref(ref, "kernel_step_compile_context.denied_refs[]")
+        for ref in self.context_feed_refs or []:
+            validate_ref(ref, "kernel_step_compile_context.context_feed_refs[]")
+        for ref in self.context_thrash_diagnostics_refs or []:
+            validate_ref(ref, "kernel_step_compile_context.context_thrash_diagnostics_refs[]")
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,8 @@ def compile_step(
         artifact.validate()
 
     _validate_ref_authority(step.inputs, step.read, "kernel_step.inputs")
+    if step.context_working_set_ref is not None:
+        _validate_ref_authority([step.context_working_set_ref], step.read, "kernel_step.context_working_set_ref")
     _validate_ref_authority(step.outputs, step.write, "kernel_step.outputs")
     _validate_contract_write_boundary(step, context)
     _validate_runtime_owned_outputs(step, artifact_map)
@@ -131,7 +139,10 @@ def compile_step(
         permission_manifest_ref=permission_manifest_ref,
         source_packet_ref=None,
         source_packet_hash=None,
-        evidence_refs=_dedupe_refs(step.inputs),
+        evidence_refs=_dedupe_refs([
+            *step.inputs,
+            *([step.context_working_set_ref] if step.context_working_set_ref else []),
+        ]),
         runtime_budget=dict(step.runtime_budget),
         metadata={
             "kernel_flow_id": context.flow_id,

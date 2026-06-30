@@ -34,6 +34,7 @@ PIWORKER_ROLE_VALUES = {
     "frontdesk_author_piworker",
     "executor_piworker",
     "judge_piworker",
+    "context_reducer_piworker",
     "repair_piworker",
     "revision_drafter_piworker",
 }

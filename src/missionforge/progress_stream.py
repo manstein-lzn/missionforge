@@ -12,12 +12,14 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import ContractValidationError, require_mapping, require_non_empty_str, validate_ref
+from .ref_store import RefStore
 
 
 PROGRESS_STREAM_MOUNT_SCHEMA_VERSION = "missionforge.progress_stream_mount.v1"
 PROGRESS_EVENT_SCHEMA_VERSION = "missionforge.progress_event.v1"
 PROGRESS_STATES = {"pending", "running", "completed", "failed", "blocked"}
 DEFAULT_PROGRESS_REF = "progress/progress.jsonl"
+ProgressStoreTarget = RefStore | str | Path
 
 
 @dataclass(frozen=True)
@@ -125,8 +127,8 @@ class ProgressEvent:
 class ProgressStreamWriter:
     """Append-only writer for a declared progress stream."""
 
-    def __init__(self, workspace: str | Path, *, stream_ref: str = DEFAULT_PROGRESS_REF) -> None:
-        self.workspace = Path(workspace).resolve()
+    def __init__(self, workspace: ProgressStoreTarget, *, stream_ref: str = DEFAULT_PROGRESS_REF) -> None:
+        self.workspace: ProgressStoreTarget = Path(workspace).resolve() if isinstance(workspace, (str, Path)) else workspace
         self.stream_ref = validate_ref(stream_ref, "progress_stream.stream_ref")
         self._counter = 0
         self._lock = threading.Lock()
@@ -157,16 +159,27 @@ class ProgressStreamWriter:
         return event
 
 
-def append_progress_event(workspace: str | Path, stream_ref: str, event: ProgressEvent) -> None:
+def append_progress_event(workspace: ProgressStoreTarget, stream_ref: str, event: ProgressEvent) -> None:
     event.validate()
-    target = _resolve_workspace_ref(Path(workspace).resolve(), stream_ref)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event.to_dict(), sort_keys=True, ensure_ascii=False) + "\n")
+    safe_stream_ref = validate_ref(stream_ref, "progress_stream.stream_ref")
+    payload = event.to_dict()
+    if isinstance(workspace, (str, Path)):
+        target = _resolve_workspace_ref(Path(workspace).resolve(), safe_stream_ref)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True, ensure_ascii=False) + "\n")
+        return
+    workspace.append_jsonl(safe_stream_ref, payload)
 
 
-def read_progress_events(workspace: str | Path, stream_ref: str) -> list[ProgressEvent]:
-    path = _resolve_workspace_ref(Path(workspace).resolve(), stream_ref)
+def read_progress_events(workspace: ProgressStoreTarget, stream_ref: str) -> list[ProgressEvent]:
+    safe_stream_ref = validate_ref(stream_ref, "progress_stream.stream_ref")
+    if not isinstance(workspace, (str, Path)):
+        if not workspace.exists(safe_stream_ref):
+            return []
+        return [ProgressEvent.from_dict(item) for item in workspace.read_jsonl(safe_stream_ref)]
+
+    path = _resolve_workspace_ref(Path(workspace).resolve(), safe_stream_ref)
     if not path.exists():
         return []
     events: list[ProgressEvent] = []
@@ -181,7 +194,7 @@ def read_progress_events(workspace: str | Path, stream_ref: str) -> list[Progres
 def stream_progress(
     runner: Callable[[], Any],
     *,
-    workspace: str | Path,
+    workspace: ProgressStoreTarget,
     stream_ref: str = DEFAULT_PROGRESS_REF,
     interval_seconds: float = 0.5,
     output: Any = None,
@@ -219,7 +232,7 @@ def stream_progress(
     return outcome.get("result")
 
 
-def _progress_event_count(workspace: str | Path, stream_ref: str) -> int:
+def _progress_event_count(workspace: ProgressStoreTarget, stream_ref: str) -> int:
     try:
         return len(read_progress_events(workspace, stream_ref))
     except (OSError, json.JSONDecodeError, ContractValidationError):
@@ -235,7 +248,7 @@ def render_progress_event(event: ProgressEvent) -> str:
 
 
 def _render_new_events(
-    workspace: str | Path,
+    workspace: ProgressStoreTarget,
     stream_ref: str,
     *,
     start_index: int,

@@ -1,7 +1,9 @@
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, streamSimple } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai";
+import { createHash } from "node:crypto";
 import { access } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type {
   AgentEvent,
   AgentMessage,
@@ -10,6 +12,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 
+import { requireRef } from "./contract.js";
 import type { RuntimeInput } from "./contract.js";
 import { ToolObservationRecorder } from "./context-observations.js";
 import { contextPressureExceeded, ContextProjector } from "./context-projector.js";
@@ -20,7 +23,8 @@ import { loadExtensionTools } from "./extensions.js";
 import { changedRefs, snapshotWorkspace } from "./filesystem-snapshot.js";
 import { degradedLongMemoryDiagnostics, loadLongMemoryContext } from "./long-memory.js";
 import type { LongMemoryContext } from "./long-memory.js";
-import { resolveWorkspaceRef } from "./paths.js";
+import { readJsonFile, resolveWorkspaceRef } from "./paths.js";
+import { ToolPermissionEnforcer } from "./permissions.js";
 import { resolveProviderConfig } from "./provider-config.js";
 import { buildRuntimeOutput, writeRuntimeOutput } from "./result-writer.js";
 import { createMissionForgeTools, writeExpectedArtifact } from "./tools.js";
@@ -123,7 +127,8 @@ export async function runMissionForgePiAgent(input: RuntimeInput, workspaceRoot:
       ]);
     }
 
-    const systemPrompt = buildSystemPrompt(input);
+    const contextEngineText = await loadContextEngineProviderText(input, workspaceRoot);
+    const systemPrompt = buildSystemPrompt(input, contextEngineText);
     const transcript: AgentMessage[] = [];
     const loopConfig = {
       model: provider.model,
@@ -443,11 +448,265 @@ function runtimeKnownFileRefs(input: RuntimeInput): string[] {
     input.metrics_ref,
     input.savepoints_ref,
     input.piworker_call.contract_ref,
+    ...contextEngineKnownFileRefs(input),
     ...input.piworker_call.visible_refs,
     ...input.piworker_call.expected_output_refs,
     ...input.call_spec.visible_refs,
     ...input.call_spec.expected_outputs,
   ];
+}
+
+function contextEngineKnownFileRefs(input: RuntimeInput): string[] {
+  const engine = input.context_engine;
+  if (!engine?.enabled) return [];
+  return [
+    engine.context_view_ref,
+    engine.context_compile_request_ref,
+    engine.context_compile_result_ref,
+    engine.context_baseline_ref,
+    engine.context_source_snapshot_ref,
+    engine.context_epoch_ref,
+    engine.context_cache_layout_ref,
+    engine.context_pressure_ref,
+    engine.context_turn_safe_point_ref,
+    engine.context_turn_boundary_ref,
+  ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+}
+
+export async function loadContextEngineProviderText(input: RuntimeInput, workspaceRoot: string): Promise<string> {
+  const engine = input.context_engine;
+  if (!engine?.enabled) return "";
+  if (!engine.context_view_ref || !engine.context_compile_result_ref) {
+    throw new Error("context_engine enabled without required refs");
+  }
+  const enforcer = new ToolPermissionEnforcer(workspaceRoot, input.permission_manifest);
+  for (const ref of contextEngineKnownFileRefs(input)) {
+    enforcer.ensureReadRef(ref);
+  }
+  const view = requireJsonObject(
+    await readJsonFile(enforcer.ensureReadPath(resolveWorkspaceRef(workspaceRoot, engine.context_view_ref))),
+    "context_engine.context_view",
+  );
+  const compileResult = requireJsonObject(
+    await readJsonFile(enforcer.ensureReadPath(resolveWorkspaceRef(workspaceRoot, engine.context_compile_result_ref))),
+    "context_engine.context_compile_result",
+  );
+  const viewHash = requireStringField(view, "context_hash", "context_view.context_hash");
+  const computedViewHash = stableJsonHash(contextViewContentForHash(view));
+  if (computedViewHash !== viewHash) {
+    throw new Error("context_engine context_view hash does not match content");
+  }
+  const resultHash = requireStringField(compileResult, "context_hash", "context_compile_result.context_hash");
+  if (engine.context_hash && engine.context_hash !== viewHash) {
+    throw new Error("context_engine context_hash does not match context_view");
+  }
+  if (resultHash !== viewHash) {
+    throw new Error("context_engine compile result hash does not match context_view");
+  }
+  const resultViewRef = requireRef(compileResult.view_ref, "context_compile_result.view_ref");
+  if (resultViewRef !== engine.context_view_ref) {
+    throw new Error("context_engine compile result view_ref does not match context_view_ref");
+  }
+  return renderContextEngineProviderText(input, workspaceRoot, engine.context_view_ref, view, compileResult, enforcer);
+}
+
+async function renderContextEngineProviderText(
+  input: RuntimeInput,
+  workspaceRoot: string,
+  viewRef: string,
+  view: Record<string, unknown>,
+  compileResult: Record<string, unknown>,
+  enforcer: ToolPermissionEnforcer,
+): Promise<string> {
+  const engine = input.context_engine;
+  const lines = [
+    "[MissionForge ContextEngine compiled context]",
+    "This refs-only context view is the provider-turn context authority for this call.",
+    "Use admitted segment refs and body_ref handles through permitted tools when details are needed.",
+    "Do not infer from omitted or denied refs; do not treat refs as semantic acceptance.",
+    `context_view_ref: ${viewRef}`,
+    `context_compile_result_ref: ${engine.context_compile_result_ref}`,
+    `context_hash: ${requireStringField(view, "context_hash", "context_view.context_hash")}`,
+    `context_compile_action: ${requireStringField(compileResult, "action", "context_compile_result.action")}`,
+    `role: ${requireStringField(view, "role", "context_view.role")}`,
+    `contract_ref: ${requireRef(view.contract_ref, "context_view.contract_ref")}`,
+    `permission_manifest_ref: ${requireRef(view.permission_manifest_ref, "context_view.permission_manifest_ref")}`,
+  ];
+  for (const [bucketName, fieldName] of [
+    ["stable_prefix", "stable_prefix"],
+    ["semi_stable_context", "semi_stable_context"],
+    ["volatile_tail", "volatile_tail"],
+  ] as const) {
+    lines.push(
+      await renderContextSegmentBucket(
+        workspaceRoot,
+        enforcer,
+        bucketName,
+        requireArrayField(view, fieldName, `context_view.${fieldName}`),
+      ),
+    );
+  }
+  const omittedRefs = requireRefArrayField(compileResult, "omitted_refs", "context_compile_result.omitted_refs");
+  const demotedRefs = requireRefArrayField(compileResult, "demoted_refs", "context_compile_result.demoted_refs");
+  lines.push(`omitted_ref_count: ${omittedRefs.length}`);
+  lines.push(`demoted_ref_count: ${demotedRefs.length}`);
+  if (engine.context_cache_layout_ref) lines.push(`context_cache_layout_ref: ${engine.context_cache_layout_ref}`);
+  if (engine.context_pressure_ref) lines.push(`context_pressure_ref: ${engine.context_pressure_ref}`);
+  if (engine.context_epoch_ref) lines.push(`context_epoch_ref: ${engine.context_epoch_ref}`);
+  return lines.join("\n");
+}
+
+async function renderContextSegmentBucket(
+  workspaceRoot: string,
+  enforcer: ToolPermissionEnforcer,
+  bucketName: string,
+  values: unknown[],
+): Promise<string> {
+  const lines = [`${bucketName}: count=${values.length}`];
+  for (const item of values.slice(0, 20)) {
+    const segment = requireJsonObject(item, `context_view.${bucketName}[]`);
+    const refs = requireRefArrayField(segment, "source_refs", "context_segment.source_refs");
+    for (const ref of refs) {
+      enforcer.ensureReadRef(ref);
+    }
+    const bodyRef = optionalRefField(segment.body_ref, "context_segment.body_ref");
+    const parts = [
+      `id=${requireStringField(segment, "segment_id", "context_segment.segment_id")}`,
+      `kind=${requireStringField(segment, "kind", "context_segment.kind")}`,
+      `cache=${requireStringField(segment, "cache_policy", "context_segment.cache_policy")}`,
+      `inline=${requireStringField(segment, "inline_policy", "context_segment.inline_policy")}`,
+      `tokens=${requireNonNegativeNumberField(segment, "token_estimate", "context_segment.token_estimate")}`,
+      `source_refs=${refs.join(",") || "<none>"}`,
+    ];
+    if (bodyRef) parts.push(`body_ref=${bodyRef}`);
+    lines.push(`- ${parts.join(" ")}`);
+    const boundedProjection = await boundedContextProjectionText(workspaceRoot, enforcer, segment, bodyRef);
+    if (boundedProjection) lines.push(boundedProjection);
+  }
+  if (values.length > 20) lines.push(`- additional_segment_count=${values.length - 20}`);
+  return lines.join("\n");
+}
+
+async function boundedContextProjectionText(
+  workspaceRoot: string,
+  enforcer: ToolPermissionEnforcer,
+  segment: Record<string, unknown>,
+  bodyRef: string | null,
+): Promise<string> {
+  if (!bodyRef) return "";
+  const kind = requireStringField(segment, "kind", "context_segment.kind");
+  const metadata = requireJsonObject(segment.metadata ?? {}, "context_segment.metadata");
+  const sourceKind = typeof metadata.source_kind === "string" ? metadata.source_kind : "";
+  const projectionLabel = projectionLabelForSegment(kind, sourceKind);
+  if (!projectionLabel) return "";
+  const path = enforcer.ensureReadPath(resolveWorkspaceRef(workspaceRoot, bodyRef));
+  const content = await readFile(path);
+  const expectedHash = compiledSegmentHash(segment, bodyRef);
+  if (!expectedHash) {
+    throw new Error(`context_engine ${projectionLabel} is missing compiled hash`);
+  }
+  const actualHash = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  if (actualHash !== expectedHash) {
+    throw new Error(`context_engine ${projectionLabel} hash does not match compiled context`);
+  }
+  const text = content.toString("utf-8");
+  return [
+    `  ${projectionLabel}:`,
+    `  projection_ref: ${bodyRef}`,
+    "  text:",
+    ...boundedProjectionLines(text).map((line) => `    ${line}`),
+  ].join("\n");
+}
+
+function projectionLabelForSegment(kind: string, sourceKind: string): string {
+  if (kind === "artifact_preview" && sourceKind === "working_set") return "working_set_projection";
+  if (kind === "tool_observation" && sourceKind === "tool_output_projection") return "tool_output_projection";
+  return "";
+}
+
+function compiledSegmentHash(segment: Record<string, unknown>, ref: string): string {
+  const sourceHashes = requireJsonObject(segment.source_hashes ?? {}, "context_segment.source_hashes");
+  const value = sourceHashes[ref];
+  if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value)) {
+    return "";
+  }
+  return value;
+}
+
+function contextViewContentForHash(view: Record<string, unknown>): Record<string, unknown> {
+  const { context_hash: _contextHash, ...content } = view;
+  return content;
+}
+
+function stableJsonHash(value: unknown): string {
+  return `sha256:${createHash("sha256").update(stableJsonString(value)).digest("hex")}`;
+}
+
+function stableJsonString(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") return ensureAsciiJsonString(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("stable_json value must not contain non-finite numbers");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map((item) => stableJsonString(item)).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJsonString(record[key])}`)
+      .join(",")}}`;
+  }
+  throw new Error("stable_json value must be JSON-compatible");
+}
+
+function ensureAsciiJsonString(value: string): string {
+  return JSON.stringify(value).replace(/[^\x00-\x7F]/g, (char) =>
+    `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+function boundedProjectionLines(text: string, maxChars = 4000, maxLines = 80): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const truncated = normalized.length > maxChars ? normalized.slice(0, maxChars) + "\n[projection_truncated]" : normalized;
+  return truncated.split("\n").slice(0, maxLines);
+}
+
+function requireJsonObject(value: unknown, field: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireArrayField(record: Record<string, unknown>, key: string, field: string): unknown[] {
+  const value = record[key];
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  return value;
+}
+
+function requireRefArrayField(record: Record<string, unknown>, key: string, field: string): string[] {
+  return requireArrayField(record, key, field).map((item, index) => requireRef(item, `${field}[${index}]`));
+}
+
+function requireStringField(record: Record<string, unknown>, key: string, field: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${field} must be a non-empty string`);
+  return value;
+}
+
+function optionalRefField(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  return requireRef(value, field);
+}
+
+function requireNonNegativeNumberField(record: Record<string, unknown>, key: string, field: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative number`);
+  }
+  return value;
 }
 
 function runtimeKnownDirectoryRefs(input: RuntimeInput): string[] {
@@ -477,7 +736,7 @@ export function mainTurnLimitWithCompletionReserve(
   return Math.max(1, maxTurns - reserve);
 }
 
-function buildSystemPrompt(input: RuntimeInput): string {
+function buildSystemPrompt(input: RuntimeInput, contextEngineText = ""): string {
   const lines = [
     "You are MissionForge's dedicated PI Agent runtime worker.",
     "Act as a complete coding agent. Use the available tools only inside the declared permission manifest.",
@@ -494,6 +753,9 @@ function buildSystemPrompt(input: RuntimeInput): string {
     `Exit criteria: ${input.call_spec.exit_criteria.join("; ")}`,
     `Stop conditions: ${input.call_spec.stop_conditions.join("; ")}`,
   ];
+  if (contextEngineText) {
+    lines.push(contextEngineText);
+  }
   if (input.repair.mode === "follow_up") {
     lines.push("This is a verifier-driven repair follow-up.");
     lines.push(`Failed constraints: ${input.repair.failed_constraints.join(", ") || "<none>"}`);

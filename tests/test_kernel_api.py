@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
 from missionforge import (
+    ContractValidationError,
     ContextCacheLayout,
+    ContextCheckpoint,
+    ContextCheckpointCreator,
     ContextCompileResult,
     ContextEpoch,
+    ContextReductionResult,
+    ContextReductionStatus,
     ContextTurnBoundary,
+    ContextTurnBoundaryStatus,
+    ContextWorkingSet,
+    ContextWorkingSetEntry,
+    ContextWorkingSetFreshness,
+    ContextWorkingSetPinPolicy,
+    MemoryRefStore,
 )
 from missionforge.kernel import (
     Artifact,
@@ -42,7 +54,7 @@ from missionforge.kernel import (
     run_step,
 )
 from missionforge.contracts import stable_json_hash
-from missionforge.extensions import ExtensionLock
+from missionforge.extensions import ExtensionLock, compile_extension_lock
 from missionforge.interaction import FileInteractionPort, InteractionDelivery, UserEventKind
 from missionforge.piworker_call import PiWorkerCallResultStatus, PiWorkerCallRole
 from missionforge.runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
@@ -519,6 +531,7 @@ class KernelApiTests(unittest.TestCase):
             context_projection_payload = _read_json(root, result.step_record.metadata["context_projection_ref"])
             source_snapshot_payload = _read_json(root, result.step_record.metadata["context_source_snapshot_ref"])
             context_epoch_payload = _read_json(root, result.step_record.metadata["context_epoch_ref"])
+            context_baseline_payload = _read_json(root, result.step_record.metadata["context_baseline_ref"])
             cache_layout_payload = _read_json(root, result.step_record.metadata["context_cache_layout_ref"])
             turn_boundary_payload = _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
             compile_result_payload = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
@@ -539,14 +552,19 @@ class KernelApiTests(unittest.TestCase):
         )
         self.assertEqual(context_projection_payload["volatile_tail"][0]["source_refs"], ["sources/source_packet.json"])
         self.assertEqual(result.step_record.metadata["context_hash"], context_projection_payload["context_hash"])
+        self.assertNotIn(result.step_record.metadata["context_compile_result_ref"], call_payload["visible_refs"])
+        self.assertIn(result.step_record.metadata["context_compile_result_ref"], permission_payload["readable_refs"])
+        self.assertIn(result.step_record.metadata["context_projection_ref"], permission_payload["readable_refs"])
+        self.assertIn(result.step_record.metadata["context_turn_boundary_ref"], permission_payload["readable_refs"])
         self.assertEqual(source_snapshot_payload["schema_version"], "missionforge.context_source_snapshot_index.v1")
         self.assertEqual(source_snapshot_payload["view_ref"], result.step_record.metadata["context_projection_ref"])
         self.assertEqual(source_snapshot_payload["context_hash"], context_projection_payload["context_hash"])
         self.assertIn("contract/task_contract.json", source_snapshot_payload["source_refs"])
         self.assertEqual(
             ContextEpoch.from_dict(context_epoch_payload).context_view_ref,
-            result.step_record.metadata["context_projection_ref"],
+            result.step_record.metadata["context_baseline_ref"],
         )
+        self.assertEqual(context_baseline_payload["view_ref"], result.step_record.metadata["context_projection_ref"])
         self.assertEqual(
             ContextCacheLayout.from_dict(cache_layout_payload).view_ref,
             result.step_record.metadata["context_projection_ref"],
@@ -570,6 +588,258 @@ class KernelApiTests(unittest.TestCase):
             result.step_record.execution_report_ref,
             "attempts/demo-flow-researcher/pi_agent_execution_report.json",
         )
+
+    def test_run_step_blocks_at_context_boundary_before_piworker_for_denied_input(self) -> None:
+        step = Step(
+            id="researcher",
+            brief="Write a concise report.",
+            inputs=["contract/task_contract.json", "sources/source_packet.json"],
+            outputs=["reports/final_report.md"],
+            read=["contract", "sources"],
+            write=["reports"],
+        )
+        adapter = _KernelDirectAdapter()
+        context = _context(denied_refs=["sources/source_packet.json"])
+
+        with TemporaryDirectory() as tmpdir:
+            result = run_step(step, context=context, workspace=tmpdir, adapter=adapter)
+            root = Path(tmpdir)
+            compile_request = _read_json(root, result.step_record.metadata["context_compile_request_ref"])
+            compile_result = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+            context_view = _read_json(root, result.step_record.metadata["context_projection_ref"])
+            source_snapshot = _read_json(root, result.step_record.metadata["context_source_snapshot_ref"])
+            boundary = ContextTurnBoundary.from_dict(
+                _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
+            )
+            preflight = _read_json(root, result.call_result.error_ref)
+
+        self.assertIsNone(adapter.seen_call)
+        self.assertEqual(result.step_record.status, StepStatus.BLOCKED)
+        self.assertEqual(result.call_result.status, PiWorkerCallResultStatus.BLOCKED)
+        self.assertEqual(compile_result["action"], "blocked_by_denied_required_source")
+        self.assertEqual(compile_result["denied_source_refs"], ["sources/source_packet.json"])
+        self.assertNotIn("sources/source_packet.json", json.dumps(context_view, sort_keys=True))
+        self.assertNotIn("sources/source_packet.json", json.dumps(source_snapshot, sort_keys=True))
+        self.assertNotIn("sources/source_packet.json", result.step_record.input_hashes)
+        input_sources = [
+            source
+            for source in compile_request["context_sources"]
+            if source["source_key"] == "inputs/visible_refs"
+        ]
+        self.assertEqual(input_sources[0]["source_refs"], ["sources/source_packet.json"])
+        self.assertNotIn("sources/source_packet.json", input_sources[0]["source_hashes"])
+        self.assertEqual(boundary.status, ContextTurnBoundaryStatus.BLOCKED)
+        self.assertEqual(preflight["context_compile_result_ref"], result.step_record.metadata["context_compile_result_ref"])
+
+    def test_run_step_blocks_after_invalid_managed_reducer_output_for_real_hard_pressure(self) -> None:
+        step = Step(
+            id="researcher",
+            brief="Write a concise report.",
+            inputs=["sources/source_packet.json"],
+            outputs=["reports/final_report.md"],
+            read=["sources"],
+            write=["reports"],
+            runtime_budget={"context_token_budget": 10},
+        )
+        adapter = _KernelDirectAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "sources/source_packet.json", "x" * 400)
+            result = run_step(step, context=_context(), workspace=root, adapter=adapter)
+            compile_result = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+            pressure = _read_json(root, result.step_record.metadata["context_pressure_ref"])
+            boundary = ContextTurnBoundary.from_dict(
+                _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
+            )
+            checkpoint = ContextCheckpoint.from_dict(
+                _read_json(root, result.step_record.metadata["context_checkpoint_ref"])
+            )
+            preflight = _read_json(root, result.call_result.error_ref or "")
+            compaction = _read_json(root, result.step_record.metadata["context_compaction_record_ref"])
+
+        self.assertEqual([call.role for call in adapter.seen_calls], [PiWorkerCallRole.CONTEXT_REDUCER])
+        self.assertEqual(result.step_record.status, StepStatus.BLOCKED)
+        self.assertEqual(result.call_result.status, PiWorkerCallResultStatus.BLOCKED)
+        self.assertEqual(compile_result["action"], "checkpoint_before_next_turn")
+        self.assertEqual(pressure["recommended_action"], "checkpoint_before_next_turn")
+        self.assertGreaterEqual(pressure["estimated_input_tokens"], 100)
+        self.assertEqual(boundary.status, ContextTurnBoundaryStatus.CHECKPOINT_REQUIRED)
+        self.assertEqual(boundary.checkpoint_ref, result.step_record.metadata["context_checkpoint_ref"])
+        self.assertEqual(compile_result["metadata"]["checkpoint_ref"], result.step_record.metadata["context_checkpoint_ref"])
+        self.assertIn(result.step_record.metadata["context_checkpoint_ref"], compile_result["diagnostics_refs"])
+        self.assertEqual(checkpoint.reason_code, "pressure_hard")
+        self.assertEqual(checkpoint.created_by, ContextCheckpointCreator.RUNTIME)
+        self.assertEqual(checkpoint.context_view_ref, result.step_record.metadata["context_projection_ref"])
+        self.assertEqual(checkpoint.source_snapshot_ref, result.step_record.metadata["context_source_snapshot_ref"])
+        self.assertEqual(checkpoint.context_hash, result.step_record.metadata["context_hash"])
+        self.assertEqual(preflight["context_checkpoint_ref"], result.step_record.metadata["context_checkpoint_ref"])
+        self.assertEqual(result.step_record.metadata["context_reduction_status"], "invalid_output")
+        self.assertIn(result.step_record.metadata["context_reduction_request_ref"], result.call_result.runtime_refs)
+        self.assertIn(result.step_record.metadata["context_reduction_transition_ref"], result.call_result.runtime_refs)
+        self.assertIn(result.step_record.metadata["context_compaction_record_ref"], result.call_result.runtime_refs)
+        self.assertEqual(compaction["status"], "failed")
+        self.assertIn("sources/source_packet.json", result.step_record.input_hashes)
+
+    def test_run_step_invokes_managed_reducer_and_recompiles_before_executor(self) -> None:
+        step = Step(
+            id="researcher",
+            brief="Write a concise report.",
+            inputs=["sources/source_packet.json"],
+            outputs=["reports/final_report.md"],
+            read=["sources"],
+            write=["reports"],
+            runtime_budget={"context_token_budget": 10},
+        )
+        adapter = _KernelManagedReducerAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "sources/source_packet.json", "x" * 400)
+            result = run_step(step, context=_context(), workspace=root, adapter=adapter)
+            compile_result = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+            input_compile_result = _read_json(
+                root,
+                result.step_record.metadata["context_reduction_input_compile_result_ref"],
+            )
+            transition = _read_json(root, result.step_record.metadata["context_reduction_transition_ref"])
+            compaction = _read_json(root, result.step_record.metadata["context_compaction_record_ref"])
+            context_view = _read_json(root, result.step_record.metadata["context_projection_ref"])
+
+        self.assertEqual([call.role for call in adapter.seen_calls], [PiWorkerCallRole.CONTEXT_REDUCER, PiWorkerCallRole.EXECUTOR])
+        self.assertEqual(result.step_record.status, StepStatus.COMPLETED)
+        self.assertEqual(result.step_record.output_refs, ["reports/final_report.md"])
+        self.assertEqual(input_compile_result["action"], "checkpoint_before_next_turn")
+        self.assertEqual(compile_result["action"], "continue")
+        self.assertEqual(result.step_record.metadata["context_reduction_status"], "completed")
+        self.assertTrue(result.step_record.metadata["context_reduction_recompiled"])
+        self.assertIn("/context/maintenance/recompiled/", result.step_record.metadata["context_projection_ref"])
+        self.assertEqual(transition["status"], "completed")
+        self.assertEqual(compaction["status"], "ended")
+        self.assertEqual(compaction["output_context_view_ref"], result.step_record.metadata["context_projection_ref"])
+        self.assertNotIn("sources/source_packet.json", json.dumps(context_view["volatile_tail"], sort_keys=True))
+        self.assertIn("context_reduction/summary/000", json.dumps(context_view, sort_keys=True))
+
+    def test_run_step_projects_active_working_set_into_context(self) -> None:
+        step = Step(
+            id="researcher",
+            brief="Continue from active evidence.",
+            inputs=["sources/source_packet.json"],
+            outputs=["reports/final_report.md"],
+            read=["sources", "context", "analysis"],
+            write=["reports"],
+            context_working_set_ref="context/working_set.json",
+        )
+        adapter = _KernelDirectAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "sources/source_packet.json", "full source body should stay behind refs\n")
+            _write_text(root, "context/projections/source_packet_entry1.md", "bounded working set fact\n")
+            _write_json(root, "analysis/why_source_packet_entry1.json", {"why_ref": "bounded note"})
+            source_hash = _sha256_ref(root / "sources/source_packet.json")
+            projection_hash = _sha256_ref(root / "context/projections/source_packet_entry1.md")
+            working_set = ContextWorkingSet(
+                working_set_id="ws1",
+                role="executor_piworker",
+                phase_label="evidence",
+                entries=[
+                    ContextWorkingSetEntry(
+                        entry_id="source_packet_entry1",
+                        source_ref="sources/source_packet.json",
+                        source_hash=source_hash,
+                        projection_ref="context/projections/source_packet_entry1.md",
+                        projection_hash=projection_hash,
+                        why_ref="analysis/why_source_packet_entry1.json",
+                        phase_label="evidence",
+                        token_estimate=6,
+                        token_cap=20,
+                        pin_policy=ContextWorkingSetPinPolicy.PINNED_UNTIL_CHECKPOINT,
+                        freshness=ContextWorkingSetFreshness.ACTIVE_PHASE,
+                    )
+                ],
+                token_estimate=6,
+                token_cap=50,
+                permission_manifest_ref="kernel/demo-flow/steps/researcher/permission_manifest.json",
+            )
+            _write_json(root, "context/working_set.json", working_set.to_dict())
+
+            result = run_step(step, context=_context(), workspace=root, adapter=adapter)
+            compile_request = _read_json(root, result.step_record.metadata["context_compile_request_ref"])
+            context_view = _read_json(root, result.step_record.metadata["context_projection_ref"])
+            compile_result = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+
+        self.assertIsNotNone(adapter.seen_call)
+        self.assertEqual(result.step_record.status, StepStatus.COMPLETED)
+        self.assertEqual(compile_request["working_set_ref"], "context/working_set.json")
+        self.assertEqual(compile_result["working_set_ref"], "context/working_set.json")
+        working_segments = [
+            segment
+            for segment in context_view["semi_stable_context"]
+            if segment["metadata"].get("source_kind") == "working_set"
+        ]
+        self.assertTrue(any(segment["body_ref"] == "context/projections/source_packet_entry1.md" for segment in working_segments))
+        self.assertNotIn("context/working_set.json", context_view["volatile_tail"][0]["source_refs"])
+        self.assertIn("context", result.compiled.permission_manifest.readable_refs)
+
+    def test_run_step_blocks_when_working_set_projection_is_denied(self) -> None:
+        step = Step(
+            id="researcher",
+            brief="Continue from active evidence.",
+            inputs=["sources/source_packet.json"],
+            outputs=["reports/final_report.md"],
+            read=["sources", "context"],
+            write=["reports"],
+            context_working_set_ref="context/working_set.json",
+        )
+        adapter = _KernelDirectAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "sources/source_packet.json", "source\n")
+            _write_text(root, "context/projections/source_packet_entry1.md", "bounded working set fact\n")
+            source_hash = _sha256_ref(root / "sources/source_packet.json")
+            projection_hash = _sha256_ref(root / "context/projections/source_packet_entry1.md")
+            _write_json(
+                root,
+                "context/working_set.json",
+                ContextWorkingSet(
+                    working_set_id="ws1",
+                    role="executor_piworker",
+                    phase_label="evidence",
+                    entries=[
+                        ContextWorkingSetEntry(
+                            entry_id="source_packet_entry1",
+                            source_ref="sources/source_packet.json",
+                            source_hash=source_hash,
+                            projection_ref="context/projections/source_packet_entry1.md",
+                            projection_hash=projection_hash,
+                            phase_label="evidence",
+                            token_estimate=6,
+                            token_cap=20,
+                        )
+                    ],
+                    token_estimate=6,
+                    token_cap=50,
+                ).to_dict(),
+            )
+
+            result = run_step(
+                step,
+                context=_context(denied_refs=["context/projections/source_packet_entry1.md"]),
+                workspace=root,
+                adapter=adapter,
+            )
+            compile_result = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+            boundary = ContextTurnBoundary.from_dict(
+                _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
+            )
+
+        self.assertIsNone(adapter.seen_call)
+        self.assertEqual(result.step_record.status, StepStatus.BLOCKED)
+        self.assertEqual(compile_result["action"], "blocked_by_denied_required_source")
+        self.assertEqual(compile_result["denied_source_refs"], ["context/projections/source_packet_entry1.md"])
+        self.assertEqual(boundary.status, ContextTurnBoundaryStatus.BLOCKED)
 
     def test_run_step_records_failed_status(self) -> None:
         step = Step(
@@ -649,6 +919,8 @@ class KernelApiTests(unittest.TestCase):
         with TemporaryDirectory() as tmpdir:
             result = run_step(step, context=_context(), workspace=tmpdir, adapter=adapter)
             root = Path(tmpdir)
+            first_attempt_call = _read_json(root, result.step_record.metadata["attempt_call_refs"][0])
+            second_attempt_call = _read_json(root, result.step_record.metadata["attempt_call_refs"][1])
             first_attempt = _read_json(root, result.step_record.metadata["attempt_result_refs"][0])
             second_attempt = _read_json(root, result.step_record.metadata["attempt_result_refs"][1])
             final_payload = _read_json(root, result.piworker_call_result_ref)
@@ -661,6 +933,22 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(second_attempt["status"], "completed")
         self.assertEqual(final_payload, result.call_result.to_dict())
         self.assertEqual(result.step_record.output_refs, ["reports/final_report.md"])
+        for attempt_call in (first_attempt_call, second_attempt_call):
+            attempt_metadata = attempt_call["metadata"]
+            self.assertEqual(attempt_metadata["kernel_parent_call_id"], "demo-flow-researcher")
+            self.assertEqual(attempt_metadata["context_boundary_reuse"], "same_preflight_boundary")
+            self.assertEqual(attempt_metadata["context_parent_call_id"], "demo-flow-researcher")
+            self.assertEqual(
+                attempt_metadata["context_parent_compile_result_ref"],
+                result.step_record.metadata["context_compile_result_ref"],
+            )
+            self.assertEqual(
+                attempt_metadata["context_parent_turn_boundary_ref"],
+                result.step_record.metadata["context_turn_boundary_ref"],
+            )
+            self.assertEqual(attempt_metadata["context_compile_result_ref"], result.step_record.metadata["context_compile_result_ref"])
+            self.assertEqual(attempt_metadata["context_turn_boundary_ref"], result.step_record.metadata["context_turn_boundary_ref"])
+            self.assertNotIn(result.step_record.metadata["context_compile_result_ref"], attempt_call["visible_refs"])
 
     def test_run_step_does_not_retry_non_retryable_provider_error(self) -> None:
         step = Step(
@@ -806,6 +1094,228 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(lock.source_permission_manifest_ref, result.compiled.permission_manifest_ref)
         self.assertEqual(lock.extensions[0].grant_id, "demo-flow-source_expander-academic")
         self.assertEqual(lock.extensions[0].metadata["tool_names"], ["academic_search"])
+
+    def test_run_step_verifies_existing_extension_lock_from_memory_store(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = MemoryRefStore()
+        store.write_json("contract/task_contract.json", {"contract": "stable"})
+        compiled = compile_step(step, context=_context(), toolsets={"academic": toolset})
+        with TemporaryDirectory() as tmpdir:
+            lock = compile_extension_lock(
+                compiled.permission_manifest,
+                source_permission_manifest_ref=compiled.permission_manifest_ref,
+                workspace_root=Path(tmpdir),
+                mode="install",
+                installer=_fake_extension_installer,
+                compiled_at="2026-06-15T00:00:00Z",
+            )
+        store.write_json("compiled/extension_lock.json", lock.to_dict())
+        adapter = _KernelMemoryExtensionAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            before = _snapshot(tmpdir)
+            result = run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=adapter,
+                toolsets={"academic": toolset},
+                extension_lock_ref="compiled/extension_lock.json",
+            )
+            after = _snapshot(tmpdir)
+
+        self.assertEqual(before, after)
+        self.assertEqual(adapter.seen_extension_lock_ref, "compiled/extension_lock.json")
+        self.assertEqual(result.step_record.extension_lock_ref, "compiled/extension_lock.json")
+        self.assertEqual(result.step_record.extension_lock_hash, lock.lock_hash)
+        self.assertEqual(store.read_json("sources/source_patch.json"), {"status": "ok"})
+
+    def test_run_step_requires_filesystem_workspace_to_compile_extension_lock(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = MemoryRefStore()
+        store.write_json("contract/task_contract.json", {"contract": "stable"})
+
+        with self.assertRaisesRegex(KernelValidationError, "extension locks require an explicit filesystem workspace"):
+            run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=_KernelMemoryExtensionAdapter(),
+                toolsets={"academic": toolset},
+            )
+
+    def test_run_step_validates_extension_lock_ref_before_store_writes(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = _RecordingStore()
+
+        with self.assertRaises(ContractValidationError):
+            run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=_KernelMemoryExtensionAdapter(),
+                toolsets={"academic": toolset},
+                extension_lock_ref="../bad.json",
+            )
+
+        self.assertEqual(store.calls, [])
+
+    def test_run_step_validates_missing_extension_lock_before_store_writes(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = MemoryRefStore()
+        store.write_json("contract/task_contract.json", {"contract": "stable"})
+        before_refs = store.list_refs()
+
+        with self.assertRaises(ContractValidationError):
+            run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=_KernelMemoryExtensionAdapter(),
+                toolsets={"academic": toolset},
+                extension_lock_ref="compiled/missing_lock.json",
+            )
+
+        self.assertEqual(store.list_refs(), before_refs)
+
+    def test_run_step_rejects_workspace_and_store_together(self) -> None:
+        step = Step(
+            id="reviewer",
+            brief="Review.",
+            inputs=["contract/task_contract.json"],
+            outputs=["reviews/observation.json"],
+            read=["contract"],
+            write=["reviews"],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(ContractValidationError, "either workspace or store"):
+                run_step(
+                    step,
+                    context=_context(),
+                    workspace=tmpdir,
+                    store=MemoryRefStore(),
+                    adapter=_KernelMemoryExtensionAdapter(),
+                )
+
+    def test_run_step_validates_extension_install_root_ref_before_store_writes(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = _RecordingStore()
+
+        with self.assertRaises(ContractValidationError):
+            run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=_KernelMemoryExtensionAdapter(),
+                toolsets={"academic": toolset},
+                extension_install_root_ref="../bad",
+            )
+
+        self.assertEqual(store.calls, [])
+
+    def test_run_step_requires_extension_filesystem_before_context_reducer_writes(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        step = Step(
+            id="source_expander",
+            brief="Use the academic extension to expand sources.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        store = MemoryRefStore()
+        store.write_json("contract/task_contract.json", {"contract": "stable"})
+        before_refs = store.list_refs()
+        adapter = _KernelMemoryExtensionAdapter()
+
+        with self.assertRaisesRegex(KernelValidationError, "extension locks require an explicit filesystem workspace"):
+            run_step(
+                step,
+                context=_context(),
+                store=store,
+                adapter=adapter,
+                toolsets={"academic": toolset},
+            )
+
+        self.assertEqual(store.list_refs(), before_refs)
+        self.assertIsNone(adapter.seen_extension_lock_ref)
 
     def test_run_step_skips_extension_step_when_lock_and_outputs_are_current(self) -> None:
         toolset = Toolset(
@@ -958,6 +1468,328 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(ledger_events[3].route_target, "judge")
         self.assertEqual(ledger_events[-1].status, "accepted")
         self.assertEqual(ledger_events[-1].stop_reason, "terminal_route")
+
+    def test_run_flow_validates_extension_lock_ref_before_observation_writes(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            artifacts=[Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker")],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            before = _snapshot(tmpdir)
+            with self.assertRaises(ContractValidationError):
+                run_flow(
+                    flow,
+                    context=_context(),
+                    workspace=tmpdir,
+                    adapter=_KernelDirectAdapter(),
+                    extension_lock_ref="../bad.json",
+                )
+            after = _snapshot(tmpdir)
+
+        self.assertEqual(before, after)
+
+    def test_run_flow_validates_missing_extension_lock_before_observation_writes(self) -> None:
+        toolset = Toolset(
+            id="academic",
+            package="local:extensions/pi-academic-sources",
+            tools=["academic_search"],
+            network=True,
+        )
+        reviewer = Step(
+            id="source_expander",
+            brief="Use the academic extension.",
+            inputs=["contract/task_contract.json"],
+            outputs=["sources/source_patch.json"],
+            read=["contract", "sources"],
+            write=["sources"],
+            tools=["read", "write", "academic"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer],
+            toolsets=[toolset],
+            artifacts=[Artifact("sources/source_patch.json", role=ArtifactRole.OUTPUT, owner="piworker")],
+        )
+        store = MemoryRefStore()
+        store.write_json("contract/task_contract.json", {"contract": "stable"})
+        before_refs = store.list_refs()
+
+        with self.assertRaises(ContractValidationError):
+            run_flow(
+                flow,
+                context=_context(),
+                store=store,
+                adapter=_KernelMemoryExtensionAdapter(),
+                extension_lock_ref="compiled/missing_lock.json",
+            )
+
+        self.assertEqual(store.list_refs(), before_refs)
+
+    def test_run_flow_feeds_tool_output_projections_into_next_context_compile(self) -> None:
+        producer = Step(
+            id="producer",
+            brief="Read evidence and decide next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        consumer = Step(
+            id="consumer",
+            brief="Continue with bounded runtime context.",
+            inputs=["reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reviews", "attempts"],
+            write=["judge"],
+            route_on="judge/report.json",
+            route_fields=["decision"],
+            role=PiWorkerCallRole.JUDGE,
+        )
+        flow = Flow(
+            id="projection-feed-flow",
+            steps=[producer, consumer],
+            routes={
+                "producer.ready_for_judge": "consumer",
+                "consumer.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "full report stays behind refs\n")
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelProjectionFeedAdapter())
+            first_record = result.step_results[0].step_record
+            second_record = result.step_results[1].step_record
+            compile_request = _read_json(root, second_record.metadata["context_compile_request_ref"])
+            context_view = _read_json(root, second_record.metadata["context_projection_ref"])
+            compile_result = _read_json(root, second_record.metadata["context_compile_result_ref"])
+
+        projection_record_ref = "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.json"
+        projection_text_ref = "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.txt"
+        self.assertEqual(result.flow_result.status, "accepted")
+        self.assertEqual(result.flow_result.metadata["context_feed_refs"], [])
+        self.assertEqual(first_record.metadata["context_feed_refs"], [])
+        self.assertEqual(second_record.metadata["context_feed_refs"], [projection_record_ref])
+        self.assertEqual(result.step_results[1].compiled.piworker_call.metadata["context_feed_refs"], [projection_record_ref])
+        feed_sources = [
+            source for source in compile_request["context_sources"]
+            if source["metadata"].get("source_kind") == "tool_output_projection"
+        ]
+        self.assertEqual(len(feed_sources), 1)
+        self.assertEqual(feed_sources[0]["source_refs"], [projection_record_ref, projection_text_ref])
+        self.assertEqual(feed_sources[0]["projection_ref"], projection_text_ref)
+        feed_segments = [
+            segment for segment in context_view["volatile_tail"]
+            if segment["metadata"].get("source_kind") == "tool_output_projection"
+        ]
+        self.assertEqual(len(feed_segments), 1)
+        self.assertEqual(feed_segments[0]["body_ref"], projection_text_ref)
+        self.assertEqual(feed_segments[0]["kind"], "tool_observation")
+        self.assertIn(projection_record_ref, compile_result["admitted_update_refs"])
+        self.assertIn(projection_text_ref, compile_result["admitted_update_refs"])
+
+    def test_run_flow_routes_repeated_read_diagnostics_into_managed_reducer(self) -> None:
+        producer = Step(
+            id="producer",
+            brief="Read evidence and decide next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        consumer = Step(
+            id="consumer",
+            brief="Continue with managed working context.",
+            inputs=["reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reviews"],
+            write=["judge"],
+            route_on="judge/report.json",
+            route_fields=["decision"],
+            role=PiWorkerCallRole.JUDGE,
+        )
+        flow = Flow(
+            id="thrash-reduction-flow",
+            steps=[producer, consumer],
+            routes={
+                "producer.ready_for_judge": "consumer",
+                "consumer.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+        adapter = _KernelThrashReducerFlowAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "full report stays behind refs\n")
+            result = run_flow(flow, context=_context(), workspace=root, adapter=adapter)
+            second_record = result.step_results[1].step_record
+            request = _read_json(root, second_record.metadata["context_reduction_request_ref"])
+            input_compile_result = _read_json(
+                root,
+                second_record.metadata["context_reduction_input_compile_result_ref"],
+            )
+            checkpoint = ContextCheckpoint.from_dict(
+                _read_json(root, second_record.metadata["context_reduction_input_checkpoint_ref"])
+            )
+            inspection = inspect_kernel_run(root, result.flow_result_ref)
+
+        diagnostics_ref = "attempts/demo-flow-001-producer/context/thrash.json"
+        self.assertEqual(result.flow_result.status, "accepted")
+        self.assertEqual(
+            [call.role for call in adapter.seen_calls],
+            [PiWorkerCallRole.EXECUTOR, PiWorkerCallRole.CONTEXT_REDUCER, PiWorkerCallRole.JUDGE],
+        )
+        self.assertEqual(second_record.metadata["context_thrash_diagnostics_refs"], [diagnostics_ref])
+        self.assertEqual(second_record.metadata["context_reduction_reason"], "repeated_read_thrashing")
+        self.assertEqual(second_record.metadata["context_reduction_status"], "completed")
+        self.assertTrue(second_record.metadata["context_reduction_recompiled"])
+        self.assertEqual(input_compile_result["action"], "continue")
+        self.assertEqual(request["reason"], "repeated_read_thrashing")
+        self.assertEqual(request["thrash_diagnostics_refs"], [diagnostics_ref])
+        self.assertEqual(checkpoint.reason_code, "repeated_read_thrashing")
+        self.assertIn(diagnostics_ref, inspection.step_records[1].context_thrash_diagnostics_refs)
+        self.assertIn(diagnostics_ref, inspection.tool_activity.context_thrash_diagnostics_refs)
+        self.assertEqual(inspection.tool_activity.repeated_read_count, 1)
+        self.assertEqual(inspection.tool_activity.thrash_recommended_action, "prepare_checkpoint")
+
+    def test_run_flow_denies_tool_projection_feed_without_next_step_read_authority(self) -> None:
+        producer = Step(
+            id="producer",
+            brief="Read evidence and decide next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        consumer = Step(
+            id="consumer",
+            brief="Continue without runtime attempts access.",
+            inputs=["reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reviews"],
+            write=["judge"],
+            route_on="judge/report.json",
+            route_fields=["decision"],
+            role=PiWorkerCallRole.JUDGE,
+        )
+        flow = Flow(
+            id="projection-feed-flow",
+            steps=[producer, consumer],
+            routes={
+                "producer.ready_for_judge": "consumer",
+                "consumer.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "full report stays behind refs\n")
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelProjectionFeedAdapter())
+            second_record = result.step_results[1].step_record
+            compile_request = _read_json(root, second_record.metadata["context_compile_request_ref"])
+            context_view = _read_json(root, second_record.metadata["context_projection_ref"])
+            compile_result = _read_json(root, second_record.metadata["context_compile_result_ref"])
+
+        projection_record_ref = "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.json"
+        self.assertEqual(result.flow_result.status, "accepted")
+        self.assertEqual(second_record.metadata["context_feed_refs"], [projection_record_ref])
+        denied_sources = [
+            source for source in compile_request["context_sources"]
+            if source["source_key"] == "context_feed/000"
+        ]
+        self.assertEqual(len(denied_sources), 1)
+        self.assertEqual(denied_sources[0]["source_refs"], [projection_record_ref])
+        self.assertNotIn(projection_record_ref, json.dumps(context_view, sort_keys=True))
+        self.assertEqual(compile_result["denied_source_refs"], [projection_record_ref])
+        self.assertEqual(compile_result["action"], "continue")
+
+    def test_run_flow_does_not_leak_projection_text_ref_when_only_record_is_readable(self) -> None:
+        producer = Step(
+            id="producer",
+            brief="Read evidence and decide next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        consumer = Step(
+            id="consumer",
+            brief="Continue with projection record metadata only.",
+            inputs=["reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reviews", "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.json"],
+            write=["judge"],
+            route_on="judge/report.json",
+            route_fields=["decision"],
+            role=PiWorkerCallRole.JUDGE,
+        )
+        flow = Flow(
+            id="projection-feed-flow",
+            steps=[producer, consumer],
+            routes={
+                "producer.ready_for_judge": "consumer",
+                "consumer.accepted": Flow.stop("accepted"),
+            },
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_text(root, "reports/final_report.md", "full report stays behind refs\n")
+            result = run_flow(flow, context=_context(), workspace=root, adapter=_KernelProjectionFeedAdapter())
+            second_record = result.step_results[1].step_record
+            compile_request = _read_json(root, second_record.metadata["context_compile_request_ref"])
+            context_view = _read_json(root, second_record.metadata["context_projection_ref"])
+            compile_result = _read_json(root, second_record.metadata["context_compile_result_ref"])
+
+        projection_record_ref = "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.json"
+        projection_text_ref = "attempts/demo-flow-001-producer/context/tool_output_projections/tool-observation-000001.txt"
+        self.assertEqual(result.flow_result.status, "accepted")
+        feed_sources = [
+            source for source in compile_request["context_sources"]
+            if source["metadata"].get("source_kind") == "tool_output_projection"
+        ]
+        self.assertEqual(len(feed_sources), 1)
+        self.assertEqual(feed_sources[0]["source_refs"], [projection_record_ref])
+        self.assertIsNone(feed_sources[0]["projection_ref"])
+        self.assertNotIn(projection_text_ref, json.dumps(compile_request, sort_keys=True))
+        self.assertNotIn(projection_text_ref, json.dumps(context_view, sort_keys=True))
+        self.assertIn(projection_record_ref, compile_result["admitted_update_refs"])
+        self.assertNotIn(projection_text_ref, compile_result["admitted_update_refs"])
+        self.assertEqual(compile_result["denied_source_refs"], [])
 
     def test_inspect_kernel_run_summarizes_accepted_run_refs_only(self) -> None:
         reviewer = Step(
@@ -1255,6 +2087,58 @@ class KernelApiTests(unittest.TestCase):
         self.assertFalse(any(path.endswith("flow_result.json") for path in all_paths))
         self.assertFalse(any(path.endswith("flow_ledger.jsonl") for path in all_paths))
         self.assertFalse(any(path.endswith("run_snapshot.json") for path in all_paths))
+
+    def test_run_flow_step_once_defaults_to_memory_store_without_filesystem_writes(self) -> None:
+        reviewer = Step(
+            id="reviewer",
+            brief="Review the draft and decide the next step.",
+            inputs=["reports/final_report.md"],
+            outputs=["reviews/observation.json"],
+            read=["reports"],
+            write=["reviews"],
+            route_on="reviews/observation.json",
+            route_fields=["decision"],
+        )
+        judge = Step(
+            id="judge",
+            brief="Judge final acceptance.",
+            inputs=["reports/final_report.md", "reviews/observation.json"],
+            outputs=["judge/report.json"],
+            read=["reports", "reviews"],
+            write=["judge"],
+            role=PiWorkerCallRole.JUDGE,
+            route_on="judge/report.json",
+            route_fields=["decision"],
+        )
+        flow = Flow(
+            id="review-flow",
+            steps=[reviewer, judge],
+            routes={"reviewer.ready_for_judge": "judge"},
+            artifacts=[
+                Artifact("reviews/observation.json", role=ArtifactRole.DECISION, owner="piworker"),
+                Artifact("judge/report.json", role=ArtifactRole.DECISION, owner="piworker"),
+            ],
+        )
+        adapter = _KernelMemoryDebugAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            before = _snapshot(tmpdir)
+            result = run_flow_step_once(
+                flow,
+                "reviewer",
+                context=_context(),
+                ref_prefix="kernel/debug/session-001/steps/001-reviewer",
+                adapter=adapter,
+            )
+            after = _snapshot(tmpdir)
+
+        self.assertEqual(before, after)
+        self.assertEqual(result.step.status, "completed")
+        self.assertIsNotNone(result.route_decision)
+        self.assertEqual(result.route_decision.target_kind, "step")
+        self.assertEqual(result.route_decision.target_step_id, "judge")
+        self.assertIsNotNone(adapter.seen_store)
+        self.assertTrue(adapter.seen_store.exists("reviews/observation.json"))
 
     def test_read_flow_route_reports_stop_unrouted_and_invalid_without_raw_payload(self) -> None:
         reviewer = Step(
@@ -1793,12 +2677,15 @@ class KernelApiTests(unittest.TestCase):
                 record_ref="kernel/projections/summary.json",
             )
             output_payload = _read_json(root, "reports/summary.json")
+            output_bytes = (root / "reports/summary.json").read_bytes()
             record_payload = _read_json(root, result.record_ref)
 
         self.assertIsInstance(result, ProjectionRunResult)
         self.assertEqual(output_payload, {"source_count": 1})
+        self.assertEqual(output_bytes, b'{\n  "source_count": 1\n}\n')
         self.assertEqual(record_payload, result.record.to_dict())
         self.assertEqual(result.record.output_ref, "reports/summary.json")
+        self.assertEqual(result.record.output_hash, "sha256:" + hashlib.sha256(output_bytes).hexdigest())
         self.assertEqual(result.record.source_refs, ["reports/final_report.md"])
         self.assertEqual(result.record.metadata["projection_metadata"], {"kind": "summary"})
 
@@ -1889,11 +2776,12 @@ class KernelApiTests(unittest.TestCase):
         self.assertIn("reports/summary.json", result.flow_result.final_artifact_refs)
 
 
-def _context() -> StepCompileContext:
+def _context(*, denied_refs: list[str] | None = None) -> StepCompileContext:
     return StepCompileContext(
         flow_id="demo-flow",
         contract_id="demo-contract",
         contract_hash="sha256:" + "a" * 64,
+        denied_refs=denied_refs,
     )
 
 
@@ -1902,6 +2790,7 @@ class _KernelDirectAdapter:
 
     def __init__(self) -> None:
         self.seen_call = None
+        self.seen_calls = []
         self.seen_extension_lock_ref = None
 
     def run_call(
@@ -1916,6 +2805,7 @@ class _KernelDirectAdapter:
         extension_lock_ref=None,
     ):
         self.seen_call = call
+        self.seen_calls.append(call)
         self.seen_extension_lock_ref = extension_lock_ref
         output_ref = call.expected_output_refs[0]
         _write_text(Path(workspace), output_ref, "kernel adapter artifact\n")
@@ -1938,6 +2828,84 @@ class _KernelDirectAdapter:
             ),
             event_evidence_refs=["evidence/adapter_event_002.json"],
             metrics={"duration_ms": 1},
+        )
+
+
+class _KernelMemoryExtensionAdapter:
+    adapter_family = "kernel-test-memory-extension"
+
+    def __init__(self) -> None:
+        self.seen_extension_lock_ref = None
+
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=None,
+        store=None,
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
+        if store is None:
+            raise AssertionError("memory extension adapter requires store")
+        self.seen_extension_lock_ref = extension_lock_ref
+        output_ref = call.expected_output_refs[0]
+        store.write_json(output_ref, {"status": "ok"})
+        report_ref = f"attempts/{call.call_id}/pi_agent_execution_report.json"
+        report = ExecutionReport(
+            report_id=f"R-{call.call_id}",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=[output_ref],
+            changed_refs=[output_ref],
+            evidence_refs=[],
+        )
+        store.write_json(report_ref, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
+        )
+
+
+class _KernelMemoryDebugAdapter:
+    adapter_family = "kernel-test-memory-debug"
+
+    def __init__(self) -> None:
+        self.seen_store = None
+
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=None,
+        store=None,
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
+        if store is None:
+            raise AssertionError("memory debug adapter requires store")
+        self.seen_store = store
+        output_ref = call.expected_output_refs[0]
+        store.write_json(output_ref, {"decision": "ready_for_judge"})
+        report_ref = f"attempts/{call.call_id}/pi_agent_execution_report.json"
+        report = ExecutionReport(
+            report_id=f"R-{call.call_id}",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=[output_ref],
+            changed_refs=[output_ref],
+            evidence_refs=[],
+        )
+        store.write_json(report_ref, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(status="completed", execution_report_ref=report_ref),
         )
 
 
@@ -2036,6 +3004,82 @@ class _KernelMissingThenWritesAdapter:
             worker_result=WorkerResult(
                 status="completed",
                 execution_report_ref=f"attempts/{call.call_id}-{self.call_count}/pi_agent_execution_report.json",
+            ),
+        )
+
+
+class _KernelManagedReducerAdapter:
+    adapter_family = "kernel-test-managed-reducer"
+
+    def __init__(self) -> None:
+        self.seen_calls = []
+
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
+        self.seen_calls.append(call)
+        root = Path(workspace)
+        if call.role == PiWorkerCallRole.CONTEXT_REDUCER:
+            output_ref = call.expected_output_refs[0]
+            maintenance_root = output_ref.removesuffix("/reduction_result.json")
+            checkpoint_ref = f"{maintenance_root}/checkpoint.json"
+            summary_ref = f"{maintenance_root}/summary.json"
+            working_set_ref = f"{maintenance_root}/working_set.json"
+            compaction_ref = f"{maintenance_root}/compaction_record.json"
+            validation_ref = f"{maintenance_root}/validation_report.json"
+            _write_json(root, checkpoint_ref, {"checkpoint_ref": "managed-reducer"})
+            _write_text(root, summary_ref, "bounded summary\n")
+            _write_json(root, working_set_ref, {"working_set_ref": "managed-reducer"})
+            _write_json(root, compaction_ref, {"status": "pending"})
+            _write_json(root, validation_ref, {"status": "ok"})
+            _write_json(
+                root,
+                output_ref,
+                ContextReductionResult(
+                    reduction_id=call.contract_id,
+                    status=ContextReductionStatus.COMPLETED,
+                    request_ref=call.metadata["context_reduction_request_ref"],
+                    permission_manifest_ref=call.permission_manifest_ref,
+                    checkpoint_ref=checkpoint_ref,
+                    working_set_ref=working_set_ref,
+                    summary_refs=[summary_ref],
+                    source_refs=["sources/source_packet.json"],
+                    omitted_refs=["sources/source_packet.json"],
+                    evicted_refs=["sources/source_packet.json"],
+                    compaction_record_ref=compaction_ref,
+                    validation_report_ref=validation_ref,
+                ).to_dict(),
+            )
+            produced = [output_ref]
+            changed = [output_ref, checkpoint_ref, summary_ref, working_set_ref, compaction_ref, validation_ref]
+        else:
+            output_ref = call.expected_output_refs[0]
+            _write_text(root, output_ref, "kernel adapter artifact\n")
+            produced = [output_ref]
+            changed = [output_ref]
+        report_ref = f"attempts/{call.call_id}/pi_agent_execution_report.json"
+        report = ExecutionReport(
+            report_id=f"R-{call.call_id}",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=produced,
+            changed_refs=changed,
+            evidence_refs=[],
+        )
+        _write_json(root, report_ref, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(
+                status="completed",
+                execution_report_ref=report_ref,
             ),
         )
 
@@ -2194,6 +3238,265 @@ class _KernelCountingFlowAdapter(_KernelFlowAdapter):
         )
 
 
+class _KernelProjectionFeedAdapter:
+    adapter_family = "kernel-test-projection-feed"
+
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
+        root = Path(workspace)
+        output_ref = call.expected_output_refs[0]
+        if call.call_id.endswith("-producer"):
+            _write_json(root, output_ref, {"decision": "ready_for_judge"})
+            index_ref = f"attempts/{call.call_id}/context/tool_output_projections/index.json"
+            record_ref = f"attempts/{call.call_id}/context/tool_output_projections/tool-observation-000001.json"
+            projection_ref = f"attempts/{call.call_id}/context/tool_output_projections/tool-observation-000001.txt"
+            projection_text = "[MissionForge tool output projection]\nsource_ref: reports/final_report.md\n"
+            _write_text(root, projection_ref, projection_text)
+            projection_hash = _sha256_ref(root / projection_ref)
+            _write_json(
+                root,
+                record_ref,
+                {
+                    "schema_version": "missionforge.tool_output_projection.v1",
+                    "projection_id": "tool-observation-000001",
+                    "tool_observation_id": "tool-observation-000001",
+                    "policy": "ref_stub",
+                    "projection_ref": projection_ref,
+                    "projection_hash": projection_hash,
+                    "projection_bytes": len(projection_text.encode("utf-8")),
+                    "original_bytes": 4000,
+                    "raw_ref": None,
+                    "structured_ref": "reports/final_report.md",
+                    "content_hash": "sha256:" + "b" * 64,
+                    "permission_manifest_ref": "attempts/demo-flow-001-producer/runtime_permission_manifest.json",
+                    "metadata": {"tool_name": "read", "source_kind": "tool_output_projection"},
+                },
+            )
+            _write_json(
+                root,
+                index_ref,
+                {
+                    "schema_version": "missionforge.tool_output_projection_index.v1",
+                    "context_projection_ref": f"attempts/{call.call_id}/context/projection.json",
+                    "permission_manifest_ref": "attempts/demo-flow-001-producer/runtime_permission_manifest.json",
+                    "count": 1,
+                    "record_refs": [record_ref],
+                    "projection_refs": [projection_ref],
+                    "skipped_observation_ids": [],
+                    "warnings": [],
+                    "index_hash": "sha256:" + "c" * 64,
+                },
+            )
+            changed_refs = [output_ref, index_ref, record_ref, projection_ref]
+            metrics = {"tool_output_projection_index_ref": index_ref, "tool_output_projection_count": 1}
+        elif call.call_id.endswith("-consumer"):
+            _write_json(root, output_ref, {"decision": "accepted"})
+            changed_refs = [output_ref]
+            metrics = {}
+        else:
+            _write_json(root, output_ref, {"decision": "completed"})
+            changed_refs = [output_ref]
+            metrics = {}
+        report_ref = f"attempts/{call.call_id}/pi_agent_execution_report.json"
+        report = ExecutionReport(
+            report_id=f"R-{call.call_id}",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=[output_ref],
+            changed_refs=changed_refs,
+            evidence_refs=[],
+            metrics=metrics,
+        )
+        _write_json(root, report_ref, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(
+                status="completed",
+                execution_report_ref=report_ref,
+            ),
+        )
+
+
+class _KernelThrashReducerFlowAdapter:
+    adapter_family = "kernel-test-thrash-reducer-flow"
+
+    def __init__(self) -> None:
+        self.seen_calls = []
+
+    def run_call(
+        self,
+        call,
+        *,
+        workspace=".",
+        evidence_store=None,
+        call_spec=None,
+        exit_criteria=None,
+        stop_conditions=None,
+        extension_lock_ref=None,
+    ):
+        self.seen_calls.append(call)
+        root = Path(workspace)
+        output_ref = call.expected_output_refs[0]
+        changed_refs: list[str]
+        metrics: dict[str, object]
+        if call.role == PiWorkerCallRole.CONTEXT_REDUCER:
+            maintenance_root = output_ref.removesuffix("/reduction_result.json")
+            checkpoint_ref = f"{maintenance_root}/checkpoint.json"
+            summary_ref = f"{maintenance_root}/summary.json"
+            working_set_ref = f"{maintenance_root}/working_set.json"
+            compaction_ref = f"{maintenance_root}/compaction_record.json"
+            validation_ref = f"{maintenance_root}/validation_report.json"
+            _write_json(root, checkpoint_ref, {"checkpoint_ref": "thrash-reducer"})
+            _write_text(root, summary_ref, "bounded repeated-read summary\n")
+            _write_json(root, working_set_ref, {"working_set_ref": "thrash-reducer"})
+            _write_json(root, compaction_ref, {"status": "pending"})
+            _write_json(root, validation_ref, {"status": "ok"})
+            _write_json(
+                root,
+                output_ref,
+                ContextReductionResult(
+                    reduction_id=call.contract_id,
+                    status=ContextReductionStatus.COMPLETED,
+                    request_ref=call.metadata["context_reduction_request_ref"],
+                    permission_manifest_ref=call.permission_manifest_ref,
+                    checkpoint_ref=checkpoint_ref,
+                    working_set_ref=working_set_ref,
+                    summary_refs=[summary_ref],
+                    compaction_record_ref=compaction_ref,
+                    validation_report_ref=validation_ref,
+                ).to_dict(),
+            )
+            produced = [output_ref]
+            changed_refs = [output_ref, checkpoint_ref, summary_ref, working_set_ref, compaction_ref, validation_ref]
+            metrics = {}
+        elif call.call_id.endswith("-producer"):
+            _write_json(root, output_ref, {"decision": "ready_for_judge"})
+            diagnostics_ref = f"attempts/{call.call_id}/context/thrash.json"
+            source_hash = _sha256_ref(root / "reports/final_report.md")
+            _write_json(
+                root,
+                diagnostics_ref,
+                {
+                    "schema_version": "missionforge.context_thrash_diagnostics.v1",
+                    "diagnostics_id": "producer-thrash",
+                    "phase_label": "runtime",
+                    "observations": [
+                        {
+                            "schema_version": "missionforge.context_read_observation.v1",
+                            "observation_id": "read-000001",
+                            "source_ref": "reports/final_report.md",
+                            "source_hash": source_hash,
+                            "source_range": {"offset": 0, "limit": 64},
+                            "query_ref": None,
+                            "query_hash": None,
+                            "tool_name": "read",
+                            "count": 2,
+                            "normalized_metadata": {"origin": "kernel_test"},
+                            "identity_hash": "sha256:" + "d" * 64,
+                        }
+                    ],
+                    "repeated_observation_ids": ["read-000001"],
+                    "expected_reread_observation_ids": [],
+                    "recommended_action": "prepare_checkpoint",
+                    "metadata": {},
+                },
+            )
+            produced = [output_ref]
+            changed_refs = [output_ref, diagnostics_ref]
+            metrics = {
+                "context_thrash_diagnostics_ref": diagnostics_ref,
+                "context_repeated_read_count": 1,
+            }
+        elif call.call_id.endswith("-consumer"):
+            _write_json(root, output_ref, {"decision": "accepted"})
+            produced = [output_ref]
+            changed_refs = [output_ref]
+            metrics = {}
+        else:
+            _write_json(root, output_ref, {"decision": "completed"})
+            produced = [output_ref]
+            changed_refs = [output_ref]
+            metrics = {}
+        report_ref = f"attempts/{call.call_id}/pi_agent_execution_report.json"
+        report = ExecutionReport(
+            report_id=f"R-{call.call_id}",
+            call_id=call.call_id,
+            status="completed",
+            produced_artifacts=produced,
+            changed_refs=changed_refs,
+            evidence_refs=[],
+            metrics=metrics,
+        )
+        _write_json(root, report_ref, report.to_dict())
+        return WorkerAdapterResult(
+            execution_report=report,
+            worker_result=WorkerResult(
+                status="completed",
+                execution_report_ref=report_ref,
+            ),
+        )
+
+
+class _RecordingStore:
+    store_id = "kernel-api-recording"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def exists(self, ref: str) -> bool:
+        self.calls.append(("exists", ref))
+        return False
+
+    def read_bytes(self, ref: str) -> bytes:
+        self.calls.append(("read_bytes", ref))
+        return b"{}"
+
+    def read_text(self, ref: str) -> str:
+        self.calls.append(("read_text", ref))
+        return "{}"
+
+    def read_json(self, ref: str):
+        self.calls.append(("read_json", ref))
+        return {}
+
+    def read_jsonl(self, ref: str):
+        self.calls.append(("read_jsonl", ref))
+        return []
+
+    def write_bytes(self, ref: str, body: bytes, *, media_type: str = "application/octet-stream", metadata=None):
+        self.calls.append(("write_bytes", ref))
+        raise AssertionError("store should not be called")
+
+    def write_text(self, ref: str, text: str, *, media_type: str = "text/plain", metadata=None):
+        self.calls.append(("write_text", ref))
+        raise AssertionError("store should not be called")
+
+    def write_json(self, ref: str, value, *, metadata=None):
+        self.calls.append(("write_json", ref))
+        raise AssertionError("store should not be called")
+
+    def append_jsonl(self, ref: str, item, *, metadata=None):
+        self.calls.append(("append_jsonl", ref))
+        raise AssertionError("store should not be called")
+
+    def hash_ref(self, ref: str) -> str:
+        self.calls.append(("hash_ref", ref))
+        return "sha256:" + "0" * 64
+
+    def list_refs(self, prefix: str = "") -> list[str]:
+        self.calls.append(("list_refs", prefix))
+        return []
+
+
 class _KernelWritesDecisionThenFailsAdapter:
     adapter_family = "kernel-test-writes-decision-then-fails"
 
@@ -2334,6 +3637,10 @@ def _write_text(root: Path, ref: str, text: str):
     path.write_text(text, encoding="utf-8")
 
 
+def _sha256_ref(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _summary_projector(source_paths, projection):
     return {"source_count": len(source_paths)}
 
@@ -2356,6 +3663,10 @@ def _read_json(root: Path, ref: str):
 
 def _read_jsonl(root: Path, ref: str):
     return [json.loads(line) for line in (root / ref).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _snapshot(root: str) -> list[str]:
+    return sorted(path.relative_to(root).as_posix() for path in Path(root).rglob("*"))
 
 
 if __name__ == "__main__":

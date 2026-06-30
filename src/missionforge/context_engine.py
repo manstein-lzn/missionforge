@@ -27,7 +27,16 @@ from .contracts import (
     stable_json_hash,
     validate_ref,
 )
-from .context import ContextCachePolicy, ContextInlinePolicy, ContextPressureAction, ContextView
+from .context import (
+    ContextCachePolicy,
+    ContextInlinePolicy,
+    ContextPressureAction,
+    ContextPressureDiagnostics,
+    ContextSegment,
+    ContextSegmentKind,
+    ContextView,
+    build_context_pressure_diagnostics,
+)
 from .permissions import ReadGate
 
 
@@ -40,6 +49,9 @@ CONTEXT_CACHE_LAYOUT_SCHEMA_VERSION = "missionforge.context_cache_layout.v1"
 CONTEXT_COMPILE_REQUEST_SCHEMA_VERSION = "missionforge.context_compile_request.v1"
 CONTEXT_COMPILE_RESULT_SCHEMA_VERSION = "missionforge.context_compile_result.v1"
 CONTEXT_TURN_BOUNDARY_SCHEMA_VERSION = "missionforge.context_turn_boundary.v1"
+CONTEXT_CHECKPOINT_SCHEMA_VERSION = "missionforge.context_checkpoint.v1"
+CONTEXT_REDUCTION_REQUEST_SCHEMA_VERSION = "missionforge.context_reduction_request.v1"
+CONTEXT_REDUCTION_RESULT_SCHEMA_VERSION = "missionforge.context_reduction_result.v1"
 CONTEXT_COMPACTION_RECORD_SCHEMA_VERSION = "missionforge.context_compaction_record.v1"
 CONTEXT_READ_OBSERVATION_SCHEMA_VERSION = "missionforge.context_read_observation.v1"
 CONTEXT_THRASH_DIAGNOSTICS_SCHEMA_VERSION = "missionforge.context_thrash_diagnostics.v1"
@@ -93,6 +105,33 @@ class ContextTurnBoundaryStatus(StrEnum):
     CHECKPOINT_REQUIRED = "checkpoint_required"
     CANCELLED = "cancelled"
     REVISION_REQUESTED = "revision_requested"
+
+
+class ContextCheckpointCreator(StrEnum):
+    """Producer class for one context checkpoint."""
+
+    RUNTIME = "runtime"
+    REDUCER_PIWORKER = "reducer_piworker"
+    OPERATOR = "operator"
+
+
+class ContextReductionReason(StrEnum):
+    """Reason MissionForge requested managed context reduction."""
+
+    PRESSURE_SOFT = "pressure_soft"
+    PRESSURE_HARD = "pressure_hard"
+    REPEATED_READ_THRASHING = "repeated_read_thrashing"
+    OPERATOR_CHECKPOINT = "operator_checkpoint"
+    BEFORE_RESUME = "before_resume"
+
+
+class ContextReductionStatus(StrEnum):
+    """Boundary status for a managed context reduction result."""
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INVALID_OUTPUT = "invalid_output"
+    SKIPPED = "skipped"
 
 
 class ContextCompactionStatus(StrEnum):
@@ -1056,6 +1095,419 @@ class ContextTurnBoundary:
 
 
 @dataclass(frozen=True)
+class ContextCheckpoint:
+    """Durable refs-only recovery point for one safe context boundary."""
+
+    checkpoint_id: str
+    reason_code: str
+    role: str
+    run_id: str
+    call_id: str
+    source_snapshot_ref: str
+    context_view_ref: str
+    context_hash: str
+    permission_manifest_ref: str
+    created_by: ContextCheckpointCreator = ContextCheckpointCreator.RUNTIME
+    summary_refs: list[str] = field(default_factory=list)
+    recent_refs: list[str] = field(default_factory=list)
+    tool_observation_refs: list[str] = field(default_factory=list)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    created_at: str = ""
+    schema_version: str = CONTEXT_CHECKPOINT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ContextCheckpoint":
+        data = _refs_only_mapping(payload, "context_checkpoint")
+        checkpoint = cls(
+            checkpoint_id=_safe_id(data.get("checkpoint_id"), "context_checkpoint.checkpoint_id"),
+            reason_code=_safe_id(data.get("reason_code"), "context_checkpoint.reason_code"),
+            role=require_non_empty_str(data.get("role"), "context_checkpoint.role"),
+            run_id=_safe_id(data.get("run_id"), "context_checkpoint.run_id"),
+            call_id=require_non_empty_str(data.get("call_id"), "context_checkpoint.call_id"),
+            source_snapshot_ref=validate_ref(
+                data.get("source_snapshot_ref"),
+                "context_checkpoint.source_snapshot_ref",
+            ),
+            context_view_ref=validate_ref(data.get("context_view_ref"), "context_checkpoint.context_view_ref"),
+            context_hash=_hash(data.get("context_hash"), "context_checkpoint.context_hash"),
+            permission_manifest_ref=validate_ref(
+                data.get("permission_manifest_ref"),
+                "context_checkpoint.permission_manifest_ref",
+            ),
+            created_by=require_enum(
+                data.get("created_by", ContextCheckpointCreator.RUNTIME.value),
+                ContextCheckpointCreator,
+                "context_checkpoint.created_by",
+            ),
+            summary_refs=_unique_refs(data.get("summary_refs", []), "context_checkpoint.summary_refs"),
+            recent_refs=_unique_refs(data.get("recent_refs", []), "context_checkpoint.recent_refs"),
+            tool_observation_refs=_unique_refs(
+                data.get("tool_observation_refs", []),
+                "context_checkpoint.tool_observation_refs",
+            ),
+            metadata=_metadata(data.get("metadata", {}), "context_checkpoint.metadata"),
+            created_at=require_non_empty_str(data.get("created_at"), "context_checkpoint.created_at"),
+            schema_version=require_non_empty_str(
+                data.get("schema_version", CONTEXT_CHECKPOINT_SCHEMA_VERSION),
+                "context_checkpoint.schema_version",
+            ),
+        )
+        checkpoint.validate()
+        if (
+            "checkpoint_hash" in data
+            and require_non_empty_str(data["checkpoint_hash"], "context_checkpoint.checkpoint_hash")
+            != checkpoint.checkpoint_hash
+        ):
+            raise ContractValidationError("context_checkpoint.checkpoint_hash does not match content")
+        return checkpoint
+
+    @property
+    def checkpoint_hash(self) -> str:
+        return stable_json_hash(self._content_dict(include_hash=False))
+
+    def validate(self) -> None:
+        _require_schema(self.schema_version, CONTEXT_CHECKPOINT_SCHEMA_VERSION, "context_checkpoint.schema_version")
+        _safe_id(self.checkpoint_id, "context_checkpoint.checkpoint_id")
+        _safe_id(self.reason_code, "context_checkpoint.reason_code")
+        require_non_empty_str(self.role, "context_checkpoint.role")
+        _safe_id(self.run_id, "context_checkpoint.run_id")
+        require_non_empty_str(self.call_id, "context_checkpoint.call_id")
+        validate_ref(self.source_snapshot_ref, "context_checkpoint.source_snapshot_ref")
+        validate_ref(self.context_view_ref, "context_checkpoint.context_view_ref")
+        _hash(self.context_hash, "context_checkpoint.context_hash")
+        validate_ref(self.permission_manifest_ref, "context_checkpoint.permission_manifest_ref")
+        require_enum(self.created_by, ContextCheckpointCreator, "context_checkpoint.created_by")
+        _unique_refs(self.summary_refs, "context_checkpoint.summary_refs")
+        _unique_refs(self.recent_refs, "context_checkpoint.recent_refs")
+        _unique_refs(self.tool_observation_refs, "context_checkpoint.tool_observation_refs")
+        _metadata(self.metadata, "context_checkpoint.metadata")
+        require_non_empty_str(self.created_at, "context_checkpoint.created_at")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self._content_dict(include_hash=True)
+
+    def _content_dict(self, *, include_hash: bool) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "checkpoint_id": self.checkpoint_id,
+            "reason_code": self.reason_code,
+            "role": self.role,
+            "run_id": self.run_id,
+            "call_id": self.call_id,
+            "source_snapshot_ref": self.source_snapshot_ref,
+            "context_view_ref": self.context_view_ref,
+            "context_hash": self.context_hash,
+            "summary_refs": list(self.summary_refs),
+            "recent_refs": list(self.recent_refs),
+            "tool_observation_refs": list(self.tool_observation_refs),
+            "permission_manifest_ref": self.permission_manifest_ref,
+            "created_by": self.created_by.value,
+            "metadata": dict(self.metadata),
+            "created_at": self.created_at,
+        }
+        if include_hash:
+            payload["checkpoint_hash"] = self.checkpoint_hash
+        return payload
+
+
+@dataclass(frozen=True)
+class ContextReductionRequest:
+    """MissionForge-managed request for an internal context reducer PiWorker."""
+
+    reduction_id: str
+    reason: ContextReductionReason
+    role: str
+    contract_ref: str
+    contract_hash: str
+    permission_manifest_ref: str
+    context_view_ref: str
+    context_hash: str
+    source_snapshot_ref: str
+    expected_output_refs: list[str]
+    worker_brief_ref: str | None = None
+    judge_rubric_ref: str | None = None
+    pressure_ref: str | None = None
+    current_working_set_ref: str | None = None
+    thrash_diagnostics_refs: list[str] = field(default_factory=list)
+    recent_projection_refs: list[str] = field(default_factory=list)
+    source_refs: list[str] = field(default_factory=list)
+    tool_observation_refs: list[str] = field(default_factory=list)
+    checkpoint_refs: list[str] = field(default_factory=list)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = CONTEXT_REDUCTION_REQUEST_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ContextReductionRequest":
+        data = _refs_only_mapping(payload, "context_reduction_request")
+        request = cls(
+            reduction_id=_safe_id(data.get("reduction_id"), "context_reduction_request.reduction_id"),
+            reason=require_enum(data.get("reason"), ContextReductionReason, "context_reduction_request.reason"),
+            role=require_non_empty_str(data.get("role"), "context_reduction_request.role"),
+            contract_ref=validate_ref(data.get("contract_ref"), "context_reduction_request.contract_ref"),
+            contract_hash=_hash(data.get("contract_hash"), "context_reduction_request.contract_hash"),
+            permission_manifest_ref=validate_ref(
+                data.get("permission_manifest_ref"),
+                "context_reduction_request.permission_manifest_ref",
+            ),
+            context_view_ref=validate_ref(
+                data.get("context_view_ref"),
+                "context_reduction_request.context_view_ref",
+            ),
+            context_hash=_hash(data.get("context_hash"), "context_reduction_request.context_hash"),
+            source_snapshot_ref=validate_ref(
+                data.get("source_snapshot_ref"),
+                "context_reduction_request.source_snapshot_ref",
+            ),
+            expected_output_refs=_unique_refs(
+                data.get("expected_output_refs", []),
+                "context_reduction_request.expected_output_refs",
+            ),
+            worker_brief_ref=_optional_ref(data.get("worker_brief_ref"), "context_reduction_request.worker_brief_ref"),
+            judge_rubric_ref=_optional_ref(data.get("judge_rubric_ref"), "context_reduction_request.judge_rubric_ref"),
+            pressure_ref=_optional_ref(data.get("pressure_ref"), "context_reduction_request.pressure_ref"),
+            current_working_set_ref=_optional_ref(
+                data.get("current_working_set_ref"),
+                "context_reduction_request.current_working_set_ref",
+            ),
+            thrash_diagnostics_refs=_unique_refs(
+                data.get("thrash_diagnostics_refs", []),
+                "context_reduction_request.thrash_diagnostics_refs",
+            ),
+            recent_projection_refs=_unique_refs(
+                data.get("recent_projection_refs", []),
+                "context_reduction_request.recent_projection_refs",
+            ),
+            source_refs=_unique_refs(
+                data.get("source_refs", []),
+                "context_reduction_request.source_refs",
+            ),
+            tool_observation_refs=_unique_refs(
+                data.get("tool_observation_refs", []),
+                "context_reduction_request.tool_observation_refs",
+            ),
+            checkpoint_refs=_unique_refs(
+                data.get("checkpoint_refs", []),
+                "context_reduction_request.checkpoint_refs",
+            ),
+            metadata=_metadata(data.get("metadata", {}), "context_reduction_request.metadata"),
+            schema_version=require_non_empty_str(
+                data.get("schema_version", CONTEXT_REDUCTION_REQUEST_SCHEMA_VERSION),
+                "context_reduction_request.schema_version",
+            ),
+        )
+        request.validate()
+        if (
+            "reduction_request_hash" in data
+            and require_non_empty_str(
+                data["reduction_request_hash"],
+                "context_reduction_request.reduction_request_hash",
+            )
+            != request.reduction_request_hash
+        ):
+            raise ContractValidationError("context_reduction_request.reduction_request_hash does not match content")
+        return request
+
+    @property
+    def reduction_request_hash(self) -> str:
+        return stable_json_hash(self._content_dict(include_hash=False))
+
+    def validate(self) -> None:
+        _require_schema(
+            self.schema_version,
+            CONTEXT_REDUCTION_REQUEST_SCHEMA_VERSION,
+            "context_reduction_request.schema_version",
+        )
+        _safe_id(self.reduction_id, "context_reduction_request.reduction_id")
+        require_enum(self.reason, ContextReductionReason, "context_reduction_request.reason")
+        require_non_empty_str(self.role, "context_reduction_request.role")
+        validate_ref(self.contract_ref, "context_reduction_request.contract_ref")
+        _hash(self.contract_hash, "context_reduction_request.contract_hash")
+        validate_ref(self.permission_manifest_ref, "context_reduction_request.permission_manifest_ref")
+        validate_ref(self.context_view_ref, "context_reduction_request.context_view_ref")
+        _hash(self.context_hash, "context_reduction_request.context_hash")
+        validate_ref(self.source_snapshot_ref, "context_reduction_request.source_snapshot_ref")
+        if not self.expected_output_refs:
+            raise ContractValidationError("context_reduction_request.expected_output_refs must not be empty")
+        _unique_refs(self.expected_output_refs, "context_reduction_request.expected_output_refs")
+        _optional_ref(self.worker_brief_ref, "context_reduction_request.worker_brief_ref")
+        _optional_ref(self.judge_rubric_ref, "context_reduction_request.judge_rubric_ref")
+        _optional_ref(self.pressure_ref, "context_reduction_request.pressure_ref")
+        _optional_ref(self.current_working_set_ref, "context_reduction_request.current_working_set_ref")
+        _unique_refs(self.thrash_diagnostics_refs, "context_reduction_request.thrash_diagnostics_refs")
+        _unique_refs(self.recent_projection_refs, "context_reduction_request.recent_projection_refs")
+        _unique_refs(self.source_refs, "context_reduction_request.source_refs")
+        _unique_refs(self.tool_observation_refs, "context_reduction_request.tool_observation_refs")
+        _unique_refs(self.checkpoint_refs, "context_reduction_request.checkpoint_refs")
+        _metadata(self.metadata, "context_reduction_request.metadata")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self._content_dict(include_hash=True)
+
+    def _content_dict(self, *, include_hash: bool) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "reduction_id": self.reduction_id,
+            "reason": self.reason.value,
+            "role": self.role,
+            "contract_ref": self.contract_ref,
+            "contract_hash": self.contract_hash,
+            "permission_manifest_ref": self.permission_manifest_ref,
+            "context_view_ref": self.context_view_ref,
+            "context_hash": self.context_hash,
+            "source_snapshot_ref": self.source_snapshot_ref,
+            "expected_output_refs": list(self.expected_output_refs),
+            "worker_brief_ref": self.worker_brief_ref,
+            "judge_rubric_ref": self.judge_rubric_ref,
+            "pressure_ref": self.pressure_ref,
+            "current_working_set_ref": self.current_working_set_ref,
+            "thrash_diagnostics_refs": list(self.thrash_diagnostics_refs),
+            "recent_projection_refs": list(self.recent_projection_refs),
+            "source_refs": list(self.source_refs),
+            "tool_observation_refs": list(self.tool_observation_refs),
+            "checkpoint_refs": list(self.checkpoint_refs),
+            "metadata": dict(self.metadata),
+        }
+        if include_hash:
+            payload["reduction_request_hash"] = self.reduction_request_hash
+        return payload
+
+
+@dataclass(frozen=True)
+class ContextReductionResult:
+    """Refs-only result from a managed context reducer PiWorker."""
+
+    reduction_id: str
+    status: ContextReductionStatus
+    request_ref: str
+    permission_manifest_ref: str
+    checkpoint_ref: str | None = None
+    working_set_ref: str | None = None
+    summary_refs: list[str] = field(default_factory=list)
+    pinned_refs: list[str] = field(default_factory=list)
+    evicted_refs: list[str] = field(default_factory=list)
+    omitted_refs: list[str] = field(default_factory=list)
+    source_refs: list[str] = field(default_factory=list)
+    denied_source_refs: list[str] = field(default_factory=list)
+    compaction_record_ref: str | None = None
+    validation_report_ref: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    schema_version: str = CONTEXT_REDUCTION_RESULT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ContextReductionResult":
+        data = _refs_only_mapping(payload, "context_reduction_result")
+        result = cls(
+            reduction_id=_safe_id(data.get("reduction_id"), "context_reduction_result.reduction_id"),
+            status=require_enum(data.get("status"), ContextReductionStatus, "context_reduction_result.status"),
+            request_ref=validate_ref(data.get("request_ref"), "context_reduction_result.request_ref"),
+            permission_manifest_ref=validate_ref(
+                data.get("permission_manifest_ref"),
+                "context_reduction_result.permission_manifest_ref",
+            ),
+            checkpoint_ref=_optional_ref(data.get("checkpoint_ref"), "context_reduction_result.checkpoint_ref"),
+            working_set_ref=_optional_ref(data.get("working_set_ref"), "context_reduction_result.working_set_ref"),
+            summary_refs=_unique_refs(data.get("summary_refs", []), "context_reduction_result.summary_refs"),
+            pinned_refs=_unique_refs(data.get("pinned_refs", []), "context_reduction_result.pinned_refs"),
+            evicted_refs=_unique_refs(data.get("evicted_refs", []), "context_reduction_result.evicted_refs"),
+            omitted_refs=_unique_refs(data.get("omitted_refs", []), "context_reduction_result.omitted_refs"),
+            source_refs=_unique_refs(data.get("source_refs", []), "context_reduction_result.source_refs"),
+            denied_source_refs=_unique_refs(
+                data.get("denied_source_refs", []),
+                "context_reduction_result.denied_source_refs",
+            ),
+            compaction_record_ref=_optional_ref(
+                data.get("compaction_record_ref"),
+                "context_reduction_result.compaction_record_ref",
+            ),
+            validation_report_ref=_optional_ref(
+                data.get("validation_report_ref"),
+                "context_reduction_result.validation_report_ref",
+            ),
+            metadata=_metadata(data.get("metadata", {}), "context_reduction_result.metadata"),
+            schema_version=require_non_empty_str(
+                data.get("schema_version", CONTEXT_REDUCTION_RESULT_SCHEMA_VERSION),
+                "context_reduction_result.schema_version",
+            ),
+        )
+        result.validate()
+        if (
+            "reduction_result_hash" in data
+            and require_non_empty_str(data["reduction_result_hash"], "context_reduction_result.reduction_result_hash")
+            != result.reduction_result_hash
+        ):
+            raise ContractValidationError("context_reduction_result.reduction_result_hash does not match content")
+        return result
+
+    @property
+    def reduction_result_hash(self) -> str:
+        return stable_json_hash(self._content_dict(include_hash=False))
+
+    def validate(self) -> None:
+        _require_schema(
+            self.schema_version,
+            CONTEXT_REDUCTION_RESULT_SCHEMA_VERSION,
+            "context_reduction_result.schema_version",
+        )
+        _safe_id(self.reduction_id, "context_reduction_result.reduction_id")
+        require_enum(self.status, ContextReductionStatus, "context_reduction_result.status")
+        validate_ref(self.request_ref, "context_reduction_result.request_ref")
+        validate_ref(self.permission_manifest_ref, "context_reduction_result.permission_manifest_ref")
+        _optional_ref(self.checkpoint_ref, "context_reduction_result.checkpoint_ref")
+        _optional_ref(self.working_set_ref, "context_reduction_result.working_set_ref")
+        _unique_refs(self.summary_refs, "context_reduction_result.summary_refs")
+        _unique_refs(self.pinned_refs, "context_reduction_result.pinned_refs")
+        _unique_refs(self.evicted_refs, "context_reduction_result.evicted_refs")
+        _unique_refs(self.omitted_refs, "context_reduction_result.omitted_refs")
+        _unique_refs(self.source_refs, "context_reduction_result.source_refs")
+        _unique_refs(self.denied_source_refs, "context_reduction_result.denied_source_refs")
+        _optional_ref(self.compaction_record_ref, "context_reduction_result.compaction_record_ref")
+        _optional_ref(self.validation_report_ref, "context_reduction_result.validation_report_ref")
+        _metadata(self.metadata, "context_reduction_result.metadata")
+        if self.status is ContextReductionStatus.COMPLETED and not (
+            self.checkpoint_ref or self.working_set_ref or self.summary_refs
+        ):
+            raise ContractValidationError("completed context_reduction_result requires state output refs")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self._content_dict(include_hash=True)
+
+    def _content_dict(self, *, include_hash: bool) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "reduction_id": self.reduction_id,
+            "status": self.status.value,
+            "request_ref": self.request_ref,
+            "permission_manifest_ref": self.permission_manifest_ref,
+            "checkpoint_ref": self.checkpoint_ref,
+            "working_set_ref": self.working_set_ref,
+            "summary_refs": list(self.summary_refs),
+            "pinned_refs": list(self.pinned_refs),
+            "evicted_refs": list(self.evicted_refs),
+            "omitted_refs": list(self.omitted_refs),
+            "source_refs": list(self.source_refs),
+            "denied_source_refs": list(self.denied_source_refs),
+            "compaction_record_ref": self.compaction_record_ref,
+            "validation_report_ref": self.validation_report_ref,
+            "metadata": dict(self.metadata),
+        }
+        if include_hash:
+            payload["reduction_result_hash"] = self.reduction_result_hash
+        return payload
+
+
+@dataclass(frozen=True)
 class ContextCompactionRecord:
     """Durable lifecycle record for a compaction attempt."""
 
@@ -1351,10 +1803,43 @@ class ContextSourceFilterResult:
     denied_source_keys: list[str] = field(default_factory=list)
     denied_required_source_keys: list[str] = field(default_factory=list)
     denied_source_refs: list[str] = field(default_factory=list)
+    unavailable_source_keys: list[str] = field(default_factory=list)
+    unavailable_required_source_keys: list[str] = field(default_factory=list)
+    unavailable_source_refs: list[str] = field(default_factory=list)
 
     @property
     def has_denied_required_source(self) -> bool:
         return bool(self.denied_required_source_keys)
+
+    @property
+    def has_unavailable_required_source(self) -> bool:
+        return bool(self.unavailable_required_source_keys)
+
+
+@dataclass(frozen=True)
+class CompiledContext:
+    """Product-neutral context compile output for one provider-turn boundary."""
+
+    request: ContextCompileRequest
+    view: ContextView
+    result: ContextCompileResult
+    cache_layout: ContextCacheLayout
+    pressure: ContextPressureDiagnostics
+    source_snapshots: list[ContextSourceSnapshot] = field(default_factory=list)
+    filter_result: ContextSourceFilterResult | None = None
+
+    def __post_init__(self) -> None:
+        self.request.validate()
+        self.view.validate()
+        self.result.validate()
+        self.cache_layout.validate()
+        self.pressure.validate()
+        for snapshot in self.source_snapshots:
+            if not isinstance(snapshot, ContextSourceSnapshot):
+                raise ContractValidationError("compiled_context.source_snapshots must contain ContextSourceSnapshot values")
+            snapshot.validate()
+        if self.filter_result is not None and not isinstance(self.filter_result, ContextSourceFilterResult):
+            raise ContractValidationError("compiled_context.filter_result must be a ContextSourceFilterResult")
 
 
 def filter_context_sources(sources: list[ContextSource], read_gate: ReadGate) -> ContextSourceFilterResult:
@@ -1364,9 +1849,18 @@ def filter_context_sources(sources: list[ContextSource], read_gate: ReadGate) ->
     denied_keys: list[str] = []
     denied_required_keys: list[str] = []
     denied_refs: list[str] = []
+    unavailable_keys: list[str] = []
+    unavailable_required_keys: list[str] = []
+    unavailable_refs: list[str] = []
     for source in sources:
         source.validate()
         refs = _refs_for_source_permission(source)
+        if source.metadata.get("unavailable") is True:
+            unavailable_keys.append(source.source_key)
+            if source.required:
+                unavailable_required_keys.append(source.source_key)
+            unavailable_refs.extend(refs)
+            continue
         denied_for_source = [ref for ref in refs if not read_gate.check(ref).allowed]
         if denied_for_source:
             denied_keys.append(source.source_key)
@@ -1380,6 +1874,103 @@ def filter_context_sources(sources: list[ContextSource], read_gate: ReadGate) ->
         denied_source_keys=_unique_ordered(denied_keys),
         denied_required_source_keys=_unique_ordered(denied_required_keys),
         denied_source_refs=_unique_ordered_refs(denied_refs),
+        unavailable_source_keys=_unique_ordered(unavailable_keys),
+        unavailable_required_source_keys=_unique_ordered(unavailable_required_keys),
+        unavailable_source_refs=_unique_ordered_refs(unavailable_refs),
+    )
+
+
+def compile_context_request(
+    *,
+    request: ContextCompileRequest,
+    read_gate: ReadGate,
+    view_ref: str,
+    pressure_ref: str,
+    cache_layout_ref: str,
+    result_id: str,
+    layout_id: str,
+    pressure_id: str = "",
+    checkpoint_ref: str | None = None,
+    soft_ratio: float = 0.70,
+    hard_ratio: float = 0.90,
+) -> CompiledContext:
+    """Compile a ContextCompileRequest into a refs-only ContextView boundary.
+
+    This helper performs product-neutral source admission, deterministic bucket
+    placement, cache-layout diagnostics, and pressure recommendation. It does
+    not render provider messages or infer semantic importance.
+    """
+
+    request.validate()
+    view_ref = validate_ref(view_ref, "context_compile.view_ref")
+    pressure_ref = validate_ref(pressure_ref, "context_compile.pressure_ref")
+    cache_layout_ref = validate_ref(cache_layout_ref, "context_compile.cache_layout_ref")
+    result_id = _safe_id(result_id, "context_compile.result_id")
+    layout_id = _safe_id(layout_id, "context_compile.layout_id")
+    if pressure_id:
+        _safe_id(pressure_id, "context_compile.pressure_id")
+    filter_result = filter_context_sources(list(request.context_sources), read_gate)
+    snapshots = [
+        ContextSourceSnapshot.from_source(source, sequence=index)
+        for index, source in enumerate(filter_result.allowed_sources)
+    ]
+    view = _context_view_from_request(
+        request=request,
+        allowed_sources=filter_result.allowed_sources,
+        denied_source_refs=filter_result.denied_source_refs,
+        diagnostics_ref=view_ref,
+    )
+    layout = build_context_cache_layout(
+        layout_id=layout_id,
+        view_ref=view_ref,
+        view=view,
+        provider_cache_profile=request.provider_cache_profile,
+    )
+    estimated_tokens = sum(segment.token_estimate for segment in view.all_segments)
+    effective_token_budget = request.token_budget if request.token_budget is not None else max(1, estimated_tokens * 2)
+    pressure = build_context_pressure_diagnostics(
+        view_ref=view_ref,
+        view=view,
+        estimated_input_tokens=estimated_tokens,
+        token_budget=effective_token_budget,
+        soft_ratio=soft_ratio,
+        hard_ratio=hard_ratio,
+        checkpoint_ref=checkpoint_ref,
+    )
+    action = _compile_action_from_filter_and_pressure(filter_result, pressure.recommended_action)
+    result = ContextCompileResult(
+        result_id=result_id,
+        view_ref=view_ref,
+        context_hash=view.context_hash,
+        action=action,
+        pressure_ref=pressure_ref,
+        working_set_ref=request.working_set_ref,
+        cache_layout_ref=cache_layout_ref,
+        admitted_update_refs=_admitted_update_refs(filter_result.allowed_sources),
+        omitted_refs=_omitted_refs(filter_result.allowed_sources, filter_result.denied_source_refs),
+        demoted_refs=_demoted_refs(filter_result.allowed_sources),
+        denied_source_refs=list(filter_result.denied_source_refs),
+        diagnostics_refs=[],
+        metadata={
+            "request_id": request.request_id,
+            "denied_source_keys": list(filter_result.denied_source_keys),
+            "denied_required_source_keys": list(filter_result.denied_required_source_keys),
+            "unavailable_source_keys": list(filter_result.unavailable_source_keys),
+            "unavailable_required_source_keys": list(filter_result.unavailable_required_source_keys),
+            "unavailable_source_refs": list(filter_result.unavailable_source_refs),
+            "pressure_action": pressure.recommended_action.value,
+            "pressure_id": pressure_id,
+            "source_snapshot_count": len(snapshots),
+        },
+    )
+    return CompiledContext(
+        request=request,
+        view=view,
+        result=result,
+        cache_layout=layout,
+        pressure=pressure,
+        source_snapshots=snapshots,
+        filter_result=filter_result,
     )
 
 
@@ -1413,6 +2004,51 @@ def build_context_epoch(
         context_view_ref=context_view_ref,
         parent_epoch_ref=parent_epoch_ref,
         created_at=created_at or _utc_now(),
+    )
+
+
+def reconcile_context_epoch(
+    *,
+    epoch_id: str,
+    request: ContextCompileRequest,
+    view: ContextView,
+    baseline_ref: str,
+    source_snapshot_ref: str,
+    previous_epoch: ContextEpoch | None = None,
+    provider_cache_profile: Mapping[str, Any] | None = None,
+    created_at: str | None = None,
+) -> ContextEpoch:
+    """Return a cache epoch, preserving the previous baseline when compatible."""
+
+    request.validate()
+    view.validate()
+    baseline_ref = validate_ref(baseline_ref, "context_epoch.baseline_ref")
+    source_snapshot_ref = validate_ref(source_snapshot_ref, "context_epoch.source_snapshot_ref")
+    profile = request.provider_cache_profile if provider_cache_profile is None else provider_cache_profile
+    stable_baseline_hash = stable_json_hash(
+        [segment.to_dict() for segment in sorted(view.stable_prefix, key=_segment_sort_key)]
+    )
+    if (
+        previous_epoch is not None
+        and previous_epoch.role == request.role
+        and previous_epoch.contract_hash == request.contract_hash
+        and previous_epoch.permission_manifest_ref == request.permission_manifest_ref
+        and previous_epoch.baseline_hash == stable_baseline_hash
+    ):
+        return previous_epoch
+    return build_context_epoch(
+        epoch_id=epoch_id,
+        role=request.role,
+        contract_hash=request.contract_hash,
+        permission_manifest_ref=request.permission_manifest_ref,
+        baseline_ref=baseline_ref,
+        baseline_hash=stable_baseline_hash,
+        source_snapshot_ref=source_snapshot_ref,
+        baseline_seq=(previous_epoch.baseline_seq + 1) if previous_epoch is not None else 0,
+        provider_cache_profile=profile,
+        context_view_ref=baseline_ref,
+        parent_epoch_ref=None,
+        created_at=created_at,
     )
 
 
@@ -1455,6 +2091,144 @@ def build_context_cache_layout(
         epoch_invalidation_refs=invalidation_refs,
         provider_cache_profile={} if provider_cache_profile is None else provider_cache_profile,
     )
+
+
+def _context_view_from_request(
+    *,
+    request: ContextCompileRequest,
+    allowed_sources: list[ContextSource],
+    denied_source_refs: list[str],
+    diagnostics_ref: str,
+) -> ContextView:
+    stable: list[ContextSegment] = []
+    semi_stable: list[ContextSegment] = []
+    volatile: list[ContextSegment] = []
+    omitted: list[ContextSegment] = []
+    for index, source in enumerate(sorted(allowed_sources, key=_source_sort_key)):
+        segment = _segment_from_source(source, role=request.role, index=index)
+        if source.inline_policy is ContextInlinePolicy.OMITTED:
+            omitted.append(segment)
+        elif source.cache_policy is ContextCachePolicy.STABLE:
+            stable.append(segment)
+        elif source.cache_policy is ContextCachePolicy.SEMI_STABLE:
+            semi_stable.append(segment)
+        else:
+            volatile.append(segment)
+    return ContextView(
+        view_id=request.request_id,
+        role=request.role,
+        contract_ref=request.contract_ref,
+        contract_hash=request.contract_hash,
+        permission_manifest_ref=request.permission_manifest_ref,
+        stable_prefix=stable,
+        semi_stable_context=semi_stable,
+        volatile_tail=volatile,
+        omitted_segments=omitted,
+        token_budget=request.token_budget,
+        diagnostics_ref=diagnostics_ref,
+    )
+
+
+def _segment_from_source(source: ContextSource, *, role: str, index: int) -> ContextSegment:
+    body_ref = source.projection_ref
+    if body_ref is None and source.inline_policy is ContextInlinePolicy.INLINE and source.source_refs:
+        body_ref = source.source_refs[0]
+    return ContextSegment(
+        segment_id=f"src_{index:03d}_{_safe_segment_suffix(source.source_key)}",
+        kind=_segment_kind_from_source_kind(source.kind),
+        source_refs=list(source.source_refs),
+        source_hashes=dict(source.source_hashes),
+        cache_policy=source.cache_policy,
+        inline_policy=source.inline_policy,
+        token_estimate=source.token_estimate,
+        priority=source.priority,
+        role_scope=[role],
+        body_ref=body_ref,
+        metadata={
+            "source_key": source.source_key,
+            "source_kind": source.kind.value,
+            "permission_manifest_ref": source.permission_manifest_ref or "",
+            **dict(source.metadata),
+        },
+    )
+
+
+def _segment_kind_from_source_kind(kind: ContextSourceKind) -> ContextSegmentKind:
+    if kind is ContextSourceKind.AUTHORITY:
+        return ContextSegmentKind.AUTHORITY
+    if kind is ContextSourceKind.INSTRUCTION:
+        return ContextSegmentKind.INSTRUCTION
+    if kind is ContextSourceKind.TOOL_OBSERVATION:
+        return ContextSegmentKind.TOOL_OBSERVATION
+    if kind is ContextSourceKind.SUMMARY:
+        return ContextSegmentKind.SEMANTIC_SUMMARY
+    if kind is ContextSourceKind.RUNTIME_DIAGNOSTIC:
+        return ContextSegmentKind.RUNTIME_DIAGNOSTIC
+    if kind is ContextSourceKind.USER_EVENT:
+        return ContextSegmentKind.ARTIFACT_REF
+    if kind is ContextSourceKind.WORKING_SET:
+        return ContextSegmentKind.ARTIFACT_PREVIEW
+    return ContextSegmentKind.ARTIFACT_REF
+
+
+def _compile_action_from_filter_and_pressure(
+    filter_result: ContextSourceFilterResult,
+    pressure_action: ContextPressureAction,
+) -> ContextCompileAction:
+    if filter_result.has_denied_required_source:
+        return ContextCompileAction.BLOCKED_BY_DENIED_REQUIRED_SOURCE
+    if filter_result.has_unavailable_required_source:
+        return ContextCompileAction.BLOCKED_BY_UNAVAILABLE_AUTHORITY
+    if pressure_action is ContextPressureAction.CHECKPOINT_BEFORE_NEXT_TURN:
+        return ContextCompileAction.CHECKPOINT_BEFORE_NEXT_TURN
+    if pressure_action is ContextPressureAction.PREPARE_CHECKPOINT:
+        return ContextCompileAction.PREPARE_CHECKPOINT
+    return ContextCompileAction.CONTINUE
+
+
+def _admitted_update_refs(sources: list[ContextSource]) -> list[str]:
+    return _unique_ordered_refs(
+        [
+            ref
+            for source in sources
+            if source.cache_policy in {ContextCachePolicy.SEMI_STABLE, ContextCachePolicy.VOLATILE, ContextCachePolicy.NO_CACHE}
+            for ref in _refs_for_source_permission(source)
+        ]
+    )
+
+
+def _omitted_refs(sources: list[ContextSource], denied_source_refs: list[str]) -> list[str]:
+    return _unique_ordered_refs(
+        [
+            *[
+                ref
+                for source in sources
+                if source.inline_policy is ContextInlinePolicy.OMITTED
+                for ref in _refs_for_source_permission(source)
+            ],
+        ]
+    )
+
+
+def _demoted_refs(sources: list[ContextSource]) -> list[str]:
+    return _unique_ordered_refs(
+        [
+            ref
+            for source in sources
+            if source.inline_policy in {ContextInlinePolicy.REF_ONLY, ContextInlinePolicy.OMITTED}
+            for ref in _refs_for_source_permission(source)
+        ]
+    )
+
+
+def _source_sort_key(source: ContextSource) -> tuple[int, str]:
+    return (-int(source.priority), source.source_key)
+
+
+def _safe_segment_suffix(value: str) -> str:
+    suffix = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
+    suffix = suffix.strip("_") or "source"
+    return suffix[:80]
 
 
 def build_thrash_diagnostics(

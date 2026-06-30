@@ -10,9 +10,11 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import ContractValidationError, validate_ref
+from .ref_store import RefStore
 
 
 PiWorkerProgressSink = Callable[[dict[str, Any]], None]
+PiWorkerProgressStoreTarget = RefStore | str | Path
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,7 @@ class PiWorkerProgressBridge:
     def __init__(
         self,
         *,
-        workspace: str | Path,
+        workspace: PiWorkerProgressStoreTarget,
         call_id: str,
         events_ref: str,
         expected_output_refs: Sequence[str] = (),
@@ -57,7 +59,7 @@ class PiWorkerProgressBridge:
         progress_hint: str = "piworker",
         config: PiWorkerProgressBridgeConfig | None = None,
     ) -> None:
-        self.workspace = Path(workspace).resolve()
+        self.workspace: PiWorkerProgressStoreTarget = Path(workspace).resolve() if isinstance(workspace, (str, Path)) else workspace
         self.call_id = call_id
         self.worker_label = worker_label or call_id
         self.events_ref = validate_ref(events_ref, "piworker_progress.events_ref")
@@ -121,13 +123,24 @@ class PiWorkerProgressBridge:
             self._stop.wait(max(self.config.poll_interval_seconds, 0.05))
 
     def _read_new_events(self) -> list[Mapping[str, Any]]:
-        path = _resolve_workspace_ref(self.workspace, self.events_ref)
-        if not path.is_file():
-            return []
-        with path.open("rb") as handle:
-            handle.seek(self._offset)
-            chunk = handle.read()
-            self._offset = handle.tell()
+        safe_events_ref = validate_ref(self.events_ref, "piworker_progress.events_ref")
+        if isinstance(self.workspace, (str, Path)):
+            path = _resolve_workspace_ref(Path(self.workspace).resolve(), safe_events_ref)
+            if not path.is_file():
+                return []
+            with path.open("rb") as handle:
+                handle.seek(self._offset)
+                chunk = handle.read()
+                self._offset = handle.tell()
+        else:
+            if not self.workspace.exists(safe_events_ref):
+                return []
+            body = self.workspace.read_bytes(safe_events_ref)
+            if self._offset > len(body):
+                self._offset = 0
+                self._pending = b""
+            chunk = body[self._offset:]
+            self._offset = len(body)
         if not chunk:
             return []
         data = self._pending + chunk
@@ -148,10 +161,9 @@ class PiWorkerProgressBridge:
     def _artifact_summaries(self) -> list[_ProgressSummary]:
         summaries: list[_ProgressSummary] = []
         for ref in self.expected_output_refs:
-            path = _resolve_workspace_ref(self.workspace, ref)
-            if not path.is_file():
+            size = _artifact_size(self.workspace, ref)
+            if size is None:
                 continue
-            size = path.stat().st_size
             previous = self._artifact_sizes.get(ref)
             self._artifact_sizes[ref] = size
             if previous is None:
@@ -375,6 +387,18 @@ def _resolve_workspace_ref(root: Path, ref: str) -> Path:
     if path != root and root not in path.parents:
         raise ContractValidationError("piworker progress ref escapes workspace")
     return path
+
+
+def _artifact_size(workspace: PiWorkerProgressStoreTarget, ref: str) -> int | None:
+    safe_ref = validate_ref(ref, "piworker_progress.ref")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_workspace_ref(Path(workspace).resolve(), safe_ref)
+        if not path.is_file():
+            return None
+        return path.stat().st_size
+    if not workspace.exists(safe_ref):
+        return None
+    return len(workspace.read_bytes(safe_ref))
 
 
 def _is_safe_ref(value: str) -> bool:

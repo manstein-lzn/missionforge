@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,22 +23,28 @@ from ..contracts import (
     require_mapping,
     require_non_empty_str,
     require_str_list,
+    stable_json_hash,
     validate_ref,
 )
+from ..context_engine import ContextReadObservation, build_thrash_diagnostics
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
 from ..permissions import PermissionEnforcer, WriteGate
 from ..piworker_progress import PiWorkerProgressBridge, PiWorkerProgressSink
 from ..piworker_call import PiWorkerCall
+from ..ref_store import RefStore
 from ..runtime_results import ExecutionReport, WorkerAdapterResult, WorkerResult
 from ..runtime_control import CapabilityGrant, SandboxMode, SandboxProfile, create_capability_grant
 from ..task_contract import PermissionManifest
+from ..tool_projection import ToolOutputProjection, ToolOutputProjectionPolicy
 from .pi_agent_provider_config import resolve_pi_agent_provider_environment
 
 
 PI_AGENT_INPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_input.v1"
 PI_AGENT_OUTPUT_SCHEMA_VERSION = "missionforge.pi_agent_runtime_output.v1"
+PI_AGENT_CONTEXT_ENGINE_SCHEMA_VERSION = "missionforge.pi_agent_context_engine.v1"
 PI_AGENT_CONTEXT_PROJECTION_SCHEMA_VERSION = "missionforge.pi_agent_context_projection.v1"
 PI_AGENT_CONTEXT_PROJECTION_CONFIG_SCHEMA_VERSION = "missionforge.pi_agent_context_projection_config.v1"
+TOOL_OUTPUT_PROJECTION_INDEX_SCHEMA_VERSION = "missionforge.tool_output_projection_index.v1"
 PI_AGENT_LONG_MEMORY_PACKET_SCHEMA_VERSION = "missionforge.long_memory_packet.v1"
 DEFAULT_CONTEXT_LARGE_OBSERVATION_BYTES = 8 * 1024
 DEFAULT_CONTEXT_SOFT_COMPACT_RATIO = 0.8
@@ -136,6 +143,7 @@ class PiAgentRuntimeInput:
     context_raw_dir_ref: str
     long_memory_packet_ref: str | None
     context_projection_config: Mapping[str, Any]
+    context_engine: Mapping[str, Any]
     extension_lock_ref: str | None
     extension_load_report_ref: str
     attempt_dir_ref: str
@@ -189,6 +197,7 @@ class PiAgentRuntimeInput:
             context_raw_dir_ref=validate_ref(refs["context_raw_dir"], "pi_agent_runtime_input.context_raw_dir_ref"),
             long_memory_packet_ref=config.long_memory_packet_ref,
             context_projection_config=_context_projection_config_payload(config),
+            context_engine=_context_engine_payload_from_call(call),
             extension_lock_ref=validate_ref(refs["extension_lock"], "pi_agent_runtime_input.extension_lock_ref")
             if refs.get("extension_lock")
             else None,
@@ -247,6 +256,7 @@ class PiAgentRuntimeInput:
             "pi_agent_runtime_input.sandbox_profile",
         )
         _validate_context_projection_config_payload(self.context_projection_config)
+        _validate_context_engine_payload(self.context_engine)
         _validate_runtime_authority(
             call=self.piworker_call,
             call_spec=self.call_spec,
@@ -279,6 +289,10 @@ class PiAgentRuntimeInput:
             "context_projection_config": ensure_json_value(
                 dict(self.context_projection_config),
                 "pi_agent_runtime_input.context_projection_config",
+            ),
+            "context_engine": ensure_json_value(
+                dict(self.context_engine),
+                "pi_agent_runtime_input.context_engine",
             ),
             "piworker_call": self.piworker_call.to_dict(),
             "call_spec": self.call_spec.to_dict(),
@@ -727,7 +741,8 @@ class PiAgentRuntimeAdapter:
         self,
         call: PiWorkerCall,
         *,
-        workspace: str | Path = ".",
+        workspace: str | Path | None = None,
+        store: RefStore | None = None,
         evidence_store: EvidenceLedger | None = None,
         call_spec: PiAgentCallSpec | None = None,
         exit_criteria: list[str] | None = None,
@@ -746,6 +761,8 @@ class PiAgentRuntimeAdapter:
         if not spec.expected_outputs:
             raise ContractValidationError("PiAgentRuntimeAdapter requires at least one expected output")
         _reject_outputs_outside_scope(spec)
+        if workspace is None:
+            raise ContractValidationError("PiAgentRuntimeAdapter requires explicit filesystem workspace")
 
         store = evidence_store or InMemoryEvidenceStore()
         root = Path(workspace).resolve()
@@ -824,6 +841,18 @@ class PiAgentRuntimeAdapter:
             context_observations_ref=run_result.context_observations_ref,
             context_projection_config=_context_projection_config_payload(self.config),
         )
+        tool_projection_index = _materialize_tool_output_projections(
+            root,
+            refs=refs,
+            context_projection_ref=run_result.context_projection_ref,
+            permission_manifest_ref=refs["permission_manifest"],
+        )
+        thrash_diagnostics = _write_context_thrash_diagnostics(
+            root,
+            call_id=spec.call_id,
+            context_observations_ref=run_result.context_observations_ref,
+            diagnostics_ref=refs["context_thrash_diagnostics"],
+        )
 
         event_refs.append(
             _record_adapter_event(
@@ -834,8 +863,8 @@ class PiAgentRuntimeAdapter:
                     "status": run_result.status,
                     "returncode": command_result.returncode,
                     "timed_out": command_result.timed_out,
-                    "stdout": _redacted_stream(command_result.stdout, provider_env.env),
-                    "stderr": _redacted_stream(command_result.stderr, provider_env.env),
+                    "stdout_summary": _stream_summary(command_result.stdout, provider_env.env),
+                    "stderr_summary": _stream_summary(command_result.stderr, provider_env.env),
                     "output_ref": run_result.output_ref,
                     "session_ref": run_result.session_ref,
                     "events_ref": run_result.events_ref,
@@ -863,7 +892,10 @@ class PiAgentRuntimeAdapter:
                     "savepoints_ref": run_result.savepoints_ref,
                     "context_observations_ref": run_result.context_observations_ref,
                     "context_projection_ref": run_result.context_projection_ref,
+                    "context_thrash_diagnostics_ref": refs["context_thrash_diagnostics"],
+                    "tool_output_projection_index_ref": tool_projection_index["index_ref"],
                     "duration_ms": run_result.duration_ms,
+                    "context_repeated_read_count": thrash_diagnostics["repeated_read_count"],
                     "produced_artifact_count": len(run_result.produced_artifacts),
                     "provider_mode": self.config.provider_mode,
                 },
@@ -871,6 +903,8 @@ class PiAgentRuntimeAdapter:
                     run_result.metrics_ref,
                     run_result.context_observations_ref,
                     run_result.context_projection_ref,
+                    refs["context_thrash_diagnostics"],
+                    tool_projection_index["index_ref"],
                 ],
             )
         )
@@ -892,6 +926,8 @@ class PiAgentRuntimeAdapter:
                 refs["savepoints"],
                 refs["context_observations"],
                 refs["context_projection"],
+                refs["context_thrash_diagnostics"],
+                *tool_projection_index["all_refs"],
             ]),
             evidence_refs=_dedupe_refs(event_refs),
             worker_claims=list(run_result.worker_claims),
@@ -937,6 +973,11 @@ class PiAgentRuntimeAdapter:
                 "savepoints_ref": run_result.savepoints_ref,
                 "context_observations_ref": run_result.context_observations_ref,
                 "context_projection_ref": run_result.context_projection_ref,
+                "context_thrash_diagnostics_ref": refs["context_thrash_diagnostics"],
+                "context_read_observation_count": thrash_diagnostics["observation_count"],
+                "context_repeated_read_count": thrash_diagnostics["repeated_read_count"],
+                "tool_output_projection_index_ref": tool_projection_index["index_ref"],
+                "tool_output_projection_count": tool_projection_index["count"],
             },
         )
         _write_json(_resolve_workspace_ref(root, report_ref), report.to_dict())
@@ -952,6 +993,8 @@ class PiAgentRuntimeAdapter:
                 run_result.savepoints_ref,
                 run_result.context_observations_ref,
                 run_result.context_projection_ref,
+                refs["context_thrash_diagnostics"],
+                tool_projection_index["index_ref"],
                 *output_package_refs,
             ]),
             evidence_refs=list(report.evidence_refs),
@@ -962,6 +1005,8 @@ class PiAgentRuntimeAdapter:
                 "provider_mode": self.config.provider_mode,
                 "failure_summary": _failure_summary(run_result.failures),
                 "non_retryable_provider_error": _non_retryable_provider_error(run_result.failures),
+                "context_thrash_diagnostics_ref": refs["context_thrash_diagnostics"],
+                "context_repeated_read_count": thrash_diagnostics["repeated_read_count"],
             },
         )
         adapter_result.validate()
@@ -1412,6 +1457,7 @@ def _pi_agent_refs(call_id: str) -> dict[str, str]:
         "savepoints": f"{attempt_dir}/pi_agent_savepoints.jsonl",
         "context_observations": f"{attempt_dir}/context/tool_observations.jsonl",
         "context_projection": f"{attempt_dir}/context/projection.json",
+        "context_thrash_diagnostics": f"{attempt_dir}/context/thrash_diagnostics.json",
         "context_raw_dir": f"{attempt_dir}/context/raw",
         "extension_lock": f"{attempt_dir}/compiled/extension_lock.json",
         "extension_load_report": f"{attempt_dir}/reports/extension_load_report.json",
@@ -1432,6 +1478,174 @@ def _context_projection_config_payload(config: PiAgentRuntimeConfig) -> dict[str
         "cache_aware": config.context_cache_aware,
     }
     return _validate_context_projection_config_payload(payload)
+
+
+def _context_engine_payload_from_call(call: PiWorkerCall) -> dict[str, Any]:
+    metadata = dict(call.metadata)
+    context_view_ref = _metadata_ref(metadata, "context_projection_ref")
+    compile_result_ref = _metadata_ref(metadata, "context_compile_result_ref")
+    enabled = bool(context_view_ref and compile_result_ref)
+    payload = {
+        "schema_version": PI_AGENT_CONTEXT_ENGINE_SCHEMA_VERSION,
+        "enabled": enabled,
+        "context_view_ref": context_view_ref,
+        "context_compile_request_ref": _metadata_ref(metadata, "context_compile_request_ref"),
+        "context_compile_result_ref": compile_result_ref,
+        "context_baseline_ref": _metadata_ref(metadata, "context_baseline_ref"),
+        "context_source_snapshot_ref": _metadata_ref(metadata, "context_source_snapshot_ref"),
+        "context_epoch_ref": _metadata_ref(metadata, "context_epoch_ref"),
+        "context_cache_layout_ref": _metadata_ref(metadata, "context_cache_layout_ref"),
+        "context_pressure_ref": _metadata_ref(metadata, "context_pressure_ref"),
+        "context_turn_safe_point_ref": _metadata_ref(metadata, "context_turn_safe_point_ref"),
+        "context_turn_boundary_ref": _metadata_ref(metadata, "context_turn_boundary_ref"),
+        "context_hash": _metadata_hash(metadata, "context_hash"),
+        "context_compile_action": _metadata_text(metadata, "context_compile_action"),
+    }
+    _validate_context_boundary_reuse(metadata, payload)
+    return _validate_context_engine_payload(payload)
+
+
+def _validate_context_engine_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    data = require_mapping(payload, "pi_agent_context_engine")
+    schema_version = data.get("schema_version") or PI_AGENT_CONTEXT_ENGINE_SCHEMA_VERSION
+    if schema_version != PI_AGENT_CONTEXT_ENGINE_SCHEMA_VERSION:
+        raise ContractValidationError(f"unsupported pi_agent_context_engine.schema_version: {schema_version}")
+    enabled = data.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ContractValidationError("pi_agent_context_engine.enabled must be a boolean")
+    result = {
+        "schema_version": PI_AGENT_CONTEXT_ENGINE_SCHEMA_VERSION,
+        "enabled": enabled,
+        "context_view_ref": _optional_ref_field(data.get("context_view_ref"), "pi_agent_context_engine.context_view_ref"),
+        "context_compile_request_ref": _optional_ref_field(
+            data.get("context_compile_request_ref"),
+            "pi_agent_context_engine.context_compile_request_ref",
+        ),
+        "context_compile_result_ref": _optional_ref_field(
+            data.get("context_compile_result_ref"),
+            "pi_agent_context_engine.context_compile_result_ref",
+        ),
+        "context_baseline_ref": _optional_ref_field(
+            data.get("context_baseline_ref"),
+            "pi_agent_context_engine.context_baseline_ref",
+        ),
+        "context_source_snapshot_ref": _optional_ref_field(
+            data.get("context_source_snapshot_ref"),
+            "pi_agent_context_engine.context_source_snapshot_ref",
+        ),
+        "context_epoch_ref": _optional_ref_field(data.get("context_epoch_ref"), "pi_agent_context_engine.context_epoch_ref"),
+        "context_cache_layout_ref": _optional_ref_field(
+            data.get("context_cache_layout_ref"),
+            "pi_agent_context_engine.context_cache_layout_ref",
+        ),
+        "context_pressure_ref": _optional_ref_field(
+            data.get("context_pressure_ref"),
+            "pi_agent_context_engine.context_pressure_ref",
+        ),
+        "context_turn_safe_point_ref": _optional_ref_field(
+            data.get("context_turn_safe_point_ref"),
+            "pi_agent_context_engine.context_turn_safe_point_ref",
+        ),
+        "context_turn_boundary_ref": _optional_ref_field(
+            data.get("context_turn_boundary_ref"),
+            "pi_agent_context_engine.context_turn_boundary_ref",
+        ),
+        "context_hash": _optional_hash_field(data.get("context_hash"), "pi_agent_context_engine.context_hash"),
+        "context_compile_action": _optional_text_field(
+            data.get("context_compile_action"),
+            "pi_agent_context_engine.context_compile_action",
+        ),
+    }
+    if enabled and not (result["context_view_ref"] and result["context_compile_result_ref"]):
+        raise ContractValidationError("pi_agent_context_engine enabled requires context_view_ref and context_compile_result_ref")
+    return result
+
+
+def _metadata_ref(metadata: Mapping[str, Any], key: str) -> str | None:
+    value = metadata.get(key)
+    if value is None or value == "":
+        return None
+    return validate_ref(value, f"pi_agent_context_engine.{key}")
+
+
+def _metadata_hash(metadata: Mapping[str, Any], key: str) -> str | None:
+    return _optional_hash_field(metadata.get(key), f"pi_agent_context_engine.{key}")
+
+
+def _metadata_text(metadata: Mapping[str, Any], key: str) -> str:
+    return _optional_text_field(metadata.get(key), f"pi_agent_context_engine.{key}")
+
+
+def _validate_context_boundary_reuse(metadata: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
+    if not metadata.get("kernel_parent_call_id"):
+        return
+    if not any(key.endswith("_ref") and payload.get(key) for key in payload):
+        return
+    reuse = _optional_text_field(metadata.get("context_boundary_reuse"), "pi_agent_context_engine.context_boundary_reuse")
+    if reuse != "same_preflight_boundary":
+        raise ContractValidationError(
+            "pi_agent_context_engine retry attempt must declare same_preflight_boundary context reuse"
+        )
+    parent_call_id = _optional_text_field(
+        metadata.get("context_parent_call_id"),
+        "pi_agent_context_engine.context_parent_call_id",
+    )
+    kernel_parent_call_id = _optional_text_field(
+        metadata.get("kernel_parent_call_id"),
+        "pi_agent_context_engine.kernel_parent_call_id",
+    )
+    if not parent_call_id or parent_call_id != kernel_parent_call_id:
+        raise ContractValidationError("pi_agent_context_engine retry attempt requires context_parent_call_id")
+    parent_compile_result_ref = _optional_ref_field(
+        metadata.get("context_parent_compile_result_ref"),
+        "pi_agent_context_engine.context_parent_compile_result_ref",
+    )
+    if parent_compile_result_ref != payload.get("context_compile_result_ref"):
+        raise ContractValidationError(
+            "pi_agent_context_engine retry attempt compile result must match same_preflight_boundary"
+        )
+    parent_turn_boundary_ref = _optional_ref_field(
+        metadata.get("context_parent_turn_boundary_ref"),
+        "pi_agent_context_engine.context_parent_turn_boundary_ref",
+    )
+    if not parent_turn_boundary_ref or parent_turn_boundary_ref != payload.get("context_turn_boundary_ref"):
+        raise ContractValidationError(
+            "pi_agent_context_engine retry attempt turn boundary must match same_preflight_boundary"
+        )
+    parent_epoch_ref = _optional_ref_field(
+        metadata.get("context_parent_epoch_ref"),
+        "pi_agent_context_engine.context_parent_epoch_ref",
+    )
+    if not parent_epoch_ref or parent_epoch_ref != payload.get("context_epoch_ref"):
+        raise ContractValidationError(
+            "pi_agent_context_engine retry attempt epoch must match same_preflight_boundary"
+        )
+
+
+def _optional_ref_field(value: Any, field_name: str) -> str | None:
+    if value is None or value == "":
+        return None
+    return validate_ref(value, field_name)
+
+
+def _optional_hash_field(value: Any, field_name: str) -> str | None:
+    if value is None or value == "":
+        return None
+    text = require_non_empty_str(value, field_name)
+    if not text.startswith("sha256:") or len(text) != len("sha256:") + 64:
+        raise ContractValidationError(f"{field_name} must be a sha256 hash")
+    if any(char not in "0123456789abcdef" for char in text[len("sha256:"):]):
+        raise ContractValidationError(f"{field_name} must be a lowercase sha256 hash")
+    return text
+
+
+def _optional_text_field(value: Any, field_name: str) -> str:
+    if value is None or value == "":
+        return ""
+    text = require_non_empty_str(value, field_name)
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        raise ContractValidationError(f"{field_name} must not contain control characters")
+    return text[:300]
 
 
 def _validate_context_projection_config_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1488,6 +1702,7 @@ def _runtime_permission_manifest_for_call(
             *call.visible_refs,
             *call.writable_refs,
             *[_parent_ref(ref) for ref in call.expected_output_refs],
+            *_context_engine_payload_refs(_context_engine_payload_from_call(call)),
         ]
     )
     return {
@@ -1606,6 +1821,13 @@ def _validate_runtime_authority(
             enforcer.ensure_read(ref)
         except ContractValidationError as exc:
             raise ContractValidationError(f"pi_agent_runtime visible ref is not readable by permission_manifest: {ref}") from exc
+    for ref in _context_engine_payload_refs(_context_engine_payload_from_call(call)):
+        try:
+            enforcer.ensure_read(ref)
+        except ContractValidationError as exc:
+            raise ContractValidationError(
+                f"pi_agent_runtime context_engine ref is not readable by permission_manifest: {ref}"
+            ) from exc
     write_gate = WriteGate(permission_manifest)
     for ref in _dedupe_refs([*call.writable_refs, *call.expected_output_refs, *call_spec.allowed_scope, *call_spec.expected_outputs]):
         try:
@@ -1623,6 +1845,19 @@ def _validate_call_spec_for_call(spec: PiAgentCallSpec, call: PiWorkerCall) -> N
     _require_same_refs(spec.visible_refs, expected_visible_refs, "pi_agent_call_spec.visible_refs")
     _require_same_refs(spec.allowed_scope, call.writable_refs, "pi_agent_call_spec.allowed_scope")
     _require_same_refs(spec.expected_outputs, call.expected_output_refs, "pi_agent_call_spec.expected_outputs")
+
+
+def _context_engine_payload_refs(payload: Mapping[str, Any]) -> list[str]:
+    data = _validate_context_engine_payload(payload)
+    if not data["enabled"]:
+        return []
+    return _dedupe_refs(
+        [
+            ref
+            for key, ref in data.items()
+            if key.endswith("_ref") and isinstance(ref, str) and ref
+        ]
+    )
 
 
 def _require_same_refs(actual: list[str], expected: list[str], field_name: str) -> None:
@@ -1734,6 +1969,288 @@ def _ensure_context_projection_snapshot(
     )
 
 
+def _materialize_tool_output_projections(
+    root: Path,
+    *,
+    refs: Mapping[str, str],
+    context_projection_ref: str,
+    permission_manifest_ref: str,
+) -> dict[str, Any]:
+    attempt_dir_ref = validate_ref(refs["attempt_dir"], "pi_agent_refs.attempt_dir")
+    index_ref = f"{attempt_dir_ref}/context/tool_output_projections/index.json"
+    try:
+        projection_payload = _read_json_ref(root, context_projection_ref)
+        observations = projection_payload.get("projected_observations", [])
+        if not isinstance(observations, list):
+            raise ContractValidationError("projected_observations must be a list")
+    except Exception:
+        return _write_tool_output_projection_index(
+            root,
+            index_ref=index_ref,
+            context_projection_ref=context_projection_ref,
+            permission_manifest_ref=permission_manifest_ref,
+            records=[],
+            skipped_observation_ids=[],
+            warnings=["projection_diagnostics_unavailable"],
+        )
+
+    records: list[dict[str, str]] = []
+    skipped: list[str] = []
+    for item in observations:
+        if not isinstance(item, Mapping):
+            continue
+        observation_id = _safe_projection_id(item.get("observation_id"))
+        if not observation_id:
+            continue
+        raw_ref = _optional_projection_ref(item.get("raw_ref"))
+        source_ref = _optional_projection_ref(item.get("source_ref"))
+        if not raw_ref and not source_ref:
+            skipped.append(observation_id)
+            continue
+        projection_ref = f"{attempt_dir_ref}/context/tool_output_projections/{observation_id}.txt"
+        record_ref = f"{attempt_dir_ref}/context/tool_output_projections/{observation_id}.json"
+        stub = _tool_output_projection_stub(item, raw_ref=raw_ref, source_ref=source_ref)
+        projection_path = _resolve_workspace_ref(root, projection_ref)
+        projection_path.parent.mkdir(parents=True, exist_ok=True)
+        projection_path.write_text(stub, encoding="utf-8")
+        projection = ToolOutputProjection(
+            projection_id=observation_id,
+            tool_observation_id=require_non_empty_str(item.get("observation_id"), "tool_output_projection.observation_id"),
+            policy=ToolOutputProjectionPolicy.REF_STUB,
+            projection_ref=projection_ref,
+            projection_hash="sha256:" + hashlib.sha256(stub.encode("utf-8")).hexdigest(),
+            projection_bytes=len(stub.encode("utf-8")),
+            original_bytes=_non_negative_int(item.get("content_bytes")),
+            raw_ref=raw_ref,
+            structured_ref=source_ref,
+            content_hash=_optional_projection_hash(item.get("content_hash")),
+            permission_manifest_ref=permission_manifest_ref,
+            metadata={
+                "tool_name": _safe_metadata_text(item.get("tool_name")),
+                "tool_call_id": _safe_metadata_text(item.get("tool_call_id")),
+                "status": _safe_metadata_text(item.get("status")),
+                "inline_policy": _safe_metadata_text(item.get("inline_policy")),
+                "source_hash": _safe_metadata_text(item.get("source_hash")),
+            },
+        )
+        _write_json(_resolve_workspace_ref(root, record_ref), projection.to_dict())
+        records.append(
+            {
+                "observation_id": observation_id,
+                "record_ref": record_ref,
+                "projection_ref": projection_ref,
+            }
+        )
+    return _write_tool_output_projection_index(
+        root,
+        index_ref=index_ref,
+        context_projection_ref=context_projection_ref,
+        permission_manifest_ref=permission_manifest_ref,
+        records=records,
+        skipped_observation_ids=skipped,
+        warnings=[],
+    )
+
+
+def _write_tool_output_projection_index(
+    root: Path,
+    *,
+    index_ref: str,
+    context_projection_ref: str,
+    permission_manifest_ref: str,
+    records: list[dict[str, str]],
+    skipped_observation_ids: list[str],
+    warnings: list[str],
+) -> dict[str, Any]:
+    record_refs = _dedupe_refs([record["record_ref"] for record in records])
+    projection_refs = _dedupe_refs([record["projection_ref"] for record in records])
+    payload = {
+        "schema_version": TOOL_OUTPUT_PROJECTION_INDEX_SCHEMA_VERSION,
+        "context_projection_ref": context_projection_ref,
+        "permission_manifest_ref": permission_manifest_ref,
+        "count": len(records),
+        "record_refs": record_refs,
+        "projection_refs": projection_refs,
+        "skipped_observation_ids": list(skipped_observation_ids),
+        "warnings": list(warnings),
+    }
+    payload["index_hash"] = stable_json_hash(payload)
+    _write_json(_resolve_workspace_ref(root, index_ref), payload)
+    all_refs = _dedupe_refs([index_ref, *record_refs, *projection_refs])
+    return {
+        "index_ref": index_ref,
+        "record_refs": record_refs,
+        "projection_refs": projection_refs,
+        "all_refs": all_refs,
+        "count": len(records),
+    }
+
+
+def _write_context_thrash_diagnostics(
+    root: Path,
+    *,
+    call_id: str,
+    context_observations_ref: str,
+    diagnostics_ref: str,
+) -> dict[str, Any]:
+    observations = _read_context_read_observations(root, context_observations_ref)
+    diagnostics = build_thrash_diagnostics(
+        diagnostics_id=_safe_diagnostics_id(call_id),
+        phase_label="runtime",
+        observations=observations,
+        repeat_threshold=2,
+    )
+    _write_json(_resolve_workspace_ref(root, diagnostics_ref), diagnostics.to_dict())
+    return {
+        "diagnostics_ref": diagnostics_ref,
+        "observation_count": len(observations),
+        "repeated_read_count": len(diagnostics.repeated_observation_ids),
+    }
+
+
+def _read_context_read_observations(root: Path, context_observations_ref: str) -> list[ContextReadObservation]:
+    path = _resolve_workspace_ref(root, context_observations_ref)
+    if not path.exists():
+        return []
+    aggregates: dict[tuple[Any, ...], dict[str, Any]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, Mapping) or item.get("tool_name") != "read":
+            continue
+        source_ref = _optional_projection_ref(item.get("source_ref"))
+        source_hash = _optional_projection_hash(item.get("source_hash"))
+        if not source_ref or not source_hash:
+            continue
+        source_range = _safe_context_source_range(item.get("source_range"))
+        tool_name = _safe_metadata_text(item.get("tool_name")) or "read"
+        key = (
+            source_ref,
+            source_hash,
+            tuple(sorted(source_range.items())),
+            tool_name,
+        )
+        if key not in aggregates:
+            aggregates[key] = {
+                "source_ref": source_ref,
+                "source_hash": source_hash,
+                "source_range": source_range,
+                "tool_name": tool_name,
+                "count": 0,
+            }
+        aggregates[key]["count"] += 1
+
+    observations: list[ContextReadObservation] = []
+    for index, data in enumerate(aggregates.values(), start=1):
+        observations.append(
+            ContextReadObservation(
+                observation_id=f"read-{index:06d}",
+                source_ref=data["source_ref"],
+                source_hash=data["source_hash"],
+                source_range=data["source_range"],
+                tool_name=data["tool_name"],
+                count=data["count"],
+                normalized_metadata={"origin": "pi_agent_runtime_tool_observations"},
+            )
+        )
+    return observations
+
+
+def _safe_context_source_range(value: Any) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, int] = {}
+    for key in ("offset", "limit", "line_start", "line_end"):
+        item = value.get(key)
+        if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+            result[key] = item
+    return result
+
+
+def _safe_diagnostics_id(call_id: str) -> str:
+    safe = _safe_projection_id(call_id)
+    return f"thrash-{safe or 'call'}"
+
+
+def _tool_output_projection_stub(item: Mapping[str, Any], *, raw_ref: str | None, source_ref: str | None) -> str:
+    lines = [
+        "[MissionForge tool output projection]",
+        f"observation_id: {_safe_metadata_text(item.get('observation_id'))}",
+        f"tool_call_id: {_safe_metadata_text(item.get('tool_call_id'))}",
+        f"tool_name: {_safe_metadata_text(item.get('tool_name'))}",
+        f"status: {_safe_metadata_text(item.get('status'))}",
+        f"inline_policy: {_safe_metadata_text(item.get('inline_policy'))}",
+        f"content_hash: {_safe_metadata_text(item.get('content_hash'))}",
+        f"content_bytes: {_non_negative_int(item.get('content_bytes'))}",
+        f"content_lines: {_non_negative_int(item.get('content_lines'))}",
+    ]
+    if raw_ref:
+        lines.append(f"raw_ref: {raw_ref}")
+    if source_ref:
+        lines.append(f"source_ref: {source_ref}")
+    source_hash = _safe_metadata_text(item.get("source_hash"))
+    if source_hash:
+        lines.append(f"source_hash: {source_hash}")
+    lines.append("projection_note: full tool result body remains behind cited refs and current permissions.")
+    return "\n".join(lines) + "\n"
+
+
+def _safe_projection_id(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    text = re.sub(r"[^a-zA-Z0-9_.-]", "_", value.strip())
+    if not text or text in {".", ".."}:
+        return ""
+    try:
+        return validate_ref(text, "tool_output_projection.projection_id")
+    except ContractValidationError:
+        return ""
+
+
+def _optional_projection_ref(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return validate_ref(value.strip(), "tool_output_projection.source_ref")
+    except ContractValidationError:
+        return None
+
+
+def _optional_projection_hash(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return None
+    if len(value) != len("sha256:") + 64:
+        return None
+    if any(char not in "0123456789abcdef" for char in value[len("sha256:"):]):
+        return None
+    return value
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
+def _safe_metadata_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        return ""
+    return text[:300]
+
+
 def _command_failure(command_result: PiAgentCommandResult, timeout_seconds: int) -> str | None:
     if command_result.timed_out:
         return f"pi-agent-runtime timed out after {timeout_seconds} seconds"
@@ -1775,6 +2292,18 @@ def _redacted_stream(text: str, env: Mapping[str, str]) -> str:
     if len(redacted) <= MAX_CAPTURED_STREAM_CHARS:
         return redacted
     return redacted[:MAX_CAPTURED_STREAM_CHARS] + "\n[truncated]"
+
+
+def _stream_summary(text: str, env: Mapping[str, str]) -> dict[str, Any]:
+    processed = _process_output_text(text)
+    redacted = _redacted_stream(processed, env)
+    return {
+        "present": bool(processed),
+        "byte_count": len(processed.encode("utf-8")),
+        "line_count": len(processed.splitlines()),
+        "redacted_hash": "sha256:" + hashlib.sha256(redacted.encode("utf-8")).hexdigest(),
+        "truncated": len(_redact_sensitive_text(processed, env)) > MAX_CAPTURED_STREAM_CHARS,
+    }
 
 
 def _redact_sensitive_text(text: str, env: Mapping[str, str]) -> str:

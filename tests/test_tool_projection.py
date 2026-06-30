@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 
 from missionforge import (
@@ -25,6 +26,10 @@ class ToolProjectionTests(unittest.TestCase):
 
         self.assertEqual(result.text, "short result")
         self.assertEqual(result.projection.policy, ToolOutputProjectionPolicy.KEEP)
+        self.assertEqual(
+            result.projection.projection_hash,
+            "sha256:" + hashlib.sha256(result.text.encode("utf-8")).hexdigest(),
+        )
         self.assertEqual(ToolOutputProjection.from_dict(result.projection.to_dict()).projection_id, "projection1")
 
     def test_large_tool_output_becomes_bounded_preview_with_raw_ref(self) -> None:
@@ -56,7 +61,7 @@ class ToolProjectionTests(unittest.TestCase):
             )
 
     def test_bounded_policy_requires_raw_ref(self) -> None:
-        with self.assertRaisesRegex(ContractValidationError, "require raw_ref"):
+        with self.assertRaisesRegex(ContractValidationError, "requires raw_ref"):
             ToolOutputProjection(
                 projection_id="projection1",
                 tool_observation_id="obs1",
@@ -66,6 +71,20 @@ class ToolProjectionTests(unittest.TestCase):
                 projection_bytes=1,
                 original_bytes=10,
             )
+
+    def test_ref_stub_policy_accepts_structured_source_ref(self) -> None:
+        projection = ToolOutputProjection(
+            projection_id="projection1",
+            tool_observation_id="obs1",
+            policy=ToolOutputProjectionPolicy.REF_STUB,
+            projection_ref="context/projections/obs1.txt",
+            projection_hash=HASH1,
+            projection_bytes=100,
+            original_bytes=10_000,
+            structured_ref="sources/source_packet.json",
+        )
+
+        self.assertEqual(ToolOutputProjection.from_dict(projection.to_dict()).structured_ref, "sources/source_packet.json")
 
 
 if __name__ == "__main__":

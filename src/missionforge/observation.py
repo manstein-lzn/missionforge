@@ -19,13 +19,15 @@ from .contracts import (
     require_str_list,
     validate_ref,
 )
-from .interaction import FileInteractionPort, InteractionDelivery, UserEvent, UserEventKind
+from .interaction import FileInteractionPort, InteractionPort, InteractionDelivery, UserEvent, UserEventKind
+from .ref_store import RefStore
 
 
 RUN_EVENTS_REF = "observation/run_events.jsonl"
 RUN_SNAPSHOT_REF = "observation/run_snapshot.json"
 RUN_EVENT_SCHEMA_VERSION = "missionforge.run_event.v1"
 RUN_SNAPSHOT_SCHEMA_VERSION = "missionforge.run_snapshot.v1"
+ObservationStoreTarget = RefStore | str | Path
 
 
 class RunEventKind(StrEnum):
@@ -357,35 +359,45 @@ class FileControlPort:
         )
 
 
-def append_run_event(workspace: str | Path, event: RunEvent, *, events_ref: str = RUN_EVENTS_REF) -> None:
+def append_run_event(workspace: ObservationStoreTarget, event: RunEvent, *, events_ref: str = RUN_EVENTS_REF) -> None:
     """Append one refs-first run event."""
 
     event.validate()
-    _append_jsonl(Path(workspace).resolve(), events_ref, event.to_dict())
+    _append_jsonl(workspace, events_ref, event.to_dict())
 
 
-def read_run_events(workspace: str | Path, *, run_id: str | None = None, events_ref: str = RUN_EVENTS_REF) -> list[RunEvent]:
+def read_run_events(
+    workspace: ObservationStoreTarget,
+    *,
+    run_id: str | None = None,
+    events_ref: str = RUN_EVENTS_REF,
+) -> list[RunEvent]:
     """Read refs-first run events."""
 
     safe_run_id = _safe_id(run_id, "run_event.run_id") if run_id else None
-    events = [RunEvent.from_dict(item) for item in _read_jsonl(Path(workspace).resolve(), events_ref)]
+    events = [RunEvent.from_dict(item) for item in _read_jsonl(workspace, events_ref)]
     if safe_run_id is None:
         return events
     return [event for event in events if event.run_id == safe_run_id]
 
 
-def write_run_snapshot(workspace: str | Path, snapshot: RunSnapshot, *, snapshot_ref: str = RUN_SNAPSHOT_REF) -> str:
+def write_run_snapshot(
+    workspace: ObservationStoreTarget,
+    snapshot: RunSnapshot,
+    *,
+    snapshot_ref: str = RUN_SNAPSHOT_REF,
+) -> str:
     """Persist one refs-first run snapshot and return its ref."""
 
     snapshot.validate()
-    _write_json(Path(workspace).resolve(), snapshot_ref, snapshot.to_dict())
+    _write_json(workspace, snapshot_ref, snapshot.to_dict())
     return validate_ref(snapshot_ref, "run_snapshot.ref")
 
 
-def read_run_snapshot(workspace: str | Path, *, snapshot_ref: str = RUN_SNAPSHOT_REF) -> RunSnapshot:
+def read_run_snapshot(workspace: ObservationStoreTarget, *, snapshot_ref: str = RUN_SNAPSHOT_REF) -> RunSnapshot:
     """Read one refs-first run snapshot."""
 
-    payload = _read_json(Path(workspace).resolve(), snapshot_ref)
+    payload = _read_json(workspace, snapshot_ref)
     return RunSnapshot.from_dict(payload)
 
 
@@ -393,11 +405,11 @@ def latest_run_snapshot(
     *,
     run_id: str,
     status: RunSnapshotStatus | str,
-    workspace: str | Path,
+    workspace: ObservationStoreTarget,
     events_ref: str = RUN_EVENTS_REF,
     current_step_id: str = "",
     current_role: str = "",
-    interaction_port: FileInteractionPort | None = None,
+    interaction_port: InteractionPort | None = None,
     target: str = "flow",
     flow_ledger_ref: str = "",
     flow_result_ref: str = "",
@@ -437,15 +449,31 @@ def latest_run_snapshot(
     )
 
 
-def _append_jsonl(root: Path, ref: str, payload: Mapping[str, Any]) -> None:
-    path = _resolve_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(ensure_json_value(payload, "observation.payload"), ensure_ascii=True, sort_keys=True) + "\n")
+def _append_jsonl(workspace: ObservationStoreTarget, ref: str, payload: Mapping[str, Any]) -> None:
+    safe_ref = validate_ref(ref, "observation.ref")
+    compatible = ensure_json_value(payload, "observation.payload")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_ref(Path(workspace).resolve(), safe_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(compatible, ensure_ascii=True, sort_keys=True) + "\n")
+        return
+    workspace.append_jsonl(safe_ref, compatible)
 
 
-def _read_jsonl(root: Path, ref: str) -> list[Mapping[str, Any]]:
-    path = _resolve_ref(root, ref)
+def _read_jsonl(workspace: ObservationStoreTarget, ref: str) -> list[Mapping[str, Any]]:
+    safe_ref = validate_ref(ref, "observation.ref")
+    if not isinstance(workspace, (str, Path)):
+        if not workspace.exists(safe_ref):
+            return []
+        result: list[Mapping[str, Any]] = []
+        for payload in workspace.read_jsonl(safe_ref):
+            if not isinstance(payload, Mapping):
+                raise ContractValidationError("observation JSONL record must be an object")
+            result.append(payload)
+        return result
+
+    path = _resolve_ref(Path(workspace).resolve(), safe_ref)
     if not path.exists():
         return []
     result: list[Mapping[str, Any]] = []
@@ -459,18 +487,27 @@ def _read_jsonl(root: Path, ref: str) -> list[Mapping[str, Any]]:
     return result
 
 
-def _write_json(root: Path, ref: str, payload: Mapping[str, Any]) -> None:
-    path = _resolve_ref(root, ref)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(ensure_json_value(payload, "observation.payload"), ensure_ascii=True, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _write_json(workspace: ObservationStoreTarget, ref: str, payload: Mapping[str, Any]) -> None:
+    safe_ref = validate_ref(ref, "observation.ref")
+    compatible = ensure_json_value(payload, "observation.payload")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_ref(Path(workspace).resolve(), safe_ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(compatible, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+    workspace.write_json(safe_ref, compatible)
 
 
-def _read_json(root: Path, ref: str) -> Mapping[str, Any]:
-    path = _resolve_ref(root, ref)
-    payload = json.loads(path.read_text(encoding="utf-8"))
+def _read_json(workspace: ObservationStoreTarget, ref: str) -> Mapping[str, Any]:
+    safe_ref = validate_ref(ref, "observation.ref")
+    if isinstance(workspace, (str, Path)):
+        path = _resolve_ref(Path(workspace).resolve(), safe_ref)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        payload = workspace.read_json(safe_ref)
     if not isinstance(payload, Mapping):
         raise ContractValidationError("observation JSON record must be an object")
     return payload

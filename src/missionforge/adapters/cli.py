@@ -211,9 +211,14 @@ def render_mission_run_view(view: MissionRunView) -> str:
             "  tool_activity: "
             f"count={view.tool_activity.get('observation_count', 0)} "
             f"errors={view.tool_activity.get('error_count', 0)} "
+            f"repeated_reads={view.tool_activity.get('repeated_read_count', 0)} "
             f"latest={view.tool_activity.get('latest_tool_name', '<none>')} "
             f"status={view.tool_activity.get('latest_tool_status', '<none>')}"
         )
+    thrash_refs = view.tool_activity.get("context_thrash_diagnostics_refs", []) if view.tool_activity else []
+    if isinstance(thrash_refs, list) and thrash_refs:
+        lines.append("  context_thrash_diagnostics:")
+        lines.extend(f"    - {ref}" for ref in thrash_refs)
     if view.observation_refs:
         lines.append("    observations:")
         lines.extend(f"      - {ref}" for ref in view.observation_refs)

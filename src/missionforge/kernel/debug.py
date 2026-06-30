@@ -12,12 +12,16 @@ from ..contracts import assert_refs_only_payload, stable_json_hash, validate_ref
 from ..evidence_store import EvidenceLedger
 from ..piworker_progress import PiWorkerProgressSink
 from ..piworker_runtime import PiWorkerCallAdapter
+from ..ref_store import MemoryRefStore, RefStore
 from .compiler import StepCompileContext, compile_step
 from .contracts import Artifact, Flow, KernelValidationError, Step, StepStatus, Toolset
 from .extensions import ExtensionInstaller
 from .inspect import KernelStepInspection
+from .results import StepRunResult
 from .routing import KernelRouteDecision, resolve_step_route
-from .runner import StepRunResult, run_step
+from .runner import run_step
+
+DebugStoreTarget = RefStore | str | Path
 
 
 @dataclass(frozen=True)
@@ -84,12 +88,12 @@ class KernelStepDebugResult:
         result: StepRunResult,
         *,
         flow: Flow | None = None,
-        workspace: str | Path = ".",
+        workspace: DebugStoreTarget | None = None,
     ) -> "KernelStepDebugResult":
         route_decision = None
         if flow is not None and result.step_record.status in {StepStatus.COMPLETED, StepStatus.SKIPPED}:
             if result.compiled.step.route_on is not None:
-                route_decision = resolve_step_route(flow, result.compiled.step, workspace)
+                route_decision = resolve_step_route(flow, result.compiled.step, result.store or workspace or MemoryRefStore())
         return cls(
             step=KernelStepInspection.from_record(result.step_record_ref, result.step_record),
             route_decision=route_decision,
@@ -173,7 +177,8 @@ def run_kernel_step_once(
     step: Step,
     *,
     context: StepCompileContext,
-    workspace: str | Path = ".",
+    workspace: str | Path | None = None,
+    store: RefStore | None = None,
     flow: Flow | None = None,
     adapter: PiWorkerCallAdapter | None = None,
     piworker_config: Any | None = None,
@@ -191,10 +196,12 @@ def run_kernel_step_once(
 ) -> KernelStepDebugResult:
     """Run exactly one step through the normal Kernel boundary."""
 
+    record_store = _debug_store(workspace=workspace, store=store)
     result = run_step(
         step,
         context=context,
-        workspace=workspace,
+        workspace=None,
+        store=record_store,
         adapter=adapter,
         piworker_config=piworker_config,
         runner=runner,
@@ -209,7 +216,7 @@ def run_kernel_step_once(
         resume=resume,
         runtime_progress_sink=runtime_progress_sink,
     )
-    return KernelStepDebugResult.from_step_run(result, flow=flow, workspace=workspace)
+    return KernelStepDebugResult.from_step_run(result, flow=flow, workspace=record_store)
 
 
 def run_flow_step_once(
@@ -217,7 +224,8 @@ def run_flow_step_once(
     step_id: str,
     *,
     context: StepCompileContext,
-    workspace: str | Path = ".",
+    workspace: str | Path | None = None,
+    store: RefStore | None = None,
     ref_prefix: str,
     adapter: PiWorkerCallAdapter | None = None,
     piworker_config: Any | None = None,
@@ -239,6 +247,7 @@ def run_flow_step_once(
         step,
         context=step_context,
         workspace=workspace,
+        store=store,
         flow=flow,
         adapter=adapter,
         piworker_config=piworker_config,
@@ -256,16 +265,16 @@ def run_flow_step_once(
     )
 
 
-def resolve_kernel_step_route(flow: Flow, step: Step, *, workspace: str | Path = ".") -> KernelRouteDecision:
+def resolve_kernel_step_route(flow: Flow, step: Step, *, workspace: DebugStoreTarget | None = None) -> KernelRouteDecision:
     """Resolve one step route without executing additional work."""
 
-    return resolve_step_route(flow, step, workspace)
+    return resolve_step_route(flow, step, workspace or MemoryRefStore())
 
 
-def read_flow_route(flow: Flow, step_id: str, *, workspace: str | Path = ".") -> KernelRouteDecision:
+def read_flow_route(flow: Flow, step_id: str, *, workspace: DebugStoreTarget | None = None) -> KernelRouteDecision:
     """Resolve the route for one explicit Flow step."""
 
-    return resolve_step_route(flow, _flow_step(flow, step_id), workspace)
+    return resolve_step_route(flow, _flow_step(flow, step_id), workspace or MemoryRefStore())
 
 
 def build_context_replay_plan(
@@ -313,6 +322,16 @@ def _debug_context(context: StepCompileContext, step: Step, *, ref_prefix: str |
         ref_prefix=prefix,
         call_id=call_id,
     )
+
+
+def _debug_store(*, workspace: str | Path | None, store: RefStore | None) -> RefStore:
+    if store is not None:
+        return store
+    if workspace is not None:
+        from ..ref_store import FileRefStore
+
+        return FileRefStore(workspace)
+    return MemoryRefStore()
 
 
 def _flow_step(flow: Flow, step_id: str) -> Step:

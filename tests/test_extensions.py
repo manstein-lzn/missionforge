@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 import unittest
 
-from missionforge import ContractValidationError, PermissionManifest
+from missionforge import ContractValidationError, MemoryRefStore, PermissionManifest
 from missionforge.extensions import (
     ExtensionLoadReport,
     ExtensionLock,
@@ -12,6 +12,8 @@ from missionforge.extensions import (
     extension_load_report_from_lock,
     npm_install_extension,
     verify_extension_lock,
+    read_extension_lock,
+    write_extension_lock,
 )
 
 
@@ -207,6 +209,32 @@ class ExtensionTests(unittest.TestCase):
             self.assertEqual(report.loaded_extensions, [])
             self.assertEqual(report.rejected_extensions[0].reason, "capability_mismatch")
 
+    def test_verify_reports_rejected_extra_lock_entry(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            install_path = root / ".missionforge/extensions/node_modules/pi-web-access"
+            install_path.mkdir(parents=True)
+            (install_path / "package.json").write_text("{}\n", encoding="utf-8")
+            lock = compile_extension_lock(
+                sample_manifest(),
+                source_permission_manifest_ref="policy/permission_manifest.json",
+                workspace_root=root,
+                compiled_at="2026-06-15T00:00:00Z",
+            )
+            payload = lock.to_dict()
+            extra = dict(payload["extensions"][0])
+            extra["grant_id"] = "unauthorized-web-search"
+            payload["extensions"].append(extra)
+            payload.pop("lock_hash")
+            changed_lock = ExtensionLock.from_dict(payload)
+
+            report = verify_extension_lock(sample_manifest(), changed_lock)
+
+        self.assertEqual(len(report.loaded_extensions), 1)
+        self.assertEqual(len(report.rejected_extensions), 1)
+        self.assertEqual(report.rejected_extensions[0].grant_id, "unauthorized-web-search")
+        self.assertEqual(report.rejected_extensions[0].reason, "extra_lock_entry")
+
     def test_runtime_load_report_requires_lock_for_declared_extensions(self) -> None:
         report = extension_load_report_from_lock(
             call_id="call-001",
@@ -219,6 +247,37 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(ExtensionLoadReport.from_dict(report.to_dict()), report)
         self.assertEqual(report.loaded_extensions, [])
         self.assertEqual(report.rejected_extensions[0].reason, "missing_extension_lock")
+
+    def test_extension_lock_round_trips_through_memory_store_without_filesystem_writes(self) -> None:
+        store = MemoryRefStore()
+        lock = ExtensionLock(
+            source_permission_manifest_ref="policy/permission_manifest.json",
+            compiled_at="2026-06-15T00:00:00Z",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            before = _snapshot(tmpdir)
+            write_extension_lock(store, lock, ref="compiled/extension_lock.json")
+            reloaded = read_extension_lock(store, ref="compiled/extension_lock.json")
+            after = _snapshot(tmpdir)
+
+        self.assertEqual(before, after)
+        self.assertEqual(reloaded, lock)
+        self.assertTrue(store.exists("compiled/extension_lock.json"))
+
+    def test_extension_lock_helpers_validate_ref_before_custom_store_call(self) -> None:
+        store = _RecordingStore()
+        lock = ExtensionLock(
+            source_permission_manifest_ref="policy/permission_manifest.json",
+            compiled_at="2026-06-15T00:00:00Z",
+        )
+
+        with self.assertRaises(ContractValidationError):
+            read_extension_lock(store, ref="../outside.json")
+        with self.assertRaises(ContractValidationError):
+            write_extension_lock(store, lock, ref="../outside.json")
+
+        self.assertEqual(store.calls, [])
 
 
 def _fake_npm_install(grant, install_root):
@@ -240,6 +299,25 @@ def _fake_npm_install(grant, install_root):
         encoding="utf-8",
     )
     return {}
+
+
+def _snapshot(root: str) -> list[str]:
+    return sorted(path.relative_to(root).as_posix() for path in Path(root).rglob("*"))
+
+
+class _RecordingStore:
+    store_id = "recording"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def read_json(self, ref: str):
+        self.calls.append(("read_json", ref))
+        return {}
+
+    def write_bytes(self, ref: str, body: bytes, *, media_type: str = "application/octet-stream", metadata=None):
+        self.calls.append(("write_bytes", ref))
+        raise AssertionError("store should not be called")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseRuntimeInput } from "../dist/contract.js";
+import { extensionLoadReportFromLock } from "../dist/extensions.js";
 import { sampleInput } from "./helpers.mjs";
 
 test("parseRuntimeInput accepts valid input", () => {
@@ -27,6 +28,124 @@ test("parseRuntimeInput accepts valid input", () => {
     hard_compact_ratio: 0.9,
     cache_aware: true,
   });
+  assert.deepEqual(input.context_engine, {
+    schema_version: "missionforge.pi_agent_context_engine.v1",
+    enabled: false,
+    context_view_ref: null,
+    context_compile_request_ref: null,
+    context_compile_result_ref: null,
+    context_baseline_ref: null,
+    context_source_snapshot_ref: null,
+    context_epoch_ref: null,
+    context_cache_layout_ref: null,
+    context_pressure_ref: null,
+    context_turn_safe_point_ref: null,
+    context_turn_boundary_ref: null,
+    context_hash: null,
+    context_compile_action: "",
+  });
+});
+
+test("extensionLoadReportFromLock rejects lock entries outside manifest grants", () => {
+  const grant = {
+    grant_id: "web-search",
+    package: "npm:pi-web-access",
+    version_spec: "0.10.7",
+    capability: "web",
+    requires_network: true,
+    requires_bash: false,
+    required_env: ["SEARCH_API_KEY"],
+    adapter_mode: "untrusted_pi_extension",
+    config_ref: null,
+    sandbox_profile_ref: null,
+    integrity: null,
+    metadata: {},
+  };
+  const input = parseRuntimeInput(
+    sampleInput({
+      extension_lock_ref: "attempts/WU-000001/extension_lock.json",
+      permission_manifest: {
+        ...sampleInput().permission_manifest,
+        network_policy: "enabled",
+        env_allowlist: ["SEARCH_API_KEY"],
+        extension_grants: [grant],
+      },
+    }),
+  );
+  const entry = {
+    grant_id: "web-search",
+    package: "npm:pi-web-access",
+    name: "pi-web-access",
+    version: "0.10.7",
+    capability: "web",
+    install_path: ".missionforge/extensions/node_modules/pi-web-access",
+    adapter_mode: "untrusted_pi_extension",
+    requires_network: true,
+    requires_bash: false,
+    required_env: ["SEARCH_API_KEY"],
+    resolved: null,
+    integrity: null,
+    package_hash: null,
+    metadata: {},
+  };
+  const report = extensionLoadReportFromLock(input, {
+    schema_version: "missionforge_extension_lock.v1",
+    source_permission_manifest_ref: "attempts/WU-000001/runtime_permission_manifest.json",
+    compiled_at: "2026-06-15T00:00:00.000Z",
+    install_root_ref: ".missionforge/extensions",
+    compiled_by: "missionforge.extensions",
+    extensions: [
+      entry,
+      {
+        ...entry,
+        grant_id: "unauthorized-web-search",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    report.rejected_extensions.map((record) => `${record.grant_id}:${record.reason}`),
+    ["unauthorized-web-search:extra_lock_entry"],
+  );
+});
+
+test("parseRuntimeInput accepts ContextEngine refs", () => {
+  const input = parseRuntimeInput(
+    sampleInput({
+      context_engine: {
+        schema_version: "missionforge.pi_agent_context_engine.v1",
+        enabled: true,
+        context_view_ref: "kernel/demo/steps/researcher/context_projection.json",
+        context_compile_result_ref: "kernel/demo/steps/researcher/context/compile_result.json",
+        context_cache_layout_ref: "kernel/demo/steps/researcher/context/cache_layout.json",
+        context_pressure_ref: "kernel/demo/steps/researcher/context/pressure.json",
+        context_hash: `sha256:${"b".repeat(64)}`,
+        context_compile_action: "continue",
+      },
+    }),
+  );
+
+  assert.equal(input.context_engine.enabled, true);
+  assert.equal(input.context_engine.context_view_ref, "kernel/demo/steps/researcher/context_projection.json");
+  assert.equal(input.context_engine.context_compile_result_ref, "kernel/demo/steps/researcher/context/compile_result.json");
+  assert.equal(input.context_engine.context_cache_layout_ref, "kernel/demo/steps/researcher/context/cache_layout.json");
+  assert.equal(input.context_engine.context_pressure_ref, "kernel/demo/steps/researcher/context/pressure.json");
+});
+
+test("parseRuntimeInput rejects enabled ContextEngine without required refs", () => {
+  assert.throws(
+    () =>
+      parseRuntimeInput(
+        sampleInput({
+          context_engine: {
+            schema_version: "missionforge.pi_agent_context_engine.v1",
+            enabled: true,
+            context_view_ref: "kernel/demo/steps/researcher/context_projection.json",
+          },
+        }),
+      ),
+    /enabled requires context_view_ref and context_compile_result_ref/,
+  );
 });
 
 test("parseRuntimeInput fails closed without PiWorkerCall", () => {

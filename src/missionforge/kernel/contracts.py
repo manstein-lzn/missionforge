@@ -335,6 +335,7 @@ class Step:
     role: PiWorkerCallRole = PiWorkerCallRole.EXECUTOR
     route_on: str | None = None
     route_fields: list[str] = field(default_factory=list)
+    context_working_set_ref: str | None = None
     runtime_budget: Mapping[str, Any] = field(default_factory=dict)
     command_allowlist: list[str] = field(default_factory=list)
     env_allowlist: list[str] = field(default_factory=list)
@@ -361,6 +362,10 @@ class Step:
             role=require_enum(data.get("role", PiWorkerCallRole.EXECUTOR.value), PiWorkerCallRole, "kernel_step.role"),
             route_on=_optional_ref(data.get("route_on"), "kernel_step.route_on"),
             route_fields=require_str_list(data.get("route_fields", []), "kernel_step.route_fields"),
+            context_working_set_ref=_optional_ref(
+                data.get("context_working_set_ref"),
+                "kernel_step.context_working_set_ref",
+            ),
             runtime_budget=_runtime_budget(data.get("runtime_budget", {}), "kernel_step.runtime_budget"),
             command_allowlist=require_str_list(data.get("command_allowlist", []), "kernel_step.command_allowlist"),
             env_allowlist=require_str_list(data.get("env_allowlist", []), "kernel_step.env_allowlist"),
@@ -390,6 +395,7 @@ class Step:
         if self.route_on is not None and self.route_on not in self.outputs:
             raise KernelValidationError("kernel_step.route_on must be one of kernel_step.outputs")
         _unique_non_empty_strings(self.route_fields, "kernel_step.route_fields")
+        _optional_ref(self.context_working_set_ref, "kernel_step.context_working_set_ref")
         _runtime_budget(self.runtime_budget, "kernel_step.runtime_budget")
         _unique_non_empty_strings(self.command_allowlist, "kernel_step.command_allowlist")
         _unique_non_empty_strings(self.env_allowlist, "kernel_step.env_allowlist")
@@ -412,6 +418,7 @@ class Step:
             "role": self.role.value,
             "route_on": self.route_on,
             "route_fields": list(self.route_fields),
+            "context_working_set_ref": self.context_working_set_ref,
             "runtime_budget": dict(self.runtime_budget),
             "command_allowlist": list(self.command_allowlist),
             "env_allowlist": list(self.env_allowlist),
@@ -903,7 +910,14 @@ def _metadata(value: Any, field_name: str) -> dict[str, Any]:
 
 def _runtime_budget(value: Any, field_name: str) -> dict[str, int]:
     data = _refs_only_mapping(require_mapping(value, field_name), field_name)
-    allowed = {"max_turns", "timeout_seconds", "max_tool_calls", "max_output_refs"}
+    allowed = {
+        "context_token_budget",
+        "max_input_tokens",
+        "max_output_refs",
+        "max_tool_calls",
+        "max_turns",
+        "timeout_seconds",
+    }
     unknown = sorted(set(data) - allowed)
     if unknown:
         raise KernelValidationError(f"{field_name} contains unknown fields: {unknown}")

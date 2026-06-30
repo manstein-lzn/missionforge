@@ -4,34 +4,27 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..contracts import ContractValidationError, stable_json_hash, validate_ref
-from ..context import ContextView, build_call_context_view
-from ..context_engine import (
-    ContextCompileAction,
-    ContextCompileResult,
-    ContextSourceSnapshot,
-    ContextTurnBoundary,
-    ContextTurnBoundaryStatus,
-    build_context_cache_layout,
-    build_context_epoch,
-)
+from ..context_engine import compile_context_request
+from ..context_policy import ContextManagementPolicy
 from ..evidence_store import EvidenceLedger
 from ..extensions import ExtensionLock
-from ..interaction import FileInteractionPort, InteractionDelivery, UserEvent, UserEventKind
+from ..interaction import InteractionPort, InteractionDelivery, UserEvent, UserEventKind
 from ..observation import (
     RunEvent,
     RunEventKind,
+    RunSnapshot,
     RunSnapshotStatus,
-    append_run_event,
-    latest_run_snapshot,
-    write_run_snapshot,
 )
 from ..piworker_call import PiWorkerCall, PiWorkerCallResult, PiWorkerCallResultStatus
 from ..piworker_progress import PiWorkerProgressSink
 from ..piworker_runtime import PiWorkerCallAdapter, run_piworker_call
+from ..permissions import ReadGate
+from ..ref_store import RefStore
 from .compiler import CompiledStep, StepCompileContext, compile_step
 from .contracts import (
     Artifact,
@@ -46,81 +39,38 @@ from .contracts import (
     StepStatus,
     Toolset,
 )
+from .context_runtime import (
+    _build_context_compile_request,
+    _compiled_step_with_context_metadata,
+    _compiled_step_with_context_read_authority,
+    _context_preflight_block_result,
+    _hash_authorized_refs,
+    _next_context_feed_refs,
+    _next_context_thrash_diagnostics_refs,
+    _token_estimates_for_authorized_refs,
+    _write_context_engine_records,
+)
+from .context_reduction_runtime import _maybe_reduce_context_before_provider_turn
 from .extensions import ExtensionInstaller, prepare_extension_lock
-from .io import hash_refs, read_json_ref, ref_exists, resolve_workspace_ref, write_json_ref, write_jsonl_ref
+from .io import (
+    hash_refs,
+    list_refs,
+    read_json_ref,
+    ref_exists,
+    write_json_ref,
+    write_jsonl_ref,
+)
 from .projections import ProjectionProjector, ProjectionRunResult, run_projections
+from .results import FlowRunResult, StepRunResult
 from .routing import route_value_for_step
-
-
-@dataclass(frozen=True)
-class StepRunResult:
-    """Refs-first result for one executed Kernel Step."""
-
-    compiled: CompiledStep
-    call_result: PiWorkerCallResult
-    step_record: StepRecord
-    step_spec_ref: str
-    piworker_call_ref: str
-    piworker_call_result_ref: str
-    step_record_ref: str
-
-    def validate(self) -> None:
-        self.compiled.validate()
-        self.call_result.validate_against_call(self.compiled.piworker_call)
-        self.step_record.validate()
-        validate_ref(self.step_spec_ref, "kernel_step_run_result.step_spec_ref")
-        validate_ref(self.piworker_call_ref, "kernel_step_run_result.piworker_call_ref")
-        validate_ref(self.piworker_call_result_ref, "kernel_step_run_result.piworker_call_result_ref")
-        validate_ref(self.step_record_ref, "kernel_step_run_result.step_record_ref")
-        if self.step_record.piworker_call_ref != self.piworker_call_ref:
-            raise ContractValidationError("kernel_step_run_result step_record piworker_call_ref mismatch")
-        if self.step_record.piworker_call_result_ref != self.piworker_call_result_ref:
-            raise ContractValidationError("kernel_step_run_result step_record piworker_call_result_ref mismatch")
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return {
-            "step_id": self.compiled.step.id,
-            "status": self.step_record.status.value,
-            "step_spec_ref": self.step_spec_ref,
-            "piworker_call_ref": self.piworker_call_ref,
-            "piworker_call_result_ref": self.piworker_call_result_ref,
-            "step_record_ref": self.step_record_ref,
-            "output_refs": list(self.step_record.output_refs),
-        }
-
-
-@dataclass(frozen=True)
-class FlowRunResult:
-    """Refs-first result for one executed Kernel Flow."""
-
-    flow: Flow
-    flow_result: FlowResult
-    flow_result_ref: str
-    step_results: list[StepRunResult]
-    projection_results: list[ProjectionRunResult] | None = None
-
-    def validate(self) -> None:
-        self.flow.validate()
-        self.flow_result.validate()
-        validate_ref(self.flow_result_ref, "kernel_flow_run_result.flow_result_ref")
-        for result in self.step_results:
-            result.validate()
-        for result in self.projection_results or []:
-            result.validate()
-
-    def to_dict(self) -> dict[str, Any]:
-        self.validate()
-        return {
-            "flow_id": self.flow.id,
-            "status": self.flow_result.status,
-            "flow_result_ref": self.flow_result_ref,
-            "step_record_refs": list(self.flow_result.step_record_refs),
-            "final_artifact_refs": list(self.flow_result.final_artifact_refs),
-            "decision_refs": list(self.flow_result.decision_refs),
-            "ledger_refs": list(self.flow_result.ledger_refs),
-            "projection_record_refs": [result.record_ref for result in self.projection_results or []],
-        }
+from .runtime_store import (
+    _adapter_workspace_for_run,
+    _extension_workspace_for_run,
+    _looks_like_ref_store,
+    _record_store_for_run,
+    _requires_extension_lock_filesystem_boundary,
+    _validate_extension_lock_store_boundary,
+)
 
 
 @dataclass(frozen=True)
@@ -135,10 +85,11 @@ FlowEventSink = Callable[[FlowLedgerEvent], None]
 
 @dataclass
 class _RunObservationRecorder:
-    workspace: str | Path
+    workspace: Any
     events_ref: str
     run_id: str
     count: int = 0
+    latest_event_id: str = ""
 
     def emit(
         self,
@@ -151,6 +102,7 @@ class _RunObservationRecorder:
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         self.count += 1
+        self.latest_event_id = f"{self.count:06d}-{kind.value}"
         _append_run_observation_event(
             self.workspace,
             events_ref=self.events_ref,
@@ -169,7 +121,8 @@ def run_step(
     step: Step,
     *,
     context: StepCompileContext,
-    workspace: str | Path = ".",
+    workspace: str | Path | None = None,
+    store: RefStore | None = None,
     adapter: PiWorkerCallAdapter | None = None,
     piworker_config: Any | None = None,
     runner: Any | None = None,
@@ -186,49 +139,132 @@ def run_step(
 ) -> StepRunResult:
     """Compile, persist, and execute one Kernel Step through PiWorker."""
 
+    record_store = _record_store_for_run(workspace=workspace, store=store)
+    adapter_workspace = _adapter_workspace_for_run(workspace=workspace, store=record_store)
     compiled = compile_step(step, context=context, toolsets=toolsets, artifacts=artifacts)
     ref_prefix = context.ref_prefix or f"kernel/{context.flow_id}/steps/{step.id}"
+    safe_extension_lock_ref = (
+        validate_ref(extension_lock_ref, "kernel_run_step.extension_lock_ref")
+        if extension_lock_ref is not None
+        else None
+    )
+    safe_extension_install_root_ref = validate_ref(
+        extension_install_root_ref,
+        "kernel_run_step.extension_install_root_ref",
+    )
+    _validate_extension_lock_store_boundary(
+        compiled=compiled,
+        workspace=workspace,
+        store=record_store,
+        extension_lock_ref=safe_extension_lock_ref,
+    )
+    prevalidated_extension_lock = None
+    if safe_extension_lock_ref is not None:
+        prevalidated_extension_lock = prepare_extension_lock(
+            compiled.permission_manifest,
+            source_permission_manifest_ref=compiled.permission_manifest_ref,
+            workspace=_extension_workspace_for_run(workspace=workspace, store=record_store),
+            ref_prefix=ref_prefix,
+            extension_lock_ref=safe_extension_lock_ref,
+            install_root_ref=safe_extension_install_root_ref,
+            mode=extension_lock_mode,
+            installer=extension_installer,
+            compiled_at=extension_lock_compiled_at,
+        )
     step_spec_ref = f"{ref_prefix}/step_spec.json"
     piworker_call_ref = f"{ref_prefix}/piworker_call.json"
     piworker_call_result_ref = f"{ref_prefix}/piworker_call_result.json"
     step_record_ref = f"{ref_prefix}/step_record.json"
     context_projection_ref = f"{ref_prefix}/context_projection.json"
 
-    write_json_ref(workspace, step_spec_ref, step.to_dict())
-    write_json_ref(workspace, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
-    write_json_ref(workspace, piworker_call_ref, compiled.piworker_call.to_dict())
-    input_hashes = hash_refs(workspace, step.inputs)
-    permission_manifest_hash = stable_json_hash(compiled.permission_manifest.to_dict())
-    context_view = build_call_context_view(
-        view_id=f"{compiled.piworker_call.call_id}-context",
-        role=compiled.piworker_call.role.value,
-        contract_ref=compiled.piworker_call.contract_ref,
-        contract_hash=compiled.piworker_call.contract_hash,
-        permission_manifest_ref=compiled.permission_manifest_ref,
-        visible_refs=list(compiled.piworker_call.visible_refs),
-        expected_output_refs=list(compiled.piworker_call.expected_output_refs),
-        evidence_refs=list(compiled.piworker_call.evidence_refs),
-        diagnostics_ref=context_projection_ref,
+    write_json_ref(record_store, step_spec_ref, step.to_dict())
+    base_permission_manifest = compiled.permission_manifest
+    write_json_ref(record_store, compiled.permission_manifest_ref, base_permission_manifest.to_dict())
+    read_gate = ReadGate(base_permission_manifest)
+    input_hashes = _hash_authorized_refs(record_store, step.inputs, read_gate)
+    input_token_estimates = _token_estimates_for_authorized_refs(record_store, step.inputs, read_gate)
+    base_permission_manifest_hash = stable_json_hash(base_permission_manifest.to_dict())
+    context_policy = ContextManagementPolicy.default()
+    context_request = _build_context_compile_request(
+        compiled=compiled,
+        context=context,
+        workspace=record_store,
+        read_gate=read_gate,
+        input_hashes=input_hashes,
+        input_token_estimates=input_token_estimates,
+        permission_manifest_hash=base_permission_manifest_hash,
     )
-    write_json_ref(workspace, context_projection_ref, context_view.to_dict())
+    compiled_context = compile_context_request(
+        request=context_request,
+        read_gate=read_gate,
+        view_ref=context_projection_ref,
+        pressure_ref=f"{ref_prefix}/context/pressure.json",
+        cache_layout_ref=f"{ref_prefix}/context/cache_layout.json",
+        result_id=f"{compiled.piworker_call.call_id}-context-compile",
+        layout_id=f"{compiled.piworker_call.call_id}-cache-layout",
+        soft_ratio=context_policy.soft_pressure_ratio,
+        hard_ratio=context_policy.hard_pressure_ratio,
+    )
+    context_view = compiled_context.view
     context_engine_metadata = _write_context_engine_records(
-        workspace=workspace,
+        workspace=record_store,
         compiled=compiled,
         context=context,
         ref_prefix=ref_prefix,
         context_projection_ref=context_projection_ref,
-        context_view=context_view,
+        compiled_context=compiled_context,
+        context_policy=context_policy,
     )
+    reduction_attempt = _maybe_reduce_context_before_provider_turn(
+        workspace=record_store,
+        adapter_workspace=adapter_workspace,
+        compiled=compiled,
+        context=context,
+        ref_prefix=ref_prefix,
+        context_projection_ref=context_projection_ref,
+        compiled_context=compiled_context,
+        context_engine_metadata=context_engine_metadata,
+        read_gate=read_gate,
+        context_policy=context_policy,
+        adapter=adapter,
+        piworker_config=piworker_config,
+        runner=runner,
+        evidence_store=evidence_store,
+        runtime_progress_sink=runtime_progress_sink,
+    )
+    if reduction_attempt is not None:
+        compiled_context = reduction_attempt.compiled_context
+        context_view = compiled_context.view
+        context_engine_metadata = reduction_attempt.context_engine_metadata
+    active_context_projection_ref = context_engine_metadata.get("context_projection_ref", context_projection_ref)
+    compiled = _compiled_step_with_context_metadata(
+        compiled,
+        {
+            "context_projection_ref": active_context_projection_ref,
+            "context_hash": context_view.context_hash,
+            "context_feed_refs": list(context.context_feed_refs or []),
+            "context_feed_ref_count": len(context.context_feed_refs or []),
+            "context_thrash_diagnostics_refs": list(context.context_thrash_diagnostics_refs or []),
+            "context_thrash_diagnostics_ref_count": len(context.context_thrash_diagnostics_refs or []),
+            "context_policy_hash": context_policy.policy_hash,
+            **context_engine_metadata,
+            **(reduction_attempt.runtime_metadata if reduction_attempt is not None else {}),
+        },
+    )
+    compiled = _compiled_step_with_context_read_authority(compiled, context_engine_metadata)
+    permission_manifest_hash = stable_json_hash(compiled.permission_manifest.to_dict())
+    write_json_ref(record_store, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
+    write_json_ref(record_store, piworker_call_ref, compiled.piworker_call.to_dict())
     skip_lock_ref = _expected_extension_lock_ref(
         compiled=compiled,
         ref_prefix=ref_prefix,
-        extension_lock_ref=extension_lock_ref,
+        extension_lock_ref=safe_extension_lock_ref,
     )
-    skip_lock_hash = _existing_extension_lock_hash(workspace, skip_lock_ref)
+    skip_lock_hash = _existing_extension_lock_hash(record_store, skip_lock_ref)
 
     if resume:
         skipped = _skip_result_if_current(
-            workspace=workspace,
+            workspace=record_store,
             compiled=compiled,
             step_record_ref=step_record_ref,
             step_spec_ref=step_spec_ref,
@@ -236,7 +272,7 @@ def run_step(
             piworker_call_result_ref=piworker_call_result_ref,
             input_hashes=input_hashes,
             permission_manifest_hash=permission_manifest_hash,
-            context_projection_ref=context_projection_ref,
+            context_projection_ref=active_context_projection_ref,
             context_hash=context_view.context_hash,
             context_engine_metadata=context_engine_metadata,
             extension_lock_ref=skip_lock_ref,
@@ -245,13 +281,31 @@ def run_step(
         if skipped is not None:
             return skipped
 
-    extension_lock = prepare_extension_lock(
+    preflight_block = _context_preflight_block_result(
+        workspace=record_store,
+        compiled=compiled,
+        context=context,
+        ref_prefix=ref_prefix,
+        piworker_call_ref=piworker_call_ref,
+        piworker_call_result_ref=piworker_call_result_ref,
+        step_record_ref=step_record_ref,
+        step_spec_ref=step_spec_ref,
+        input_hashes=input_hashes,
+        permission_manifest_hash=permission_manifest_hash,
+        context_projection_ref=active_context_projection_ref,
+        context_view=context_view,
+        context_engine_metadata=context_engine_metadata,
+    )
+    if preflight_block is not None:
+        return preflight_block
+
+    extension_lock = prevalidated_extension_lock or prepare_extension_lock(
         compiled.permission_manifest,
         source_permission_manifest_ref=compiled.permission_manifest_ref,
-        workspace=workspace,
+        workspace=_extension_workspace_for_run(workspace=workspace, store=record_store),
         ref_prefix=ref_prefix,
-        extension_lock_ref=extension_lock_ref,
-        install_root_ref=extension_install_root_ref,
+        extension_lock_ref=safe_extension_lock_ref,
+        install_root_ref=safe_extension_install_root_ref,
         mode=extension_lock_mode,
         installer=extension_installer,
         compiled_at=extension_lock_compiled_at,
@@ -259,7 +313,8 @@ def run_step(
     attempt_result = _run_piworker_with_failure_policy(
         compiled=compiled,
         context=context,
-        workspace=workspace,
+        workspace=record_store,
+        adapter_workspace=adapter_workspace,
         adapter=adapter,
         piworker_config=piworker_config,
         runner=runner,
@@ -270,7 +325,7 @@ def run_step(
         runtime_progress_sink=runtime_progress_sink,
     )
     call_result = attempt_result.call_result
-    write_json_ref(workspace, piworker_call_result_ref, call_result.to_dict())
+    write_json_ref(record_store, piworker_call_result_ref, call_result.to_dict())
 
     step_record = StepRecord(
         step_id=step.id,
@@ -285,7 +340,7 @@ def run_step(
         extension_lock_ref=extension_lock.extension_lock_ref,
         extension_lock_hash=extension_lock.extension_lock_hash,
         input_hashes=input_hashes,
-        output_hashes=hash_refs(workspace, call_result.output_refs),
+        output_hashes=hash_refs(record_store, call_result.output_refs),
         piworker_call_ref=piworker_call_ref,
         piworker_call_result_ref=piworker_call_result_ref,
         execution_report_ref=call_result.execution_report_ref,
@@ -302,13 +357,15 @@ def run_step(
             "retry_exhausted": call_result.status != PiWorkerCallResultStatus.COMPLETED,
             "runtime_refs": list(call_result.runtime_refs),
             "evidence_refs": list(call_result.evidence_refs),
-            "context_projection_ref": context_projection_ref,
+            "context_feed_refs": list(context.context_feed_refs or []),
+            "context_projection_ref": active_context_projection_ref,
             "context_hash": context_view.context_hash,
             **context_engine_metadata,
+            **(reduction_attempt.runtime_metadata if reduction_attempt is not None else {}),
             **_call_result_diagnostic_metadata(call_result),
         },
     )
-    write_json_ref(workspace, step_record_ref, step_record.to_dict())
+    write_json_ref(record_store, step_record_ref, step_record.to_dict())
     result = StepRunResult(
         compiled=compiled,
         call_result=call_result,
@@ -317,147 +374,82 @@ def run_step(
         piworker_call_ref=piworker_call_ref,
         piworker_call_result_ref=piworker_call_result_ref,
         step_record_ref=step_record_ref,
+        store=record_store,
     )
     result.validate()
     return result
 
 
-def _write_context_engine_records(
-    *,
-    workspace: str | Path,
-    compiled: CompiledStep,
-    context: StepCompileContext,
-    ref_prefix: str,
-    context_projection_ref: str,
-    context_view: ContextView,
-) -> dict[str, str]:
-    context_root_ref = f"{ref_prefix}/context"
-    source_snapshot_ref = f"{context_root_ref}/source_snapshot.json"
-    context_epoch_ref = f"{context_root_ref}/epoch.json"
-    context_cache_layout_ref = f"{context_root_ref}/cache_layout.json"
-    context_turn_safe_point_ref = f"{context_root_ref}/turn_safe_point.json"
-    context_turn_boundary_ref = f"{context_root_ref}/turn_boundary.json"
-    context_compile_result_ref = f"{context_root_ref}/compile_result.json"
-    call_id = compiled.piworker_call.call_id
-    role = compiled.piworker_call.role.value
-
-    source_snapshot_payload = _context_source_snapshot_payload(
-        context_view=context_view,
-        view_ref=context_projection_ref,
-    )
-    write_json_ref(workspace, source_snapshot_ref, source_snapshot_payload)
-
-    epoch = build_context_epoch(
-        epoch_id=f"{call_id}-epoch",
-        role=role,
-        contract_hash=compiled.piworker_call.contract_hash,
-        permission_manifest_ref=compiled.permission_manifest_ref,
-        baseline_ref=context_projection_ref,
-        baseline_hash=context_view.context_hash,
-        source_snapshot_ref=source_snapshot_ref,
-        context_view_ref=context_projection_ref,
-    )
-    write_json_ref(workspace, context_epoch_ref, epoch.to_dict())
-
-    cache_layout = build_context_cache_layout(
-        layout_id=f"{call_id}-cache-layout",
-        view_ref=context_projection_ref,
-        view=context_view,
-    )
-    write_json_ref(workspace, context_cache_layout_ref, cache_layout.to_dict())
-
-    turn_safe_point_payload = {
-        "schema_version": "missionforge.context_turn_safe_point.v1",
-        "run_id": context.flow_id,
-        "step_id": compiled.step.id,
-        "call_id": call_id,
-        "pre_view_ref": context_projection_ref,
-        "context_epoch_ref": context_epoch_ref,
-        "context_cache_layout_ref": context_cache_layout_ref,
-    }
-    write_json_ref(workspace, context_turn_safe_point_ref, turn_safe_point_payload)
-
-    turn_boundary = ContextTurnBoundary(
-        boundary_id=f"{call_id}-turn-boundary",
-        run_id=context.flow_id,
-        call_id=call_id,
-        turn_id=f"{call_id}-turn-001",
-        role=role,
-        safe_point_ref=context_turn_safe_point_ref,
-        pre_view_ref=context_projection_ref,
-        status=ContextTurnBoundaryStatus.READY,
-        context_epoch_ref=context_epoch_ref,
-        metadata={"context_cache_layout_ref": context_cache_layout_ref},
-    )
-    write_json_ref(workspace, context_turn_boundary_ref, turn_boundary.to_dict())
-
-    compile_result = ContextCompileResult(
-        result_id=f"{call_id}-context-compile",
-        view_ref=context_projection_ref,
-        context_hash=context_view.context_hash,
-        action=ContextCompileAction.CONTINUE,
-        epoch_ref=context_epoch_ref,
-        cache_layout_ref=context_cache_layout_ref,
-        diagnostics_refs=[
-            source_snapshot_ref,
-            context_cache_layout_ref,
-            context_turn_boundary_ref,
-        ],
-        metadata={
-            "source_snapshot_ref": source_snapshot_ref,
-            "turn_boundary_ref": context_turn_boundary_ref,
-            "turn_safe_point_ref": context_turn_safe_point_ref,
-        },
-    )
-    write_json_ref(workspace, context_compile_result_ref, compile_result.to_dict())
-
-    return {
-        "context_source_snapshot_ref": source_snapshot_ref,
-        "context_epoch_ref": context_epoch_ref,
-        "context_cache_layout_ref": context_cache_layout_ref,
-        "context_turn_safe_point_ref": context_turn_safe_point_ref,
-        "context_turn_boundary_ref": context_turn_boundary_ref,
-        "context_compile_result_ref": context_compile_result_ref,
-    }
 
 
-def _context_source_snapshot_payload(*, context_view: ContextView, view_ref: str) -> dict[str, Any]:
-    context_view.validate()
-    snapshots = [
-        ContextSourceSnapshot(
-            source_key=segment.segment_id,
-            source_refs=list(segment.source_refs),
-            source_hashes=dict(segment.source_hashes),
-            projection_ref=segment.body_ref,
-            token_estimate=segment.token_estimate,
-            sequence=index,
-            metadata={
-                "segment_kind": segment.kind.value,
-                "cache_policy": segment.cache_policy.value,
-                "inline_policy": segment.inline_policy.value,
-            },
-        ).to_dict()
-        for index, segment in enumerate(context_view.all_segments)
-    ]
-    source_refs = _dedupe_refs(
-        [ref for segment in context_view.all_segments for ref in [*segment.source_refs, segment.body_ref] if ref]
-    )
-    payload = {
-        "schema_version": "missionforge.context_source_snapshot_index.v1",
-        "view_ref": view_ref,
-        "context_hash": context_view.context_hash,
-        "source_refs": source_refs,
-        "snapshots": snapshots,
-    }
-    payload["snapshot_index_hash"] = stable_json_hash(payload)
-    return payload
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _run_piworker_with_failure_policy(
     *,
     compiled: CompiledStep,
     context: StepCompileContext,
-    workspace: str | Path,
+    workspace: Any,
+    adapter_workspace: Any,
     adapter: PiWorkerCallAdapter | None,
     piworker_config: Any | None,
     runner: Any | None,
@@ -481,7 +473,8 @@ def _run_piworker_with_failure_policy(
         write_json_ref(workspace, attempt_call_ref, attempt_call.to_dict())
         call_result = run_piworker_call(
             attempt_call,
-            workspace=workspace,
+            workspace=adapter_workspace,
+            store=workspace,
             adapter=adapter,
             piworker_config=piworker_config,
             runner=runner,
@@ -555,7 +548,7 @@ def _validate_attempt_output_boundary(
     result: PiWorkerCallResult,
     *,
     call: PiWorkerCall,
-    workspace: str | Path,
+    workspace: Any,
     validation_report_ref: str,
 ) -> PiWorkerCallResult:
     if result.status != PiWorkerCallResultStatus.COMPLETED:
@@ -593,16 +586,45 @@ def _validate_attempt_output_boundary(
 def _attempt_call(compiled: CompiledStep, *, attempt_index: int, max_attempts: int):
     if max_attempts == 1:
         return compiled.piworker_call
+    parent_metadata = dict(compiled.piworker_call.metadata)
+    context_metadata = _attempt_context_boundary_metadata(
+        parent_metadata,
+        parent_call_id=compiled.piworker_call.call_id,
+    )
     return replace(
         compiled.piworker_call,
         call_id=f"{compiled.piworker_call.call_id}-attempt-{attempt_index:03d}",
         metadata={
-            **dict(compiled.piworker_call.metadata),
+            **parent_metadata,
             "kernel_parent_call_id": compiled.piworker_call.call_id,
             "attempt_index": attempt_index,
             "max_attempts": max_attempts,
+            **context_metadata,
         },
     )
+
+
+def _attempt_context_boundary_metadata(metadata: Mapping[str, Any], *, parent_call_id: str) -> dict[str, Any]:
+    if not metadata.get("context_compile_result_ref"):
+        return {}
+    return {
+        "context_boundary_reuse": "same_preflight_boundary",
+        "context_parent_call_id": parent_call_id,
+        "context_parent_compile_result_ref": metadata["context_compile_result_ref"],
+        "context_parent_turn_boundary_ref": metadata.get("context_turn_boundary_ref", ""),
+        "context_parent_epoch_ref": metadata.get("context_epoch_ref", ""),
+    }
+
+
+def _context_feed_metadata_refs(metadata: Mapping[str, Any]) -> list[str]:
+    value = metadata.get("context_feed_refs")
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item:
+            result.append(validate_ref(item, "kernel_context_feed.context_feed_refs[]"))
+    return _dedupe_refs(result)
 
 
 def _normalize_attempt_result(
@@ -632,7 +654,8 @@ def run_flow(
     flow: Flow,
     *,
     context: StepCompileContext,
-    workspace: str | Path = ".",
+    workspace: str | Path | None = None,
+    store: RefStore | None = None,
     adapter: PiWorkerCallAdapter | None = None,
     piworker_config: Any | None = None,
     runner: Any | None = None,
@@ -646,7 +669,7 @@ def run_flow(
     resume: bool = True,
     projectors: Mapping[str, ProjectionProjector] | None = None,
     event_sink: FlowEventSink | None = None,
-    interaction_port: FileInteractionPort | None = None,
+    interaction_port: InteractionPort | None = None,
     runtime_progress_sink: PiWorkerProgressSink | None = None,
 ) -> FlowRunResult:
     """Execute a Flow through explicit Step boundaries and decision refs."""
@@ -660,15 +683,60 @@ def run_flow(
     limit = max_steps if max_steps is not None else max(len(flow.steps) * 2, 1)
     if limit < 1:
         raise KernelValidationError("kernel_flow max_steps must be >= 1")
+    record_store = _record_store_for_run(workspace=workspace, store=store)
+    safe_extension_lock_ref = (
+        validate_ref(extension_lock_ref, "kernel_run_flow.extension_lock_ref")
+        if extension_lock_ref is not None
+        else None
+    )
+    safe_extension_install_root_ref = validate_ref(
+        extension_install_root_ref,
+        "kernel_run_flow.extension_install_root_ref",
+    )
+    for step in flow.steps:
+        _requires_extension_lock_filesystem_boundary(
+            step=step,
+            context=context,
+            toolsets=toolsets,
+            artifacts=artifact_by_ref,
+            workspace=workspace,
+            store=record_store,
+            extension_lock_ref=safe_extension_lock_ref,
+        )
+    if safe_extension_lock_ref is not None:
+        for index, step in enumerate(flow.steps, start=1):
+            step_context = StepCompileContext(
+                flow_id=context.flow_id,
+                contract_id=context.contract_id,
+                contract_hash=context.contract_hash,
+                contract_ref=context.contract_ref,
+                workspace_policy_ref=context.workspace_policy_ref,
+                denied_refs=context.denied_refs,
+                ref_prefix=f"kernel/{context.flow_id}/runs/{run_id}/steps/{index:03d}-{step.id}",
+                call_id=f"{context.flow_id}-{index:03d}-{step.id}",
+            )
+            compiled = compile_step(step, context=step_context, toolsets=toolsets, artifacts=artifact_by_ref)
+            if compiled.permission_manifest.extension_grants:
+                prepare_extension_lock(
+                    compiled.permission_manifest,
+                    source_permission_manifest_ref=compiled.permission_manifest_ref,
+                    workspace=_extension_workspace_for_run(workspace=workspace, store=record_store),
+                    ref_prefix=step_context.ref_prefix or f"kernel/{context.flow_id}/steps/{step.id}",
+                    extension_lock_ref=safe_extension_lock_ref,
+                    install_root_ref=safe_extension_install_root_ref,
+                    mode=extension_lock_mode,
+                    installer=extension_installer,
+                    compiled_at=extension_lock_compiled_at,
+                )
     current = flow.steps[0]
-    execution_id = _next_flow_execution_id(workspace, context.flow_id, run_id)
+    execution_id = _next_flow_execution_id(record_store, context.flow_id, run_id)
     flow_run_prefix = f"kernel/{context.flow_id}/runs/{run_id}/executions/{execution_id}"
     flow_ledger_ref = f"{flow_run_prefix}/flow_ledger.jsonl"
     flow_result_ref = f"{flow_run_prefix}/flow_result.json"
     run_events_ref = f"{flow_run_prefix}/observation/run_events.jsonl"
     run_snapshot_ref = f"{flow_run_prefix}/observation/run_snapshot.json"
     ledger_events: list[FlowLedgerEvent] = []
-    observation = _RunObservationRecorder(workspace=workspace, events_ref=run_events_ref, run_id=run_id)
+    observation = _RunObservationRecorder(workspace=record_store, events_ref=run_events_ref, run_id=run_id)
     observation.emit(
         kind=RunEventKind.RUN_STARTED,
         status="running",
@@ -676,7 +744,8 @@ def run_flow(
         metadata={"max_steps": limit, "flow_execution_id": execution_id},
     )
     _write_kernel_run_snapshot(
-        workspace,
+        record_store,
+        latest_event_id=observation.latest_event_id,
         snapshot_ref=run_snapshot_ref,
         events_ref=run_events_ref,
         run_id=run_id,
@@ -708,6 +777,8 @@ def run_flow(
     decision_refs: list[str] = []
     final_artifact_refs: list[str] = []
     context_projection_refs: list[str] = []
+    context_feed_refs: list[str] = []
+    context_thrash_diagnostics_refs: list[str] = []
     last_safe_point_ref = ""
     status = "failed"
     stop_reason = "unknown"
@@ -747,7 +818,8 @@ def run_flow(
                     },
                 )
             _write_kernel_run_snapshot(
-                workspace,
+                record_store,
+                latest_event_id=observation.latest_event_id,
                 snapshot_ref=run_snapshot_ref,
                 events_ref=run_events_ref,
                 run_id=run_id,
@@ -794,6 +866,8 @@ def run_flow(
             denied_refs=context.denied_refs,
             ref_prefix=f"kernel/{context.flow_id}/runs/{run_id}/steps/{index:03d}-{current.id}",
             call_id=f"{context.flow_id}-{index:03d}-{current.id}",
+            context_feed_refs=list(context_feed_refs),
+            context_thrash_diagnostics_refs=list(context_thrash_diagnostics_refs),
         )
         observation.emit(
             kind=RunEventKind.STEP_COMPILED,
@@ -801,7 +875,11 @@ def run_flow(
             step_id=current.id,
             role=current.role.value,
             refs=[f"{step_context.ref_prefix}/step_spec.json", f"{step_context.ref_prefix}/permission_manifest.json"],
-            metadata={"step_index": index},
+            metadata={
+                "step_index": index,
+                "context_feed_ref_count": len(context_feed_refs),
+                "context_thrash_diagnostics_ref_count": len(context_thrash_diagnostics_refs),
+            },
         )
         _append_flow_ledger_event(
             ledger_events,
@@ -836,17 +914,18 @@ def run_flow(
         step_result = run_step(
             executable_step,
             context=step_context,
-            workspace=workspace,
+            workspace=None,
+            store=record_store,
             adapter=adapter,
             piworker_config=piworker_config,
             runner=runner,
             evidence_store=evidence_store,
             toolsets=toolsets,
             artifacts=artifact_by_ref,
-            extension_lock_ref=extension_lock_ref,
+            extension_lock_ref=safe_extension_lock_ref,
             extension_lock_mode=extension_lock_mode,
             extension_installer=extension_installer,
-            extension_install_root_ref=extension_install_root_ref,
+            extension_install_root_ref=safe_extension_install_root_ref,
             extension_lock_compiled_at=extension_lock_compiled_at,
             resume=resume,
             runtime_progress_sink=_runtime_progress_sink_for_step(
@@ -858,6 +937,8 @@ def run_flow(
         step_results.append(step_result)
         step_record_refs.append(step_result.step_record_ref)
         final_artifact_refs.extend(step_result.step_record.output_refs)
+        context_feed_refs = _next_context_feed_refs(record_store, step_result)
+        context_thrash_diagnostics_refs = _next_context_thrash_diagnostics_refs(record_store, step_result)
         context_projection_ref = _metadata_ref(step_result.step_record.metadata, "context_projection_ref")
         if context_projection_ref:
             context_projection_refs.append(context_projection_ref)
@@ -881,7 +962,8 @@ def run_flow(
             metadata={"step_index": index},
         )
         _write_kernel_run_snapshot(
-            workspace,
+            record_store,
+            latest_event_id=observation.latest_event_id,
             snapshot_ref=run_snapshot_ref,
             events_ref=run_events_ref,
             run_id=run_id,
@@ -932,7 +1014,7 @@ def run_flow(
             break
         decision_refs.append(current.route_on)
         try:
-            route_value = route_value_for_step(workspace, current)
+            route_value = route_value_for_step(record_store, current)
         except (OSError, json.JSONDecodeError, ContractValidationError, KernelValidationError) as exc:
             status = "blocked"
             stop_reason = "invalid_decision_artifact"
@@ -1056,7 +1138,7 @@ def run_flow(
     if flow.projections and status not in {"failed", "blocked"}:
         projection_results = run_projections(
             list(flow.projections),
-            workspace=workspace,
+            workspace=record_store,
             projectors=projectors or {},
             record_prefix=f"{flow_run_prefix}/projections",
         )
@@ -1096,7 +1178,8 @@ def run_flow(
         metadata={"stop_reason": stop_reason, "flow_execution_id": execution_id},
     )
     _write_kernel_run_snapshot(
-        workspace,
+        record_store,
+        latest_event_id=observation.latest_event_id,
         snapshot_ref=run_snapshot_ref,
         events_ref=run_events_ref,
         run_id=run_id,
@@ -1111,7 +1194,7 @@ def run_flow(
         last_safe_point_ref=last_safe_point_ref,
         metadata={"flow_execution_id": execution_id, "phase": "stopped", "stop_reason": stop_reason},
     )
-    write_jsonl_ref(workspace, flow_ledger_ref, [event.to_dict() for event in ledger_events])
+    write_jsonl_ref(record_store, flow_ledger_ref, [event.to_dict() for event in ledger_events])
 
     flow_result = FlowResult(
         flow_id=flow.id,
@@ -1128,31 +1211,34 @@ def run_flow(
             "executed_steps": len(step_results),
             "flow_execution_id": execution_id,
             "projection_count": len(projection_results),
+            "context_feed_refs": list(context_feed_refs),
+            "context_thrash_diagnostics_refs": list(context_thrash_diagnostics_refs),
             "stop_reason": stop_reason,
             "run_events_ref": run_events_ref,
             "run_snapshot_ref": run_snapshot_ref,
         },
     )
-    write_json_ref(workspace, flow_result_ref, flow_result.to_dict())
+    write_json_ref(record_store, flow_result_ref, flow_result.to_dict())
     result = FlowRunResult(
         flow=flow,
         flow_result=flow_result,
         flow_result_ref=flow_result_ref,
         step_results=step_results,
         projection_results=projection_results,
+        store=record_store,
     )
     result.validate()
     return result
 
 
-def _next_flow_execution_id(workspace: str | Path, flow_id: str, run_id: str) -> str:
-    executions_root = resolve_workspace_ref(workspace, f"kernel/{flow_id}/runs/{run_id}/executions")
-    if not executions_root.is_dir():
-        return "001"
+def _next_flow_execution_id(workspace: Any, flow_id: str, run_id: str) -> str:
+    executions_root_ref = f"kernel/{flow_id}/runs/{run_id}/executions"
     indexes: list[int] = []
-    for child in executions_root.iterdir():
-        if child.is_dir() and child.name.isdigit():
-            indexes.append(int(child.name))
+    for ref in list_refs(workspace, executions_root_ref):
+        suffix = ref.removeprefix(f"{executions_root_ref}/")
+        segment = suffix.split("/", 1)[0]
+        if segment.isdigit():
+            indexes.append(int(segment))
     if not indexes:
         return "001"
     return f"{max(indexes) + 1:03d}"
@@ -1160,7 +1246,7 @@ def _next_flow_execution_id(workspace: str | Path, flow_id: str, run_id: str) ->
 
 def _prepare_interaction_snapshot(
     *,
-    interaction_port: FileInteractionPort,
+    interaction_port: InteractionPort,
     run_id: str,
     step_id: str,
     step_index: int,
@@ -1226,7 +1312,7 @@ def _stop_after_current_turn_requested(events: list[UserEvent]) -> bool:
 
 
 def _append_run_observation_event(
-    workspace: str | Path,
+    workspace: Any,
     *,
     events_ref: str,
     run_id: str,
@@ -1248,18 +1334,26 @@ def _append_run_observation_event(
         refs=_dedupe_refs(refs or []),
         metadata=metadata or {},
     )
-    append_run_event(workspace, event, events_ref=events_ref)
+    _append_jsonl_item_ref(workspace, events_ref, event.to_dict())
+
+
+def _append_jsonl_item_ref(workspace: Any, ref: str, item: Mapping[str, Any]) -> None:
+    if isinstance(workspace, (str, Path)):
+        FileRefStore(workspace).append_jsonl(ref, item)
+        return
+    workspace.append_jsonl(ref, item)
 
 
 def _write_kernel_run_snapshot(
-    workspace: str | Path,
+    workspace: Any,
     *,
     snapshot_ref: str,
     events_ref: str,
     run_id: str,
     status: RunSnapshotStatus | str,
+    latest_event_id: str,
     current_step: Step | None,
-    interaction_port: FileInteractionPort | None,
+    interaction_port: InteractionPort | None,
     flow_ledger_ref: str,
     flow_result_ref: str,
     step_record_refs: list[str],
@@ -1268,24 +1362,26 @@ def _write_kernel_run_snapshot(
     last_safe_point_ref: str = "",
     metadata: Mapping[str, Any] | None = None,
 ) -> None:
-    snapshot = latest_run_snapshot(
+    pending_count = 0
+    if interaction_port is not None and current_step is not None:
+        pending_count = len(interaction_port.pending_user_events(run_id=run_id, target=current_step.id))
+    snapshot = RunSnapshot(
         run_id=run_id,
         status=status,
-        workspace=workspace,
-        events_ref=events_ref,
         current_step_id=current_step.id if current_step is not None else "",
         current_role=current_step.role.value if current_step is not None else "",
-        interaction_port=interaction_port,
-        target=current_step.id if current_step is not None else "flow",
+        latest_event_id=latest_event_id,
+        latest_event_ref=events_ref,
         flow_ledger_ref=flow_ledger_ref,
         flow_result_ref=flow_result_ref,
         last_safe_point_ref=last_safe_point_ref,
+        pending_user_event_count=pending_count,
         step_record_refs=list(step_record_refs),
         context_projection_refs=list(context_projection_refs or []),
         artifact_refs=_dedupe_refs(final_artifact_refs),
         metadata=metadata or {},
     )
-    write_run_snapshot(workspace, snapshot, snapshot_ref=snapshot_ref)
+    write_json_ref(workspace, snapshot_ref, snapshot.to_dict())
 
 
 def _snapshot_status(status: str, stop_reason: str = "") -> RunSnapshotStatus:
@@ -1317,6 +1413,17 @@ def _metadata_ref(metadata: Mapping[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         return ""
     return validate_ref(value, f"kernel_step_record.metadata.{key}")
+
+
+def _metadata_refs(metadata: Mapping[str, Any], key: str) -> list[str]:
+    value = metadata.get(key)
+    if not isinstance(value, list):
+        return []
+    refs: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item:
+            refs.append(validate_ref(item, f"kernel_step_record.metadata.{key}[]"))
+    return _dedupe_refs(refs)
 
 
 def _append_flow_ledger_event(
@@ -1401,7 +1508,7 @@ def _failure_refs_from_call_result(result: PiWorkerCallResult) -> list[str]:
 
 def _skip_result_if_current(
     *,
-    workspace: str | Path,
+    workspace: Any,
     compiled: CompiledStep,
     step_record_ref: str,
     step_spec_ref: str,
@@ -1467,6 +1574,7 @@ def _skip_result_if_current(
             "skip_reason": skip_reason,
             "resumed_from_step_record_ref": step_record_ref,
             "recovered_from_step_status": existing.status.value if record_status_recovered else "",
+            "context_feed_refs": _context_feed_metadata_refs(compiled.piworker_call.metadata),
             "context_projection_ref": context_projection_ref,
             "context_hash": context_hash,
             **dict(context_engine_metadata),
@@ -1482,23 +1590,26 @@ def _skip_result_if_current(
         piworker_call_ref=piworker_call_ref,
         piworker_call_result_ref=piworker_call_result_ref,
         step_record_ref=skipped_record_ref,
+        store=workspace if _looks_like_ref_store(workspace) else None,
     )
     result.validate()
     return result
 
 
-def _skip_record_ref(workspace: str | Path, step_record_ref: str) -> str:
+def _skip_record_ref(workspace: Any, step_record_ref: str) -> str:
     if step_record_ref.endswith("/step_record.json"):
         prefix = step_record_ref.removesuffix("/step_record.json")
     else:
         prefix = step_record_ref
     reuse_root_ref = f"{prefix}/reuse_records"
-    reuse_root = resolve_workspace_ref(workspace, reuse_root_ref)
     indexes: list[int] = []
-    if reuse_root.is_dir():
-        for child in reuse_root.iterdir():
-            if child.is_file() and child.stem.isdigit() and child.suffix == ".json":
-                indexes.append(int(child.stem))
+    for ref in list_refs(workspace, reuse_root_ref):
+        name = ref.removeprefix(f"{reuse_root_ref}/")
+        if "/" in name or not name.endswith(".json"):
+            continue
+        stem = name.removesuffix(".json")
+        if stem.isdigit():
+            indexes.append(int(stem))
     next_index = max(indexes, default=0) + 1
     return f"{reuse_root_ref}/{next_index:03d}.json"
 
@@ -1507,7 +1618,7 @@ def _can_skip_from_record(
     record: StepRecord,
     *,
     compiled: CompiledStep,
-    workspace: str | Path,
+    workspace: Any,
     input_hashes: Mapping[str, str],
     permission_manifest_hash: str,
     extension_lock_ref: str | None,
@@ -1554,7 +1665,7 @@ def _can_skip_from_record(
     return True
 
 
-def _has_recoverable_route_decision(workspace: str | Path, step: Step) -> bool:
+def _has_recoverable_route_decision(workspace: Any, step: Step) -> bool:
     if step.route_on is None:
         return True
     if not ref_exists(workspace, step.route_on):
@@ -1579,14 +1690,13 @@ def _expected_extension_lock_ref(
     return None
 
 
-def _existing_extension_lock_hash(workspace: str | Path, ref: str | None) -> str | None:
+def _existing_extension_lock_hash(workspace: Any, ref: str | None) -> str | None:
     if ref is None:
         return None
-    path = resolve_workspace_ref(workspace, ref)
-    if not path.is_file():
+    if not ref_exists(workspace, ref):
         return None
     try:
-        return ExtensionLock.from_dict(json.loads(path.read_text(encoding="utf-8"))).lock_hash
+        return ExtensionLock.from_dict(read_json_ref(workspace, ref)).lock_hash
     except (OSError, json.JSONDecodeError, ContractValidationError):
         return None
 
@@ -1600,3 +1710,7 @@ def _dedupe_refs(values: list[str]) -> list[str]:
             result.append(ref)
             seen.add(ref)
     return result
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")

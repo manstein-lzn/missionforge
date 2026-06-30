@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from pathlib import Path
 from typing import Any, Mapping
 
 from ..contracts import ContractValidationError, assert_refs_only_payload, validate_ref
 from .contracts import Flow, FlowStop, KernelValidationError, Step
-from .io import read_json_ref
+from .io import RefStoreTarget, read_json_ref
 
 
 @dataclass(frozen=True)
@@ -46,7 +45,7 @@ class KernelRouteDecision:
         return dict(assert_refs_only_payload(payload, "kernel_route_decision"))
 
 
-def resolve_step_route(flow: Flow, step: Step, workspace: str | Path) -> KernelRouteDecision:
+def resolve_step_route(flow: Flow, step: Step, workspace: RefStoreTarget) -> KernelRouteDecision:
     """Resolve the next route from a step's structured decision artifact."""
 
     flow.validate()
@@ -105,7 +104,7 @@ def resolve_step_route(flow: Flow, step: Step, workspace: str | Path) -> KernelR
     )
 
 
-def route_value_for_step(workspace: str | Path, step: Step) -> str:
+def route_value_for_step(workspace: RefStoreTarget, step: Step) -> str:
     """Read and validate a step route value from its decision artifact."""
 
     if step.route_on is None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import hashlib
 from typing import Any, Mapping
 
 from .contracts import (
@@ -117,8 +118,10 @@ class ToolOutputProjection:
         _optional_hash(self.content_hash, "tool_output_projection.content_hash")
         _optional_ref(self.permission_manifest_ref, "tool_output_projection.permission_manifest_ref")
         _metadata(self.metadata, "tool_output_projection.metadata")
-        if self.policy in {ToolOutputProjectionPolicy.BOUNDED_PREVIEW, ToolOutputProjectionPolicy.REF_STUB} and not self.raw_ref:
-            raise ContractValidationError("tool_output_projection bounded/ref_stub policies require raw_ref")
+        if self.policy is ToolOutputProjectionPolicy.BOUNDED_PREVIEW and not self.raw_ref:
+            raise ContractValidationError("tool_output_projection bounded_preview policy requires raw_ref")
+        if self.policy is ToolOutputProjectionPolicy.REF_STUB and not (self.raw_ref or self.structured_ref):
+            raise ContractValidationError("tool_output_projection ref_stub policy requires raw_ref or structured_ref")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -179,7 +182,7 @@ def bound_tool_output(
     else:
         policy = ToolOutputProjectionPolicy.OMITTED
         projected = "[tool output omitted: raw output ref unavailable]"
-    projection_hash = stable_json_hash({"projection_text": projected})
+    projection_hash = "sha256:" + hashlib.sha256(projected.encode("utf-8")).hexdigest()
     projection = ToolOutputProjection(
         projection_id=projection_id,
         tool_observation_id=tool_observation_id,
@@ -250,4 +253,3 @@ def _optional_hash(value: Any, field_name: str) -> str | None:
 def _require_schema(value: str, expected: str, field_name: str) -> None:
     if require_non_empty_str(value, field_name) != expected:
         raise ContractValidationError(f"{field_name} must be {expected}")
-
