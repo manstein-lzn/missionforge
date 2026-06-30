@@ -961,7 +961,10 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
     def test_default_command_invokes_node_faux_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            result = PiAgentRuntimeAdapter(PiAgentRuntimeConfig()).run_call(
+            result = PiAgentRuntimeAdapter(
+                PiAgentRuntimeConfig(),
+                environ={"MISSIONFORGE_RUNTIME_HOME": str(Path(tempdir) / "runtime-home")},
+            ).run_call(
                 sample_piworker_call(),
                 workspace=tempdir,
                 evidence_store=InMemoryEvidenceStore(),
@@ -1011,7 +1014,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
         self.assertIn("PiWorker runtime started", emitted[0]["message"])
         self.assertIn("events", emitted[0]["refs"][0])
 
-    def test_subprocess_runner_builds_default_runtime_when_dist_is_missing(self) -> None:
+    def test_subprocess_runner_prepares_default_runtime_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             runtime_dir = root / "runtime"
@@ -1020,12 +1023,14 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             dist_dir.mkdir(parents=True)
             bin_dir.mkdir()
             (runtime_dir / "package.json").write_text('{"scripts":{"build":"true"}}\n', encoding="utf-8")
+            (runtime_dir / "package-lock.json").write_text('{"lockfileVersion":3}\n', encoding="utf-8")
             npm_log = root / "npm.log"
             fake_npm = bin_dir / "npm"
             fake_npm.write_text(
                 "#!/bin/sh\n"
                 f"echo \"$@\" >> {npm_log}\n"
-                "if [ \"$1\" = \"run\" ]; then mkdir -p ../runtime/dist; echo 'setup' > ../runtime/dist/main.js; fi\n",
+                "mkdir -p node_modules\n"
+                "if [ \"$1\" = \"run\" ]; then mkdir -p dist; echo 'setup' > dist/main.js; fi\n",
                 encoding="utf-8",
             )
             fake_node = bin_dir / "node"
@@ -1034,7 +1039,10 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             fake_node.chmod(0o755)
             input_path = root / "input.json"
             input_path.write_text("{}\n", encoding="utf-8")
-            env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+            env = {
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "MISSIONFORGE_RUNTIME_HOME": str(root / "runtime-home"),
+            }
 
             result = SubprocessPiAgentCommandRunner().run(
                 ("node", str(dist_dir / "main.js")),
@@ -1046,8 +1054,7 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0)
             log = npm_log.read_text(encoding="utf-8")
-            self.assertIn("install", log)
-            self.assertIn("run build", log)
+            self.assertIn("ci --ignore-scripts", log)
 
 
 class _InvalidJsonRunner:

@@ -10,6 +10,7 @@ CORE_MODULES = [
     "src/missionforge/progress_stream.py",
     "src/missionforge/interaction.py",
     "src/missionforge/piworker_progress.py",
+    "src/missionforge/pi_agent_runtime_bundle.py",
     "src/missionforge/kernel/io.py",
     "src/missionforge/kernel/inspect.py",
     "src/missionforge/kernel/runner.py",

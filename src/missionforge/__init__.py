@@ -149,6 +149,14 @@ from .runtime_control import (
     create_capability_grant,
     create_sandbox_profile_from_workspace,
 )
+from .pi_agent_runtime_bundle import (
+    PiAgentRuntimeCapability,
+    PiAgentRuntimeCapabilityStatus,
+    PiAgentRuntimePreflightReport,
+    default_pi_agent_runtime_command,
+    find_pi_agent_runtime_dir,
+    preflight_pi_agent_runtime,
+)
 from .permissions import ReadGate, WriteGate
 from .ref_store import (
     FileRefStore,
@@ -291,6 +299,9 @@ __all__ = [
     "MissionForgeError",
     "NetworkPolicy",
     "PermissionManifest",
+    "PiAgentRuntimeCapability",
+    "PiAgentRuntimeCapabilityStatus",
+    "PiAgentRuntimePreflightReport",
     "SandboxMode",
     "SandboxProfile",
     "PiWorkerCall",
@@ -357,8 +368,11 @@ __all__ = [
     "create_capability_grant",
     "create_default_piworker_adapter",
     "create_sandbox_profile_from_workspace",
+    "default_pi_agent_runtime_command",
+    "find_pi_agent_runtime_dir",
     "project_judge_rubric",
     "project_worker_brief",
+    "preflight_pi_agent_runtime",
     "latest_run_snapshot",
     "read_progress_events",
     "read_run_events",

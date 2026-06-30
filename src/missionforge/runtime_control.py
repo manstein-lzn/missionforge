@@ -484,7 +484,7 @@ def create_sandbox_profile_from_workspace(
     *,
     workspace_policy: WorkspacePolicy,
     permission_manifest: PermissionManifest,
-    mode: SandboxMode = SandboxMode.BUBBLEWRAP,
+    mode: SandboxMode = SandboxMode.SUBPROCESS,
     network_enabled: bool | None = None,
 ) -> SandboxProfile:
     """Create a small sandbox profile from core permission objects."""

@@ -29,6 +29,10 @@ from ..contracts import (
 from ..context_engine import ContextReadObservation, build_thrash_diagnostics
 from ..evidence_store import EvidenceLedger, InMemoryEvidenceStore
 from ..permissions import PermissionEnforcer, WriteGate
+from ..pi_agent_runtime_bundle import (
+    default_pi_agent_runtime_command as bundled_pi_agent_runtime_command,
+    prepared_pi_agent_runtime_command,
+)
 from ..piworker_progress import PiWorkerProgressBridge, PiWorkerProgressSink
 from ..piworker_call import PiWorkerCall
 from ..ref_store import RefStore
@@ -488,12 +492,13 @@ class SubprocessPiAgentCommandRunner:
     ) -> PiAgentCommandResult:
         child_env = dict(os.environ)
         child_env.update(dict(env))
-        build_failure = _prepare_default_runtime_command(command, timeout_seconds=timeout_seconds, env=child_env)
-        if build_failure is not None:
-            return build_failure
+        prepared = _prepare_default_runtime_command(command, timeout_seconds=timeout_seconds, env=child_env)
+        if isinstance(prepared, PiAgentCommandResult):
+            return prepared
+        runtime_command = prepared or tuple(command)
         try:
             completed = subprocess.run(
-                [*command, str(input_path)],
+                [*runtime_command, str(input_path)],
                 cwd=cwd,
                 timeout=timeout_seconds,
                 text=True,
@@ -1161,8 +1166,7 @@ def _output_package_refs(root: Path, *, spec: PiAgentCallSpec, result: PiAgentRu
 
 
 def default_pi_agent_runtime_command() -> tuple[str, ...]:
-    runtime_main = Path(__file__).resolve().parents[3] / "workers" / "pi-agent-runtime" / "dist" / "main.js"
-    return ("node", str(runtime_main))
+    return bundled_pi_agent_runtime_command()
 
 
 def _prepare_default_runtime_command(
@@ -1170,57 +1174,24 @@ def _prepare_default_runtime_command(
     *,
     timeout_seconds: int,
     env: Mapping[str, str],
-) -> PiAgentCommandResult | None:
+) -> tuple[str, ...] | PiAgentCommandResult | None:
     if len(command) < 2 or command[0] != "node":
         return None
     main_path = Path(command[1])
     if main_path.name != "main.js" or main_path.parent.name != "dist":
         return None
-    if main_path.is_file():
-        return None
     package_dir = main_path.parent.parent
     if not (package_dir / "package.json").is_file():
         return None
-    install = _run_setup_command(("npm", "install"), cwd=package_dir, timeout_seconds=timeout_seconds, env=env)
-    if install.returncode != 0 or install.timed_out:
-        return install
-    build = _run_setup_command(("npm", "run", "build"), cwd=package_dir, timeout_seconds=timeout_seconds, env=env)
-    if build.returncode != 0 or build.timed_out:
-        return build
-    return None
-
-
-def _run_setup_command(
-    command: Sequence[str],
-    *,
-    cwd: Path,
-    timeout_seconds: int,
-    env: Mapping[str, str],
-) -> PiAgentCommandResult:
     try:
-        completed = subprocess.run(
-            list(command),
-            cwd=cwd,
-            timeout=timeout_seconds,
-            text=True,
-            capture_output=True,
-            check=False,
-            env=dict(env),
+        runtime_command, _report = prepared_pi_agent_runtime_command(
+            package_dir,
+            env=env,
+            timeout_seconds=timeout_seconds,
         )
-    except subprocess.TimeoutExpired as exc:
-        return PiAgentCommandResult(
-            returncode=-1,
-            stdout=_process_output_text(exc.stdout),
-            stderr=_process_output_text(exc.stderr),
-            timed_out=True,
-        )
-    except OSError as exc:
+    except ContractValidationError as exc:
         return PiAgentCommandResult(returncode=-1, stderr=str(exc))
-    return PiAgentCommandResult(
-        returncode=completed.returncode,
-        stdout=_process_output_text(completed.stdout),
-        stderr=_process_output_text(completed.stderr),
-    )
+    return runtime_command
 
 
 def _write_failure_result(

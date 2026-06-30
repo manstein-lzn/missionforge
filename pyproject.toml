@@ -14,6 +14,17 @@ dependencies = []
 
 [project.optional-dependencies]
 mem0 = ["mem0ai"]
+sandbox-linux = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+missionforge = [
+    "_bundled/pi_agent_runtime/NOTICE",
+    "_bundled/pi_agent_runtime/package.json",
+    "_bundled/pi_agent_runtime/package-lock.json",
+    "_bundled/pi_agent_runtime/tsconfig.json",
+    "_bundled/pi_agent_runtime/dist/*.js",
+    "_bundled/pi_agent_runtime/src/*.ts",
+]

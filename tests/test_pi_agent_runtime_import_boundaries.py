@@ -26,6 +26,7 @@ ALLOWED_CORE_IMPORTS = {
 }
 ALLOWED_SUBPROCESS_IMPORTERS = {
     ADAPTER_ROOT / "pi_agent_runtime.py",
+    CORE_ROOT / "pi_agent_runtime_bundle.py",
 }
 FORBIDDEN_LIVE_IMPORT_ROOTS = {
     "anthropic",
@@ -69,13 +70,15 @@ class PiAgentRuntimeImportBoundaryTests(unittest.TestCase):
         root_init = (CORE_ROOT / "__init__.py").read_text(encoding="utf-8")
         adapter_init = (ADAPTER_ROOT / "__init__.py").read_text(encoding="utf-8")
 
-        for symbol in PI_AGENT_SYMBOLS | {"pi_agent_runtime"}:
+        for symbol in PI_AGENT_SYMBOLS:
             self.assertNotIn(symbol, root_init)
             self.assertNotIn(symbol, adapter_init)
+        self.assertNotIn("adapters.pi_agent_runtime", root_init)
+        self.assertNotIn("from .adapters import pi_agent_runtime", root_init)
 
     def test_no_direct_python_provider_or_network_dependencies(self) -> None:
         violations: list[str] = []
-        for path in ADAPTER_ROOT.rglob("*.py"):
+        for path in [*ADAPTER_ROOT.rglob("*.py"), CORE_ROOT / "pi_agent_runtime_bundle.py"]:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

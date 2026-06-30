@@ -17,13 +17,14 @@ FrontDesk 或 ProductIntegration
   -> product judge / package / resume logic
 ```
 
-根包刻意只暴露一组小而正交的程序员 API：
+根包暴露一组小而正交的程序员 API，并随包携带默认 PiAgent runtime：
 
 - `TaskContract`、`WorkspacePolicy`、`PermissionManifest`
 - `WorkerBrief`、`JudgeRubric`
 - `PiWorkerCall`、`PiWorkerCallResult`
 - `create_default_piworker_adapter`、`run_piworker_call`
 - refs、evidence、extension、sandbox、progress 等边界原语
+- packaged PiAgent runtime discovery / preflight
 
 更高层的产品语义属于外部 integration，例如 `integrations/deepresearch`；
 它不应该进入 `src/missionforge` 的产品中立核心。
@@ -32,8 +33,33 @@ FrontDesk 或 ProductIntegration
 
 ```bash
 python3 -m pip install -e .
-npm ci --ignore-scripts --prefix workers/pi-agent-runtime
-npm run build --prefix workers/pi-agent-runtime
+```
+
+`missionforge` Python 包会携带 PiAgent runtime 的源码、构建入口和 npm
+manifest。默认 adapter 在真正执行 PiAgent 前，会把包内 runtime 物化到
+`$MISSIONFORGE_RUNTIME_HOME`，或默认的用户 cache 目录，并在该目录中执行
+`npm ci --ignore-scripts`。导入 `missionforge` 本身不会写入当前目录、安装 npm
+依赖或启动 worker。
+
+Linux 强隔离 sandbox 是显式启用能力：
+
+```bash
+python3 -m pip install -e ".[sandbox-linux]"
+```
+
+该 extra 表示应用要求 Linux bubblewrap/seccomp 后端；系统仍需提供 `bwrap` 和
+`libseccomp`。没有这个后端时，MissionForge 仍提供 context、contract、refs、
+permission manifest、tool gateway 和 PiAgent 控制面，但不能宣称对任意 bash/code
+execution 提供 OS 级强隔离。
+
+可以在应用启动时做能力检查：
+
+```python
+from missionforge import preflight_pi_agent_runtime
+
+report = preflight_pi_agent_runtime(require_sandbox_linux=True)
+if not report.available:
+    raise RuntimeError(report.failures)
 ```
 
 ## 最小调用

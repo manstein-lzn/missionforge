@@ -1,0 +1,8 @@
+MissionForge PI Agent Runtime
+
+This package integrates with @earendil-works/pi-agent-core,
+@earendil-works/pi-ai, and @earendil-works/pi-coding-agent.
+
+Those PI packages are MIT licensed.
+
+Copyright (c) 2025 Mario Zechner
