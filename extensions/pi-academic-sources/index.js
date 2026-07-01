@@ -56,7 +56,23 @@ export default function academicSourcesExtension(pi) {
       "Do not assume OpenAlex is available unless provider capabilities say it is enabled.",
     ],
     parameters: Type.Object({
-      query: Type.String({ description: "Search query written by the researcher." }),
+      query: Type.Optional(Type.String({ description: "Single search query written by the researcher." })),
+      queries: Type.Optional(
+        Type.Array(
+          Type.Object({
+            query: Type.String({ description: "Search query written by the researcher." }),
+            query_id: Type.Optional(Type.String({ description: "Stable search-plan query id such as Q1." })),
+            query_family_id: Type.Optional(Type.String({ description: "Stable search-plan query family id." })),
+            providers: Type.Optional(Type.Array(StringEnum(SEARCH_PROVIDER_IDS))),
+            since_year: Type.Optional(Type.Number()),
+            limit: Type.Optional(Type.Number()),
+          }),
+          {
+            description:
+              "Optional batch of independent search-plan queries. The tool runs providers within each query and queries within the batch concurrently.",
+          },
+        ),
+      ),
       providers: Type.Optional(
         Type.Array(StringEnum(SEARCH_PROVIDER_IDS), {
           description:

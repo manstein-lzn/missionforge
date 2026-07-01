@@ -82,6 +82,42 @@ test("academic_search defaults to no-key provider ids", async () => {
   }
 });
 
+test("academic_search supports concurrent query batches", async () => {
+  const previousKey = process.env.OPENALEX_API_KEY;
+  delete process.env.OPENALEX_API_KEY;
+  const previousFetch = globalThis.fetch;
+  const seenUrls = [];
+  globalThis.fetch = async (url) => {
+    seenUrls.push(String(url));
+    return new Response(fakeProviderBody(String(url)), { status: 200 });
+  };
+  try {
+    const result = await academicSearch(
+      {
+        queries: [
+          { query_id: "Q1", query_family_id: "core", query: "mlir fpga", providers: ["arxiv"], limit: 1 },
+          { query_id: "Q2", query_family_id: "systems", query: "fpga hls compiler", providers: ["crossref"], limit: 1 },
+        ],
+      },
+      undefined,
+    );
+    assert.equal(result.schema_version, "missionforge.pi_academic_sources.search_batch_result.v1");
+    assert.equal(result.query_count, 2);
+    assert.deepEqual(
+      result.provider_reports.map((report) => [report.query_id, report.provider]),
+      [
+        ["Q1", "arxiv"],
+        ["Q2", "crossref"],
+      ],
+    );
+    assert.ok(seenUrls.some((url) => url.includes("export.arxiv.org")));
+    assert.ok(seenUrls.some((url) => url.includes("api.crossref.org")));
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreOpenAlexKey(previousKey);
+  }
+});
+
 test("explicit OpenAlex search fails closed when key is absent", async () => {
   const previousKey = process.env.OPENALEX_API_KEY;
   delete process.env.OPENALEX_API_KEY;

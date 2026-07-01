@@ -16,7 +16,10 @@ Tools:
   enhancements, missing provider configuration, and provider capabilities.
 - `academic_search`: normalized search over the default no-key stack:
   Semantic Scholar, arXiv, Crossref, DBLP, and PubMed/PMC. OpenAlex can be
-  included only when configured.
+  included only when configured. The tool accepts either a single `query` or a
+  batch `queries` array with `query_id` and `query_family_id` fields from a
+  product search plan; providers within each query and queries within a batch
+  are executed concurrently.
 - `academic_fetch`: fetch a URL, DOI, arXiv locator, PubMed ID, OpenAlex work
   when configured, or GitHub repository locator.
 - `citation_lookup`: cited-by/reference lookup through Semantic Scholar,

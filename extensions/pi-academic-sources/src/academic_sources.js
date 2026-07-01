@@ -11,7 +11,61 @@ import { boundedInt, clean, optionalYear } from "./utils.js";
 
 export { academicProviderCapabilities, SEARCH_PROVIDER_IDS };
 
-export async function academicSearch(params, signal) {
+export async function academicSearch(params = {}, signal) {
+  const queries = normalizeSearchQueries(params);
+  if (queries.length > 1 || Array.isArray(params.queries)) {
+    return academicSearchBatch(params, queries, signal);
+  }
+  return academicSearchSingle({ ...params, query: queries[0].query }, signal);
+}
+
+async function academicSearchBatch(params = {}, queries, signal) {
+  const providerPolicy = params.provider_policy === "openalex_enhanced" ? "openalex_enhanced" : "default_no_key";
+  const results = await Promise.all(
+    queries.map((item, index) =>
+      academicSearchSingle(
+        {
+          ...params,
+          query: item.query,
+          providers: item.providers ?? params.providers,
+          since_year: item.since_year ?? params.since_year,
+          limit: item.limit ?? params.limit,
+        },
+        signal,
+      ).then((result) => ({
+        query_id: clean(item.query_id) || `Q${index + 1}`,
+        query_family_id: clean(item.query_family_id),
+        ...result,
+      })),
+    ),
+  );
+  const records = results.flatMap((result) =>
+    result.records.map((record) => ({
+      ...record,
+      query: result.query,
+      query_id: result.query_id,
+      query_family_id: result.query_family_id,
+    })),
+  );
+  const providerReports = results.flatMap((result) =>
+    result.provider_reports.map((report) => ({
+      ...report,
+      query: result.query,
+      query_id: result.query_id,
+      query_family_id: result.query_family_id,
+    })),
+  );
+  return {
+    schema_version: "missionforge.pi_academic_sources.search_batch_result.v1",
+    provider_policy: providerPolicy,
+    query_count: results.length,
+    queries: results.map(({ records: _records, provider_reports: _reports, ...result }) => result),
+    records,
+    provider_reports: providerReports,
+  };
+}
+
+async function academicSearchSingle(params = {}, signal) {
   const query = clean(params.query);
   if (!query) throw new Error("academic_search.query is required");
   const providerPolicy = params.provider_policy === "openalex_enhanced" ? "openalex_enhanced" : "default_no_key";
@@ -49,6 +103,27 @@ export async function academicSearch(params, signal) {
     records: providerResults.flatMap((item) => item.records),
     provider_reports: providerResults.map(({ records: _records, ...report }) => report),
   };
+}
+
+function normalizeSearchQueries(params = {}) {
+  const queryItems = Array.isArray(params.queries) ? params.queries : [];
+  if (queryItems.length) {
+    return queryItems.map((item, index) => {
+      const query = clean(item?.query);
+      if (!query) throw new Error(`academic_search.queries[${index}].query is required`);
+      return {
+        query,
+        query_id: clean(item.query_id),
+        query_family_id: clean(item.query_family_id),
+        providers: item.providers,
+        since_year: item.since_year,
+        limit: item.limit,
+      };
+    });
+  }
+  const query = clean(params.query);
+  if (!query) throw new Error("academic_search.query or academic_search.queries is required");
+  return [{ query }];
 }
 
 export async function academicFetch(params, signal) {

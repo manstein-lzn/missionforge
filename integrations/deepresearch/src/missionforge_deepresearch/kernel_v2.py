@@ -25,6 +25,13 @@ from .product_contract import (
     research_report_section_specs,
 )
 from .project_lifecycle import write_kernel_lifecycle_state, write_project_manifest
+from .source_acquisition import (
+    build_fixture_provider_capabilities,
+    build_fixture_search_plan,
+    parse_provider_hits_jsonl,
+    project_coverage_report,
+    provider_hits_jsonl_from_source_packet,
+)
 from .source_graph import project_source_graph
 from .workspace import read_json_ref, write_json_ref, write_text_ref
 
@@ -45,10 +52,14 @@ KERNEL_V2_RESEARCHER_BRIEF_REF = "manuals/researcher.md"
 KERNEL_V2_REVIEWER_RUBRIC_REF = "rubrics/reviewer.md"
 KERNEL_V2_JUDGE_RUBRIC_REF = "rubrics/judge.md"
 KERNEL_V2_INITIAL_SOURCE_PACKET_REF = "sources/initial_source_packet.json"
+KERNEL_V2_PROVIDER_CAPABILITIES_REF = "sources/provider_capabilities.json"
+KERNEL_V2_SEARCH_PLAN_REF = "sources/search_plan.json"
+KERNEL_V2_PROVIDER_HITS_REF = "sources/provider_hits.jsonl"
 KERNEL_V2_SOURCE_PACKET_REF = "sources/source_packet.json"
 KERNEL_V2_CANONICAL_SOURCES_REF = "sources/canonical_sources.json"
 KERNEL_V2_DEDUPE_MAP_REF = "sources/dedupe_map.json"
 KERNEL_V2_SOURCE_GRAPH_REF = "sources/source_graph.json"
+KERNEL_V2_COVERAGE_REPORT_REF = "sources/coverage_report.json"
 KERNEL_V2_FINAL_REPORT_REF = "reports/final_report.md"
 KERNEL_V2_CITATION_PROJECTED_REPORT_REF = "reports/final_report.citation_projected.md"
 KERNEL_V2_EVIDENCE_INDEX_REF = "reports/evidence_index.md"
@@ -85,9 +96,13 @@ class DeepResearchKernelV2Result:
     final_report_ref: str
     citation_projected_report_ref: str
     report_html_ref: str
+    provider_capabilities_ref: str
+    search_plan_ref: str
+    provider_hits_ref: str
     source_packet_ref: str
     source_graph_ref: str
     canonical_sources_ref: str
+    coverage_report_ref: str
     citation_registry_ref: str
     insight_map_ref: str
     claim_index_ref: str
@@ -120,9 +135,13 @@ class DeepResearchKernelV2Result:
             "final_report_ref": self.final_report_ref,
             "citation_projected_report_ref": self.citation_projected_report_ref,
             "report_html_ref": self.report_html_ref,
+            "provider_capabilities_ref": self.provider_capabilities_ref,
+            "search_plan_ref": self.search_plan_ref,
+            "provider_hits_ref": self.provider_hits_ref,
             "source_packet_ref": self.source_packet_ref,
             "source_graph_ref": self.source_graph_ref,
             "canonical_sources_ref": self.canonical_sources_ref,
+            "coverage_report_ref": self.coverage_report_ref,
             "citation_registry_ref": self.citation_registry_ref,
             "insight_map_ref": self.insight_map_ref,
             "claim_index_ref": self.claim_index_ref,
@@ -150,9 +169,13 @@ class DeepResearchKernelV2Result:
             "final_report_ref",
             "citation_projected_report_ref",
             "report_html_ref",
+            "provider_capabilities_ref",
+            "search_plan_ref",
+            "provider_hits_ref",
             "source_packet_ref",
             "source_graph_ref",
             "canonical_sources_ref",
+            "coverage_report_ref",
             "citation_registry_ref",
             "insight_map_ref",
             "claim_index_ref",
@@ -286,7 +309,11 @@ def build_deepresearch_kernel_v2_flow(
             *_request_input_refs(request),
         ],
         outputs=[
+            KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+            KERNEL_V2_SEARCH_PLAN_REF,
+            KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
+            KERNEL_V2_COVERAGE_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
             KERNEL_V2_SOURCE_GAPS_REF,
             KERNEL_V2_RESEARCH_STATE_REF,
@@ -313,7 +340,11 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCHER_BRIEF_REF,
             KERNEL_V2_OUTPUT_CONTRACT_REF,
             *_request_input_refs(request),
+            KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+            KERNEL_V2_SEARCH_PLAN_REF,
+            KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
+            KERNEL_V2_COVERAGE_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
             KERNEL_V2_SOURCE_GAPS_REF,
             KERNEL_V2_RESEARCH_STATE_REF,
@@ -345,7 +376,10 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_REVIEWER_RUBRIC_REF,
             *_request_input_refs(request),
+            KERNEL_V2_SEARCH_PLAN_REF,
+            KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
+            KERNEL_V2_COVERAGE_REPORT_REF,
             KERNEL_V2_FINAL_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
             KERNEL_V2_SOURCE_GAPS_REF,
@@ -371,7 +405,10 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_JUDGE_RUBRIC_REF,
             *_request_input_refs(request),
+            KERNEL_V2_SEARCH_PLAN_REF,
+            KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
+            KERNEL_V2_COVERAGE_REPORT_REF,
             KERNEL_V2_FINAL_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
             KERNEL_V2_SOURCE_GAPS_REF,
@@ -410,10 +447,14 @@ def build_deepresearch_kernel_v2_flow(
             "judge.rejected": mf.Flow.stop("failed"),
         },
         artifacts=[
+            mf.Artifact(KERNEL_V2_PROVIDER_CAPABILITIES_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_SEARCH_PLAN_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_PROVIDER_HITS_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
             mf.Artifact(KERNEL_V2_SOURCE_PACKET_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
             mf.Artifact(KERNEL_V2_CANONICAL_SOURCES_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_DEDUPE_MAP_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_SOURCE_GRAPH_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_COVERAGE_REPORT_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
             mf.Artifact(KERNEL_V2_FINAL_REPORT_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
             mf.Artifact(KERNEL_V2_CITATION_PROJECTED_REPORT_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_CITATION_REGISTRY_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
@@ -480,8 +521,38 @@ class KernelV2FixtureAdapter:
 
     def _write_source_mapper_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
+        profile = research_intensity_profile(request["research_intensity"])
         source_packet = _fixture_source_packet(request)
+        target_source_count = int(request.get("target_source_count") or profile.max_sources)
+        provider_capabilities = build_fixture_provider_capabilities(
+            request_id=str(request["request_id"]),
+            provider_policy=str(request.get("provider_policy") or "default_no_key"),
+        )
+        search_plan = build_fixture_search_plan(
+            request_id=str(request["request_id"]),
+            topic=str(request["topic"]),
+            provider_policy=str(request.get("provider_policy") or "default_no_key"),
+            target_source_count=target_source_count,
+            max_source_count=max(target_source_count, profile.max_sources),
+        )
+        provider_hits_jsonl = provider_hits_jsonl_from_source_packet(
+            request_id=str(request["request_id"]),
+            source_packet=source_packet,
+            query=str(request["topic"]),
+        )
+        coverage_report = project_coverage_report(
+            request_id=str(request["request_id"]),
+            source_packet=source_packet,
+            search_plan=search_plan,
+            provider_capabilities=provider_capabilities,
+            provider_hits=parse_provider_hits_jsonl(provider_hits_jsonl),
+            target_source_count=target_source_count,
+        )
+        write_json_ref(workspace, KERNEL_V2_PROVIDER_CAPABILITIES_REF, provider_capabilities)
+        write_json_ref(workspace, KERNEL_V2_SEARCH_PLAN_REF, search_plan)
+        write_text_ref(workspace, KERNEL_V2_PROVIDER_HITS_REF, provider_hits_jsonl)
         write_json_ref(workspace, KERNEL_V2_SOURCE_PACKET_REF, source_packet)
+        write_json_ref(workspace, KERNEL_V2_COVERAGE_REPORT_REF, coverage_report)
         write_text_ref(workspace, KERNEL_V2_EVIDENCE_INDEX_REF, _reference_lines(source_packet))
         write_text_ref(workspace, KERNEL_V2_SOURCE_GAPS_REF, "Fixture mode validates Kernel v2 wiring, not live coverage.\n")
         write_json_ref(workspace, KERNEL_V2_RESEARCH_STATE_REF, _fixture_research_state(source_packet))
@@ -491,7 +562,10 @@ class KernelV2FixtureAdapter:
             {
                 "schema_version": "missionforge_deepresearch.kernel_v2.source_control.v1",
                 "decision": "ready_for_synthesis",
+                "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
+                "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
                 "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+                "coverage_report_ref": KERNEL_V2_COVERAGE_REPORT_REF,
                 "research_state_ref": KERNEL_V2_RESEARCH_STATE_REF,
                 "coverage_note": "Fixture source mapping is complete for wiring tests.",
             },
@@ -662,9 +736,13 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     profile = research_intensity_profile(request.research_intensity)
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2_output_contract.v1",
+        "provider_capabilities_ref": KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+        "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
+        "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
         "source_graph_ref": KERNEL_V2_SOURCE_GRAPH_REF,
         "canonical_sources_ref": KERNEL_V2_CANONICAL_SOURCES_REF,
+        "coverage_report_ref": KERNEL_V2_COVERAGE_REPORT_REF,
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
         "citation_registry_ref": KERNEL_V2_CITATION_REGISTRY_REF,
@@ -692,14 +770,21 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "This is not the whole research run. Later researcher/reviewer passes can request narrow follow-up source expansion from your artifacts.",
             "Use academic/repo tools when available. Start live academic runs with `academic_provider_capabilities` and record provider availability, missing optional keys, and disabled enhancements before broad search.",
             "Default academic acquisition is no-key. Do not assume OpenAlex is available unless provider capabilities report it as enabled; missing OpenAlex is a source-gap diagnostic, not a task failure.",
-            "Batch independent searches, but keep the batch bounded enough to leave time to write artifacts.",
+            "Before broad search, write `sources/search_plan.json` with query families, provider plan, seed expansion plan when seeds exist, inclusion criteria, stopping criteria, expected evidence classes, and source-count budget.",
+            "Use schema_version `missionforge_deepresearch.search_plan.v1` for `sources/search_plan.json`.",
+            "Batch independent searches from the search plan through `academic_search.queries` when live tools support it; providers inside each query and queries inside the batch may run concurrently.",
+            "Log each provider/query attempt or summarized provider result as one JSON object per line in `sources/provider_hits.jsonl`; include `schema_version`, `wave_id`, `query_family_id`, `query_id`, `query`, `provider`, `status`, `record_count`, and source ids or diagnostics when available.",
+            "Use multiple bounded waves when coverage requires it: initial core query wave, seed/citation-neighborhood wave when seeds or high-value papers exist, then narrow gap-filling wave if necessary.",
+            "Keep every wave small enough to leave time to write artifacts.",
             "Do not keep searching until timeout. After a representative source set exists, write the required artifacts and hand off.",
-            "Write the required artifacts before any second broad search wave. If you are tempted to continue searching broadly, record the follow-up targets in `reports/source_gaps.md` and `state/research_state.json` instead.",
+            "Write the required artifacts before any second broad search wave. If you are tempted to continue searching broadly, record the follow-up targets in `sources/coverage_report.json`, `reports/source_gaps.md`, and `state/research_state.json` instead.",
             "Once you have enough sources to make synthesis useful, stop expanding and set `ready_for_synthesis`; do not chase the maximum source count in this phase.",
             "If tool failures repeat, context pressure is reported, or a context checkpoint/safe-point appears, stop searching and write the durable artifacts from the evidence already gathered.",
-            "Required outputs: `sources/source_packet.json`, `sources/provider_capabilities.json` when academic tools are available, `reports/evidence_index.md`, `reports/source_gaps.md`, `state/research_state.json`, and `state/source_control.json`.",
+            "Required outputs: `sources/provider_capabilities.json`, `sources/search_plan.json`, `sources/provider_hits.jsonl`, `sources/source_packet.json`, `sources/coverage_report.json`, `reports/evidence_index.md`, `reports/source_gaps.md`, `state/research_state.json`, and `state/source_control.json`.",
             "Treat `sources/source_packet.json` as the durable source authority. Include `source_records` with `source_id`, `title`, `source_type`, `year`, `locator`, `evidence_note`, and `evidence_strength` when available.",
             "Use stable source ids like `S1`, `S2`, ... in `sources/source_packet.json`; a mechanical projector will later produce canonical sources, dedupe maps, and citation anchors.",
+            "Treat `sources/coverage_report.json` as the source-acquisition coverage board. Include provider coverage, query-family coverage, year coverage, research-line coverage when known, seed-neighborhood coverage when seeds exist, inaccessible source counts, duplicate/filtered counts, and remaining gaps.",
+            "Use `sources/coverage_report.json.mechanical_coverage_status` only as a diagnostic; semantic sufficiency remains a PiWorker/Judge decision.",
             "Treat `reports/evidence_index.md` as a compact reading map grouped by research line, not a full report.",
             "Treat `reports/source_gaps.md` as the place to record inaccessible sources, weak evidence classes, and follow-up checks.",
             "Treat `state/research_state.json` as the compact project board and posterior summary. Include `project_phase`, `latest_project_update`, `project_milestones`, `coverage_map`, `next_actions`, `source_count`, `current_synthesis`, and `unresolved_gaps` when possible.",
@@ -711,6 +796,7 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             *_source_mapper_intensity_guidance(profile.intensity),
             f"First-pass handoff target: at least {profile.min_source_records} useful source records when feasible.",
             _source_budget_guidance(request, profile),
+            "For academic literature-review runs, 50 source records is the reference baseline for ordinary broad topics. Expand beyond 50, including 100+ candidate records, when the topic is broad, fragmented, or coverage evidence says more sources are needed.",
             "These are source-quality targets and budget guidance, not a fixed acceptance count or permission to exhaust the runtime.",
             f"Topic: {request.topic}",
             f"Audience: {request.audience}",
@@ -760,6 +846,7 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "Required outputs: `reports/final_report.md`, `reports/evidence_index.md`, `reports/source_gaps.md`, `analysis/insight_map.json`, `claims/claim_index.json`, `state/research_state.json`, and `state/researcher_control.json`.",
             "On every pass, write or update every required output ref, even when only one artifact needed a semantic change.",
             "Treat `state/research_state.json` as the compact user-facing project progress board and posterior summary: source strategy, evidence coverage, current synthesis, confidence notes, unresolved gaps, and next actions with refs.",
+            "Read `sources/search_plan.json`, `sources/provider_hits.jsonl`, and `sources/coverage_report.json` before synthesis. Use them to explain scope/method, source limits, and whether a narrow source-mapping continuation is needed.",
             "Do not bury the main intellectual argument in `state/research_state.json`; put thesis, tensions, narrative arc, and reader-value reasoning in `analysis/insight_map.json`.",
             "Include project-progress fields when possible: `project_phase`, `latest_project_update`, `project_milestones`, `coverage_map`, and `next_actions`.",
             "`project_milestones` should be an array of compact objects with `id`, `title`, `status`, `notes`, and optional `evidence_refs`; use statuses such as `pending`, `active`, `done`, `blocked`, or `deferred`.",
@@ -767,6 +854,7 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "Update `state/research_state.json` after planning, after each meaningful evidence batch, before review handoff, and after repair passes.",
             "Treat `sources/source_packet.json` as the durable source authority. Include `source_records` with `source_id`, `title`, `source_type`, `year`, `locator`, `evidence_note`, and `evidence_strength` when available.",
             "Do not rewrite `sources/source_packet.json` in this step; cite it and reflect any needed source expansion in `state/researcher_control.json`.",
+            "Do not rewrite `sources/search_plan.json`, `sources/provider_hits.jsonl`, or `sources/coverage_report.json` in this step. If coverage is insufficient, set `state/researcher_control.json.decision` to `continue` with narrow source targets.",
             "Treat `analysis/insight_map.json` as the durable expert-thinking artifact. Use schema_version `missionforge_deepresearch.kernel_v2.insight_map.v1`.",
             "`analysis/insight_map.json` must include `thesis`, `audience_relevance`, `narrative_arc`, `key_insights`, `tensions`, and `evidence_limits`.",
             "Each key insight should include `insight_id`, `claim`, `why_non_obvious`, `supporting_source_ids`, optional `supporting_claim_ids`, optional `counterevidence_source_ids`, `confidence`, `reader_value`, and `report_section_ids`.",
@@ -837,7 +925,7 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "Return `ready_for_judge`, `revise_report`, `continue`, `blocked`, or `rejected` in the decision field.",
             "Prefer `ready_for_judge` when the report is usable, structurally complete, cited, and explicit about evidence gaps; do not use `continue` merely because deeper research would be valuable.",
             "Use `revise_report` for bounded report defects such as truncation, missing required sections, missing References, citation formatting gaps, incomplete conclusion, weak thesis, thin insight, or narrative mismatch.",
-            "Use `continue` only for one narrow, budget-aware research expansion that is necessary before judge handoff; include exact artifacts and source targets in the observation.",
+            "Use `continue` only for one narrow, budget-aware research expansion that is necessary before judge handoff; ground it in `sources/search_plan.json`, `sources/provider_hits.jsonl`, and `sources/coverage_report.json`, and include exact artifacts and source targets in the observation.",
             "Judge the phase artifacts, not the number of turns or the number of tool calls inside a turn.",
             "A multi-tool researcher batch is fine when it advances the posterior and the workspace artifacts stay coherent.",
             "Use `rejected` only when the package is not salvageable under the frozen contract.",
@@ -885,6 +973,7 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "Return `accepted`, `repair`, `revision_required`, or `rejected` in the decision field.",
             "Use `repair` only for bounded same-contract fixes that the researcher can perform without changing the task contract.",
             "Judge the staged package as a whole: report, evidence index, source gaps, claim index, and research state must agree.",
+            "Use `sources/search_plan.json`, `sources/provider_hits.jsonl`, and `sources/coverage_report.json` to judge whether the report honestly discloses acquisition scope and coverage limits.",
             "Use `analysis/insight_map.json` as the semantic map for the package. Do not accept a report that lacks a defensible thesis, clear audience relevance, cross-source insight, or a coherent argument arc.",
             "Do not accept a report that is structurally complete but reads as a catalog of sources, unless the frozen contract explicitly requested only a bibliography or source inventory.",
             "Do not accept a report that ignores the requested genre. A literature review should be objective, rigorous, comprehensive, and evidence-calibrated, not slogan-heavy or over-personalized to an unknown reader.",
@@ -993,7 +1082,10 @@ def _reference_lines(source_packet: Mapping[str, Any]) -> str:
 def _fixture_research_state(source_packet: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2.research_state.v1",
+        "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
+        "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+        "coverage_report_ref": KERNEL_V2_COVERAGE_REPORT_REF,
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "evidence_index_ref": KERNEL_V2_EVIDENCE_INDEX_REF,
         "source_gaps_ref": KERNEL_V2_SOURCE_GAPS_REF,
@@ -1013,7 +1105,7 @@ def _fixture_research_state(source_packet: Mapping[str, Any]) -> dict[str, Any]:
                 "title": "Evidence packet",
                 "status": "done",
                 "notes": "Fixture evidence packet was written.",
-                "evidence_refs": [KERNEL_V2_SOURCE_PACKET_REF],
+                "evidence_refs": [KERNEL_V2_SEARCH_PLAN_REF, KERNEL_V2_PROVIDER_HITS_REF, KERNEL_V2_SOURCE_PACKET_REF],
             },
             {
                 "id": "synthesis",
@@ -1029,7 +1121,7 @@ def _fixture_research_state(source_packet: Mapping[str, Any]) -> dict[str, Any]:
                 "status": "covered",
                 "confidence": "fixture",
                 "gaps": ["Fixture mode does not judge live research quality."],
-                "evidence_refs": [KERNEL_V2_SOURCE_PACKET_REF],
+                "evidence_refs": [KERNEL_V2_COVERAGE_REPORT_REF, KERNEL_V2_SOURCE_PACKET_REF],
             }
         ],
         "next_actions": ["Use live PiWorker mode for semantic research quality."],
@@ -1288,6 +1380,7 @@ def _write_kernel_v2_run_status(
         product_status=product_status,
         citation_projection_validation=_optional_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF),
         claim_index_validation=_optional_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF),
+        coverage_report=_optional_json_ref(run_root, KERNEL_V2_COVERAGE_REPORT_REF),
         interaction_summary=_kernel_v2_interaction_summary(run_root, flow_result=flow_result),
     )
     write_json_ref(run_root, KERNEL_V2_RUN_STATUS_REF, status_payload)
@@ -1301,6 +1394,7 @@ def _kernel_v2_run_status(
     product_status: str | None = None,
     citation_projection_validation: Mapping[str, Any] | None = None,
     claim_index_validation: Mapping[str, Any] | None = None,
+    coverage_report: Mapping[str, Any] | None = None,
     interaction_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     flow_projected_status = _kernel_v2_projected_status(flow_result)
@@ -1332,6 +1426,9 @@ def _kernel_v2_run_status(
         "citation_projection_failure_codes": _str_list((citation_projection_validation or {}).get("failure_codes", [])),
         "claim_index_validation_status": str((claim_index_validation or {}).get("status", "")),
         "claim_index_validation_failure_codes": _str_list((claim_index_validation or {}).get("failure_codes", [])),
+        "coverage_status": str((coverage_report or {}).get("mechanical_coverage_status", "")),
+        "source_record_count": _non_negative_int((coverage_report or {}).get("source_record_count")),
+        "target_source_count": _non_negative_int((coverage_report or {}).get("target_source_count")),
         "blocked_step_id": last_record.step_id if last_record is not None and status.endswith("_blocked") else "",
         "blocker_kind": _blocker_kind(metadata) if last_record is not None and status.endswith("_blocked") else "",
         "failure_summary": _kernel_v2_failure_summary(
@@ -1343,9 +1440,13 @@ def _kernel_v2_run_status(
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
         "report_html_ref": KERNEL_V2_REPORT_HTML_REF,
+        "provider_capabilities_ref": KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+        "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
+        "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
         "source_graph_ref": KERNEL_V2_SOURCE_GRAPH_REF,
         "canonical_sources_ref": KERNEL_V2_CANONICAL_SOURCES_REF,
+        "coverage_report_ref": KERNEL_V2_COVERAGE_REPORT_REF,
         "citation_registry_ref": KERNEL_V2_CITATION_REGISTRY_REF,
         "insight_map_ref": KERNEL_V2_INSIGHT_MAP_REF,
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
@@ -1503,9 +1604,13 @@ def _kernel_v2_result(
         final_report_ref=_outer_ref(run_ref, KERNEL_V2_FINAL_REPORT_REF),
         citation_projected_report_ref=_outer_ref(run_ref, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
         report_html_ref=_outer_ref(run_ref, KERNEL_V2_REPORT_HTML_REF),
+        provider_capabilities_ref=_outer_ref(run_ref, KERNEL_V2_PROVIDER_CAPABILITIES_REF),
+        search_plan_ref=_outer_ref(run_ref, KERNEL_V2_SEARCH_PLAN_REF),
+        provider_hits_ref=_outer_ref(run_ref, KERNEL_V2_PROVIDER_HITS_REF),
         source_packet_ref=_outer_ref(run_ref, KERNEL_V2_SOURCE_PACKET_REF),
         source_graph_ref=_outer_ref(run_ref, KERNEL_V2_SOURCE_GRAPH_REF),
         canonical_sources_ref=_outer_ref(run_ref, KERNEL_V2_CANONICAL_SOURCES_REF),
+        coverage_report_ref=_outer_ref(run_ref, KERNEL_V2_COVERAGE_REPORT_REF),
         citation_registry_ref=_outer_ref(run_ref, KERNEL_V2_CITATION_REGISTRY_REF),
         insight_map_ref=_outer_ref(run_ref, KERNEL_V2_INSIGHT_MAP_REF),
         claim_index_ref=_outer_ref(run_ref, KERNEL_V2_CLAIM_INDEX_REF),
@@ -1662,10 +1767,14 @@ def _non_negative_float(value: Any) -> float:
 
 def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root: Path) -> list[str]:
     refs: list[str] = [
+        KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+        KERNEL_V2_SEARCH_PLAN_REF,
+        KERNEL_V2_PROVIDER_HITS_REF,
         KERNEL_V2_SOURCE_PACKET_REF,
         KERNEL_V2_CANONICAL_SOURCES_REF,
         KERNEL_V2_DEDUPE_MAP_REF,
         KERNEL_V2_SOURCE_GRAPH_REF,
+        KERNEL_V2_COVERAGE_REPORT_REF,
         KERNEL_V2_CITATION_REGISTRY_REF,
         KERNEL_V2_REPORT_CITATION_MAP_REF,
         KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,

@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3a_complete`; next priority is `search_planning_multi_wave_acquisition`
+Status: `m3_complete`; next priority is `seed_pdf_ingestion`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -160,7 +160,11 @@ backbone:
 - Previous run refs are staged into current-run `inputs/previous_runs/` with an
   `inputs/previous_run_index.json`, preserving the run-root permission boundary.
 - Workspace refs for:
+  - `sources/provider_capabilities.json`
+  - `sources/search_plan.json`
+  - `sources/provider_hits.jsonl`
   - `sources/source_packet.json`
+  - `sources/coverage_report.json`
   - `sources/canonical_sources.json`
   - `sources/dedupe_map.json`
   - `sources/source_graph.json`
@@ -177,7 +181,7 @@ backbone:
   - `judge/judge_report.json`
 - Live academic extension tools:
   - `academic_provider_capabilities`
-  - `academic_search`
+  - `academic_search`, including single-query and batch `queries` mode
   - `academic_fetch`
   - `citation_lookup`
   - `repo_search`
@@ -190,9 +194,11 @@ backbone:
   - OpenCitations citation lookup for DOI neighborhoods
   - OpenAlex only when `OPENALEX_API_KEY` enables the optional enhancement
   - GitHub repository search
-- Provider capability, missing-key, and optional-enhancement status are exposed
-  by the academic extension and requested by the source-mapper brief; persisted
-  provider coverage/source-plan artifacts are still later M3 work.
+- Provider capability, missing-key, optional-enhancement status, search plans,
+  provider-hit logs, and coverage reports are persisted as source artifacts.
+- Standard academic runs now target a 50-source reference budget by default;
+  intensive runs target 100, while `target_source_count` may override the
+  budget and coverage sufficiency remains a PiWorker/Judge decision.
 - Product-level reviewer/judge prompts for synthesis, citation integrity,
   source gaps, insight map, and report quality.
 - Mechanical source graph projection, exact-id/title dedupe, citation
@@ -229,8 +235,9 @@ Current state:
 - The product plan previously treated Google Scholar/browser support as a major
   gap.
 - Provider capability, missing-key, and enhancement state are available through
-  `academic_provider_capabilities`. Product-level provider coverage/source-plan
-  artifacts are not complete yet.
+  `academic_provider_capabilities`. Product-level provider capability,
+  search-plan, provider-hit, and coverage-report artifacts are part of the
+  Kernel v2 source-mapper contract.
 
 Target:
 
@@ -297,6 +304,8 @@ Target:
 
 Current state:
 
+- Kernel v2 source mapper now writes `sources/provider_hits.jsonl` as part of
+  the source-acquisition artifact contract.
 - Provider tools return normalized records, and Kernel v2 now projects
   `sources/source_packet.json` into `sources/canonical_sources.json`,
   `sources/dedupe_map.json`, and `sources/source_graph.json`.
@@ -343,10 +352,19 @@ research-line assignment.
 
 Current state:
 
-- `source_mapper` is a first-pass evidence handoff phase.
-- Standard mode targets 8 useful source records; intensive mode targets 24.
-- The flow does not yet support evidence-driven source-count scaling or
-  multi-wave query expansion.
+- `source_mapper` is still the first-pass evidence handoff phase, but it now
+  has an explicit search-acquisition artifact contract.
+- `source_mapper` must write `sources/search_plan.json`,
+  `sources/provider_hits.jsonl`, `sources/source_packet.json`,
+  `sources/coverage_report.json`, source gaps, research state, and source
+  control before synthesis handoff.
+- `academic_search` supports batch `queries` so PiWorker can run independent
+  query families across multiple providers concurrently.
+- Standard mode targets a 50-source reference budget; intensive mode targets
+  100. `target_source_count` may override either budget.
+- The source count remains coverage guidance, not a hard acceptance rule. The
+  report and coverage artifacts must explain why a run undershoots or expands
+  beyond the reference target.
 
 Target:
 
@@ -698,7 +716,7 @@ The intermediate flow is enough for the first production milestone if
 
 ### Upgrade `pi-academic-sources`
 
-Add:
+Current support:
 
 - default no-key provider registry:
   - Semantic Scholar
@@ -712,13 +730,18 @@ Add:
   - OpenAlex when configured
 - optional OpenAlex enhancement adapter enabled only when configured
 - `academic_provider_capabilities` preflight tool
-- paginated provider search
-- query batch execution
-- provider-hit JSONL output
+- query batch execution through `academic_search.queries`
 - DOI/arXiv/S2/OpenAlex normalization helpers
 - fetch status and provider diagnostics
-- rate-limit/backoff reporting
 - optional provider credentials
+
+Remaining extension work:
+
+- paginated provider search beyond current per-provider limits
+- richer rate-limit/backoff reporting
+- full provider-hit JSONL writer helpers if the extension later receives
+  workspace-write authority; today DeepResearch source mapper writes the JSONL
+  artifact from tool outputs
 
 Keep:
 
@@ -982,30 +1005,42 @@ Exit criteria:
 
 - Fixture and mocked-provider tests show duplicate provider hits collapsing into
   canonical sources.
-- Remaining M2 work: ranked sources, inclusion decisions, provider-hit JSONL, and
+- Remaining M2 work: ranked sources, inclusion decisions, and
   PiWorker-authored relevance rationale.
 
 ### M3: Search Planning And Multi-Wave Acquisition
 
-Status: `pending`
+Status: `complete`
 
 Deliverables:
 
-- Add `search_plan.json`.
-- Add query batch execution.
-- Add provider coverage report.
-- Add default no-key provider orchestration.
-- Add optional OpenAlex-enhanced path when configured.
-- Add route support for `continue_search` with bounded rounds.
-- Add literature-specific intensity profile.
+- Add `sources/search_plan.json`.
+- Add `academic_search.queries` batch execution.
+- Add `sources/provider_hits.jsonl`.
+- Add `sources/coverage_report.json`.
+- Add default no-key provider orchestration through source-mapper brief,
+  provider capabilities, and extension provider policy.
+- Keep optional OpenAlex-enhanced path configured-only and non-blocking.
+- Keep `source_mapper.continue` route for bounded source-acquisition loops.
+- Add literature-scale intensity budgets: standard 50, intensive 100, with
+  `target_source_count` override.
 
 Exit criteria:
 
-- Mocked no-key providers can produce 50+ hits; DeepResearch dedupes/ranks them
-  and selects an included source set.
+- Fixture and mocked provider tests cover search plan, provider-hit JSONL,
+  coverage report, no-key providers, and query-batch execution.
 - Missing OpenAlex configuration is recorded but does not fail the run.
 - Configured OpenAlex enhancement contributes extra identifiers/locators without
   changing the product contract shape.
+
+Implemented notes:
+
+- The source mapper is still the PiWorker role that authors search strategy;
+  DeepResearch does not add a deterministic Python research planner.
+- `coverage_report.json` is a coverage/evidence diagnostic. Its mechanical
+  counts do not decide semantic sufficiency.
+- Ranking artifacts and PiWorker-authored inclusion decisions remain M2/M6
+  follow-up work rather than hidden Python semantics.
 
 ### M3A: Persistent Project Lifecycle And ContextPackage Resume
 

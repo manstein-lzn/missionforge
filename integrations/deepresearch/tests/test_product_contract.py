@@ -98,6 +98,8 @@ class ProductContractTests(unittest.TestCase):
 
         self.assertGreater(intensive.max_sources, standard.max_sources)
         self.assertGreater(intensive.min_source_records, standard.min_source_records)
+        self.assertEqual(standard.max_sources, 50)
+        self.assertEqual(intensive.max_sources, 100)
         self.assertGreater(intensive.max_review_rounds, standard.max_review_rounds)
         self.assertGreater(intensive.piworker_timeout_seconds, standard.piworker_timeout_seconds)
         self.assertNotIn("max_turns", standard.to_dict())

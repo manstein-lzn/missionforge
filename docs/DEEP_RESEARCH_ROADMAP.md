@@ -8,8 +8,15 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Active flow: researcher -> reviewer -> judge.
 - Active adapter: PiWorker through Codex current provider config or fixture
   mode for tests.
-- Active output: markdown final report, evidence/source packet, judge report,
-  result package, usage summary, and optional HTML export.
+- Active output: markdown final report, search plan, provider-hit JSONL,
+  coverage report, evidence/source packet, judge report, result package, usage
+  summary, and optional HTML export.
+- Active source acquisition artifacts: `sources/provider_capabilities.json`,
+  `sources/search_plan.json`, `sources/provider_hits.jsonl`,
+  `sources/source_packet.json`, and `sources/coverage_report.json`.
+- Active academic acquisition scale: standard runs use a 50-source reference
+  budget, intensive runs use 100, and request-level `target_source_count` can
+  override either budget.
 - Active analysis artifact: `analysis/insight_map.json`, authored by the
   researcher PiWorker and reviewed by reviewer/judge as the thesis, narrative
   arc, cross-source insight, audience relevance, and evidence-limit map.
@@ -46,6 +53,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
+- Add seed-paper/PDF ingestion so optional user-supplied papers become parsed
+  source refs with diagnostics.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into
@@ -53,9 +62,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Add a project-oriented web console MVP for FrontDesk chat, lifecycle status,
   pause/resume/checkpoint/revision controls, source/citation inspection, and
   Markdown report preview.
-- Make academic acquisition default to a no-key provider stack. OpenAlex may
-  enhance coverage when configured, but missing OpenAlex credentials must not
-  block the default product path.
+- Continue hardening the no-key provider stack. OpenAlex may enhance coverage
+  when configured, but missing OpenAlex credentials must not block the default
+  product path.
 - Improve mature platform/source acquisition by letting the researcher inspect
   repository files and documentation metadata when authorized.
 - Strengthen claim-to-source mapping without requiring code to judge semantic

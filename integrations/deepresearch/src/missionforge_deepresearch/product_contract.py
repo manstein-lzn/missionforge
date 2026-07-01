@@ -181,8 +181,8 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
     profiles = {
         ResearchIntensity.STANDARD: ResearchIntensityProfile(
             intensity=ResearchIntensity.STANDARD,
-            max_sources=24,
-            min_source_records=8,
+            max_sources=50,
+            min_source_records=16,
             max_review_rounds=2,
             piworker_timeout_seconds=900,
             piworker_reasoning="medium",
@@ -197,8 +197,8 @@ def research_intensity_profile(value: ResearchIntensity | str) -> ResearchIntens
         ),
         ResearchIntensity.INTENSIVE: ResearchIntensityProfile(
             intensity=ResearchIntensity.INTENSIVE,
-            max_sources=64,
-            min_source_records=24,
+            max_sources=100,
+            min_source_records=40,
             max_review_rounds=4,
             piworker_timeout_seconds=1800,
             piworker_reasoning="high",
