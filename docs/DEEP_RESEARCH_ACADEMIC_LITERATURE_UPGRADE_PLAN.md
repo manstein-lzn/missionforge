@@ -183,6 +183,8 @@ backbone:
   - `analysis/insight_map.json`
   - `claims/claim_index.json`
   - `state/claim_index_validation.json`
+  - `reviews/claim_support_review.json`
+  - `state/claim_support_review_validation.json`
   - `reports/final_report.md`
   - `reports/final_report.citation_projected.md`
   - `judge/judge_report.json`
@@ -491,12 +493,29 @@ paper. It only enforces mechanical citation integrity.
 Current state:
 
 - Claim validation checks that `supporting_source_ids` exist.
+- Claim validation also checks claim-level `supporting_evidence_refs` against
+  known source evidence refs, including parsed PDF refs and fetched
+  abstract/full-text refs carried in source records.
 - Citation validation checks source-id citation projection and reference-anchor
   consistency.
 - Accepted flows are downgraded to product `failed` when mechanical citation or
   claim-source validation fails.
-- URL accessibility and semantic support remain Judge/PiWorker work backed by
-  evidence refs.
+- Reviewer PiWorker must write `reviews/claim_support_review.json`, a semantic
+  claim-support audit over `claims/claim_index.json`, `sources/source_packet.json`,
+  `reports/evidence_index.md`, parsed PDF refs, and fetched/full-text refs.
+- Runtime writes `state/claim_support_review_validation.json` for schema/ref
+  validation only. It does not decide whether evidence semantically supports a
+  claim.
+- Reviewer `revise_report` and Judge `repair` routes enter a dedicated
+  repair PiWorker boundary. Reviewer repair reads reviewer claim-support
+  feedback refs; Judge repair additionally reads `judge/judge_report.json`.
+  The initial researcher step never reads stale review/judge artifacts.
+- Accepted flows are downgraded to product `failed` if the reviewer-authored
+  claim-support review is malformed, references unknown claims/sources/evidence
+  refs, or still declares `repair_required`, `source_expansion_required`,
+  `revision_required`, or `rejected`.
+- URL accessibility and final semantic support remain Judge/PiWorker work backed
+  by evidence refs.
 
 Target:
 
@@ -521,6 +540,16 @@ Target:
   - cited claim must be consistent with cited source record and fetched content
   - strong claims require stronger evidence than metadata-only records
   - unsupported or mismatched citations require repair
+- Add Reviewer PiWorker claim-support artifact:
+  - `schema_version: missionforge_deepresearch.kernel_v2.claim_support_review.v1`
+  - `claim_index_ref`, `source_packet_ref`, `evidence_index_ref`
+  - `claim_reviews[]` with `claim_id`, `support_status`,
+    `supporting_source_ids`, `supporting_evidence_refs`, `rationale`, and
+    `required_repair`
+  - `overall_status` and `repair_directive`
+- Keep repair workers bounded to same-contract repairs; contract-changing fixes
+  must become explicit revision-required work rather than silent contract
+  weakening.
 
 This preserves the architecture rule: code checks mechanical truth boundaries;
 Judge PiWorker checks semantic support against evidence refs.
@@ -1210,20 +1239,35 @@ Implemented notes:
 
 ### M6: Citation Support Judge
 
-Status: `partial`
+Status: `complete_for_current_architecture`
 
 Deliverables:
 
 - Extended claim index.
-- Judge rubric for claim-source support.
-- Repair loop for unsupported/mismatched citations.
+- Reviewer-authored `reviews/claim_support_review.json` semantic support audit.
+- Runtime-owned `state/claim_support_review_validation.json` for schema/ref
+  boundaries only.
+- Judge rubric for claim-source support that consumes reviewer claim-support
+  audit plus parsed/fetched evidence refs.
+- Dedicated repair loop for unsupported/mismatched citations and bounded
+  same-contract repairs, split between reviewer-feedback repair and
+  judge-feedback repair to preserve minimal readable refs.
+- Product status downgrade when an accepted flow has malformed claim-support
+  review refs or a reviewer-authored non-passing claim-support status.
 
 Exit criteria:
 
 - Fixture tests simulate unsupported claims and require repair/rejection.
 - Judge cannot accept reports with mechanically invalid citations.
-- Remaining M6 work: semantic claim-source support judgment and repair loop
-  against fetched/full-text evidence, including parsed PDF spans.
+- Reviewer claim-support reviews cannot reference unknown claim ids, source ids,
+  or known evidence refs.
+- Initial researcher execution does not read stale reviewer/judge refs; only
+  repair workers consume reviewer/judge feedback, and Judge feedback is only
+  readable in the Judge repair path.
+- Remaining post-M6 hardening: richer URL accessibility checks, page/span-level
+  parsed PDF provenance when GROBID coordinates are available, and explicit
+  `revision_required` ledger records instead of collapsing all revision-required
+  decisions into generic blocked status.
 
 ### M7: Optional Scholar/Commercial Browser Fallback
 

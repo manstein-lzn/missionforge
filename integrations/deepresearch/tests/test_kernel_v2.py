@@ -64,6 +64,12 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             insight_map_exists = (root / result.insight_map_ref).is_file()
             claim_index_exists = (root / result.claim_index_ref).is_file()
             reviewer_observation_exists = (root / result.reviewer_observation_ref).is_file()
+            claim_support_review_exists = (root / result.claim_support_review_ref).is_file()
+            claim_support_review = _read_json(root, result.claim_support_review_ref)
+            claim_support_review_validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/{kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF}",
+            )
             judge_report_exists = (root / result.judge_report_ref).is_file()
             run_status = _read_json(root, result.run_status_ref)
             research_state = _read_json(root, f"{result.run_workspace_ref}/state/research_state.json")
@@ -125,12 +131,21 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertTrue(insight_map_exists)
         self.assertTrue(claim_index_exists)
         self.assertTrue(reviewer_observation_exists)
+        self.assertTrue(claim_support_review_exists)
+        self.assertEqual(
+            claim_support_review["schema_version"],
+            "missionforge_deepresearch.kernel_v2.claim_support_review.v1",
+        )
+        self.assertEqual(claim_support_review["overall_status"], "passed")
+        self.assertEqual(claim_support_review_validation["status"], "passed")
         self.assertTrue(judge_report_exists)
         self.assertEqual(run_status["status"], "accepted")
         self.assertEqual(run_status["search_plan_ref"], "sources/search_plan.json")
         self.assertEqual(run_status["provider_hits_ref"], "sources/provider_hits.jsonl")
         self.assertEqual(run_status["coverage_report_ref"], "sources/coverage_report.json")
         self.assertEqual(run_status["coverage_status"], "below_target")
+        self.assertEqual(run_status["claim_support_review_status"], "passed")
+        self.assertEqual(run_status["claim_support_review_validation_status"], "passed")
         self.assertEqual(run_status["source_record_count"], 1)
         self.assertEqual(run_status["target_source_count"], 50)
         self.assertEqual(run_status["flow_result_ref"], result.flow_result_ref.removeprefix(f"{result.run_workspace_ref}/"))
@@ -170,8 +185,12 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("sources/provider_hits.jsonl", calls[1]["visible_refs"])
         self.assertIn("sources/coverage_report.json", calls[1]["visible_refs"])
         self.assertIn("sources/source_packet.json", calls[1]["visible_refs"])
+        self.assertNotIn("reviews/reviewer_observation.json", calls[1]["visible_refs"])
+        self.assertNotIn("judge/judge_report.json", calls[1]["visible_refs"])
         self.assertIn("analysis/insight_map.json", calls[2]["visible_refs"])
+        self.assertIn("reviews/claim_support_review.json", calls[2]["expected_output_refs"])
         self.assertIn("analysis/insight_map.json", calls[3]["visible_refs"])
+        self.assertIn("reviews/claim_support_review.json", calls[3]["visible_refs"])
         self.assertEqual(calls[0]["writable_refs"], ["sources", "reports", "state"])
         self.assertEqual(calls[1]["writable_refs"], ["reports", "analysis", "claims", "state"])
         self.assertNotIn("exports/final_report.html", calls[0]["expected_output_refs"])
@@ -194,6 +213,8 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn(f"{result.run_workspace_ref}/sources/source_graph.json", result.evidence_refs)
         self.assertIn(f"{result.run_workspace_ref}/citations/citation_registry.json", result.evidence_refs)
         self.assertIn(f"{result.run_workspace_ref}/analysis/insight_map.json", result.evidence_refs)
+        self.assertIn(f"{result.run_workspace_ref}/reviews/claim_support_review.json", result.evidence_refs)
+        self.assertIn(f"{result.run_workspace_ref}/state/claim_support_review_validation.json", result.evidence_refs)
         self.assertIn(f"{result.run_workspace_ref}/state/research_state.json", result.evidence_refs)
         self.assertEqual(flow_result["decision_refs"], [
             "state/source_control.json",
@@ -452,34 +473,49 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(flow.routes["judge.accepted"].status, "accepted")
         self.assertEqual(
             [step.id for step in flow.steps],
-            ["source_mapper", "researcher", "reviewer", "judge"],
+            ["source_mapper", "researcher", "reviewer", "researcher_repair", "researcher_judge_repair", "judge"],
         )
         self.assertEqual(flow.routes["source_mapper.ready_for_synthesis"], "researcher")
-        self.assertEqual(flow.routes["reviewer.revise_report"], "researcher")
+        self.assertEqual(flow.routes["reviewer.revise_report"], "researcher_repair")
         self.assertEqual(flow.routes["reviewer.continue"], "source_mapper")
-        self.assertEqual(flow.routes["judge.repair"], "researcher")
+        self.assertEqual(flow.routes["judge.repair"], "researcher_judge_repair")
         self.assertEqual(flow.steps[0].role, mf.PiWorkerCallRole.EXECUTOR)
         self.assertEqual(flow.steps[1].role, mf.PiWorkerCallRole.EXECUTOR)
         self.assertEqual(flow.steps[2].role, mf.PiWorkerCallRole.EXECUTOR)
-        self.assertEqual(flow.steps[3].role, mf.PiWorkerCallRole.JUDGE)
+        self.assertEqual(flow.steps[3].role, mf.PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(flow.steps[4].role, mf.PiWorkerCallRole.EXECUTOR)
+        self.assertEqual(flow.steps[5].role, mf.PiWorkerCallRole.JUDGE)
         self.assertEqual(flow.steps[0].route_on, "state/source_control.json")
         self.assertEqual(flow.steps[1].route_on, "state/researcher_control.json")
         self.assertEqual(flow.steps[2].route_on, "reviews/reviewer_observation.json")
+        self.assertEqual(flow.steps[3].route_on, "state/researcher_control.json")
         self.assertIn(kernel_v2_module.KERNEL_V2_SEARCH_PLAN_REF, flow.steps[0].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_PROVIDER_HITS_REF, flow.steps[0].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_SOURCE_PACKET_REF, flow.steps[0].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_COVERAGE_REPORT_REF, flow.steps[0].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_COVERAGE_REPORT_REF, flow.steps[1].inputs)
+        self.assertNotIn(kernel_v2_module.KERNEL_V2_REVIEWER_OBSERVATION_REF, flow.steps[1].inputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_REVIEWER_OBSERVATION_REF, flow.steps[3].inputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, flow.steps[3].inputs)
+        self.assertNotIn(kernel_v2_module.KERNEL_V2_JUDGE_REPORT_REF, flow.steps[3].inputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_JUDGE_REPORT_REF, flow.steps[4].inputs)
         self.assertNotIn(kernel_v2_module.KERNEL_V2_FINAL_REPORT_REF, flow.steps[0].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_INSIGHT_MAP_REF, flow.steps[1].outputs)
         self.assertIn(kernel_v2_module.KERNEL_V2_INSIGHT_MAP_REF, flow.steps[2].inputs)
-        self.assertIn(kernel_v2_module.KERNEL_V2_INSIGHT_MAP_REF, flow.steps[3].inputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, flow.steps[2].outputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, flow.steps[5].inputs)
         self.assertNotIn("analysis", flow.steps[0].write)
         self.assertIn("analysis", flow.steps[1].write)
         self.assertIn("analysis", flow.steps[2].read)
         self.assertIn("analysis", flow.steps[3].read)
+        self.assertIn("analysis", flow.steps[4].read)
+        self.assertNotIn("reviews", flow.steps[1].read)
+        self.assertIn("reviews", flow.steps[3].read)
+        self.assertNotIn("judge", flow.steps[3].read)
+        self.assertIn("judge", flow.steps[4].read)
         self.assertEqual(flow.steps[0].failure.retries, 0)
         self.assertEqual(flow.steps[1].failure.retries, 0)
+        self.assertEqual(flow.steps[3].failure.retries, 0)
         self.assertEqual(flow.steps[0].runtime_budget["max_turns"], 12)
         self.assertFalse(any("max_turns" in step.runtime_budget for step in flow.steps[1:]))
         self.assertTrue(all("timeout_seconds" in step.runtime_budget for step in flow.steps))
@@ -569,10 +605,12 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(result.status, "accepted")
         self.assertEqual(
             [record["step_id"] for record in step_records],
-            ["source_mapper", "researcher", "reviewer", "researcher", "reviewer", "judge"],
+            ["source_mapper", "researcher", "reviewer", "researcher_repair", "reviewer", "judge"],
         )
         self.assertEqual(adapter.reviewer_call_count, 2)
         self.assertEqual(calls[3]["writable_refs"], ["reports", "analysis", "claims", "state"])
+        self.assertIn("reviews/reviewer_observation.json", calls[3]["visible_refs"])
+        self.assertIn("reviews/claim_support_review.json", calls[3]["visible_refs"])
         self.assertEqual(flow_result["decision_refs"], [
             "state/source_control.json",
             "state/researcher_control.json",
@@ -598,7 +636,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(result.status, "accepted")
         self.assertEqual(
             [record["step_id"] for record in step_records],
-            ["source_mapper", "researcher", "reviewer", "judge", "researcher", "reviewer", "judge"],
+            ["source_mapper", "researcher", "reviewer", "judge", "researcher_judge_repair", "reviewer", "judge"],
         )
         self.assertEqual(adapter.judge_call_count, 2)
         self.assertEqual(flow_result["decision_refs"], [
@@ -938,6 +976,58 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(run_status["claim_index_validation_status"], "failed")
         self.assertIn("claim_C1_unknown_evidence_ref", validation["failure_codes"])
 
+    def test_kernel_v2_marks_unknown_claim_support_review_claim_as_failed(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-bad-support-review-claim",
+            topic="compiler autotuning",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=BadClaimSupportReviewClaimKernelV2FixtureAdapter(),
+            )
+            run_status = _read_json(root, result.run_status_ref)
+            validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/{kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF}",
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+
+        self.assertEqual(flow_result["status"], "accepted")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(run_status["claim_support_review_validation_status"], "failed")
+        self.assertIn("claim_review_C999_unknown_claim_id", validation["failure_codes"])
+
+    def test_kernel_v2_marks_claim_support_review_repair_required_as_failed_if_judge_accepts(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-support-review-bypass",
+            topic="compiler autotuning",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=BypassingClaimSupportRepairKernelV2FixtureAdapter(),
+            )
+            run_status = _read_json(root, result.run_status_ref)
+            validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/{kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF}",
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+
+        self.assertEqual(flow_result["status"], "accepted")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(validation["status"], "passed")
+        self.assertEqual(validation["overall_status"], "repair_required")
+        self.assertEqual(run_status["claim_support_review_status"], "repair_required")
+        self.assertIn("claim support review requires repair", run_status["failure_summary"])
+
     def test_kernel_v2_intensity_briefs_distinguish_standard_and_intensive(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1087,6 +1177,30 @@ class RevisingKernelV2FixtureAdapter(KernelV2FixtureAdapter):
     def _write_reviewer_outputs(self, workspace: Path, call) -> None:
         self.reviewer_call_count += 1
         if self.reviewer_call_count == 1:
+            claim_index = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF)
+            claim_id = claim_index["claims"][0]["claim_id"]
+            kernel_v2_module.write_json_ref(
+                workspace,
+                kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+                {
+                    "schema_version": "missionforge_deepresearch.kernel_v2.claim_support_review.v1",
+                    "claim_index_ref": kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF,
+                    "source_packet_ref": kernel_v2_module.KERNEL_V2_SOURCE_PACKET_REF,
+                    "evidence_index_ref": kernel_v2_module.KERNEL_V2_EVIDENCE_INDEX_REF,
+                    "claim_reviews": [
+                        {
+                            "claim_id": claim_id,
+                            "support_status": "weak",
+                            "supporting_source_ids": ["S1"],
+                            "supporting_evidence_refs": [],
+                            "rationale": "Fixture reviewer requires a bounded same-contract repair.",
+                            "required_repair": "Add References and repair the truncated ending.",
+                        }
+                    ],
+                    "overall_status": "repair_required",
+                    "repair_directive": "Add References and repair the truncated ending.",
+                },
+            )
             kernel_v2_module.write_json_ref(
                 workspace,
                 kernel_v2_module.KERNEL_V2_REVIEWER_OBSERVATION_REF,
@@ -1094,6 +1208,7 @@ class RevisingKernelV2FixtureAdapter(KernelV2FixtureAdapter):
                     "schema_version": "missionforge_deepresearch.kernel_v2.reviewer_observation.v1",
                     "decision": "revise_report",
                     "reviewer_report_ref": kernel_v2_module.KERNEL_V2_REVIEWER_OBSERVATION_REF,
+                    "claim_support_review_ref": kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
                     "blocking_gaps": [
                         {
                             "gap_id": "G1",
@@ -1142,7 +1257,9 @@ class TokenMetricsKernelV2FixtureAdapter(KernelV2FixtureAdapter):
             "source_mapper": 1,
             "researcher": 2,
             "reviewer": 3,
-            "judge": 4,
+            "researcher_repair": 4,
+            "researcher_judge_repair": 5,
+            "judge": 6,
         }[str(call.metadata.get("kernel_step_id", ""))]
         metrics_ref = f"attempts/{call.call_id}/metrics.json"
         kernel_v2_module.write_json_ref(
@@ -1185,6 +1302,25 @@ class BadClaimEvidenceKernelV2FixtureAdapter(KernelV2FixtureAdapter):
         claim_index = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF)
         claim_index["claims"][0]["supporting_evidence_refs"] = ["sources/seed_pdfs/missing/provenance.json"]
         kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF, claim_index)
+
+
+class BadClaimSupportReviewClaimKernelV2FixtureAdapter(KernelV2FixtureAdapter):
+    def _write_reviewer_outputs(self, workspace: Path, call) -> None:
+        super()._write_reviewer_outputs(workspace, call)
+        review = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF)
+        review["claim_reviews"][0]["claim_id"] = "C999"
+        kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, review)
+
+
+class BypassingClaimSupportRepairKernelV2FixtureAdapter(KernelV2FixtureAdapter):
+    def _write_reviewer_outputs(self, workspace: Path, call) -> None:
+        super()._write_reviewer_outputs(workspace, call)
+        review = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF)
+        review["claim_reviews"][0]["support_status"] = "unsupported"
+        review["claim_reviews"][0]["required_repair"] = "Remove or recite the unsupported fixture claim."
+        review["overall_status"] = "repair_required"
+        review["repair_directive"] = "Remove or recite the unsupported fixture claim."
+        kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, review)
 
 
 class AcceptingResearcherKernelV2FixtureAdapter(KernelV2FixtureAdapter):

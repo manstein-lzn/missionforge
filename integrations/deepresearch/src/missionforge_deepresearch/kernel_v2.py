@@ -66,6 +66,7 @@ KERNEL_V2_OUTPUT_CONTRACT_REF = "product_contract/output_contract.json"
 KERNEL_V2_PREVIOUS_RUN_INDEX_REF = "inputs/previous_run_index.json"
 KERNEL_V2_SOURCE_MAPPER_BRIEF_REF = "manuals/source_mapper.md"
 KERNEL_V2_RESEARCHER_BRIEF_REF = "manuals/researcher.md"
+KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF = "manuals/researcher_repair.md"
 KERNEL_V2_REVIEWER_RUBRIC_REF = "rubrics/reviewer.md"
 KERNEL_V2_JUDGE_RUBRIC_REF = "rubrics/judge.md"
 KERNEL_V2_INITIAL_SOURCE_PACKET_REF = "sources/initial_source_packet.json"
@@ -93,8 +94,30 @@ KERNEL_V2_SOURCE_CONTROL_REF = "state/source_control.json"
 KERNEL_V2_RESEARCHER_CONTROL_REF = "state/researcher_control.json"
 KERNEL_V2_RUN_STATUS_REF = "state/run_status.json"
 KERNEL_V2_REVIEWER_OBSERVATION_REF = "reviews/reviewer_observation.json"
+KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF = "reviews/claim_support_review.json"
+KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF = "state/claim_support_review_validation.json"
 KERNEL_V2_JUDGE_REPORT_REF = "judge/judge_report.json"
 KERNEL_V2_USAGE_SUMMARY_REF = "metrics/usage_summary.json"
+
+_CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION = "missionforge_deepresearch.kernel_v2.claim_support_review.v1"
+_CLAIM_SUPPORT_REVIEW_VALIDATION_SCHEMA_VERSION = (
+    "missionforge_deepresearch.kernel_v2.claim_support_review_validation.v1"
+)
+_CLAIM_SUPPORT_STATUSES = {
+    "supported",
+    "weak",
+    "unsupported",
+    "mismatched",
+    "needs_source_expansion",
+    "not_reviewed",
+}
+_CLAIM_SUPPORT_OVERALL_STATUSES = {
+    "passed",
+    "repair_required",
+    "source_expansion_required",
+    "revision_required",
+    "rejected",
+}
 
 
 @dataclass(frozen=True)
@@ -129,6 +152,7 @@ class DeepResearchKernelV2Result:
     insight_map_ref: str
     claim_index_ref: str
     reviewer_observation_ref: str
+    claim_support_review_ref: str
     judge_report_ref: str
     usage_summary_ref: str
     run_status_ref: str
@@ -173,6 +197,7 @@ class DeepResearchKernelV2Result:
             "insight_map_ref": self.insight_map_ref,
             "claim_index_ref": self.claim_index_ref,
             "reviewer_observation_ref": self.reviewer_observation_ref,
+            "claim_support_review_ref": self.claim_support_review_ref,
             "judge_report_ref": self.judge_report_ref,
             "usage_summary_ref": self.usage_summary_ref,
             "run_status_ref": self.run_status_ref,
@@ -212,6 +237,7 @@ class DeepResearchKernelV2Result:
             "insight_map_ref",
             "claim_index_ref",
             "reviewer_observation_ref",
+            "claim_support_review_ref",
             "judge_report_ref",
             "usage_summary_ref",
             "run_status_ref",
@@ -272,6 +298,7 @@ def run_deepresearch_kernel_v2(
     _write_kernel_v2_citation_projection(run_root)
     _write_kernel_v2_report_html(run_root)
     _write_kernel_v2_claim_index_validation(run_root)
+    _write_kernel_v2_claim_support_review_validation(run_root)
     product_status = _kernel_v2_product_status(run_root, flow_result)
     usage_summary_ref = _write_kernel_v2_usage_summary(request, run_root=run_root, flow_result=flow_result)
     status_ref = _write_kernel_v2_run_status(
@@ -398,6 +425,15 @@ def build_deepresearch_kernel_v2_flow(
         network=live_extension_mode,
         failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
     )
+    researcher_outputs = [
+        KERNEL_V2_FINAL_REPORT_REF,
+        KERNEL_V2_EVIDENCE_INDEX_REF,
+        KERNEL_V2_SOURCE_GAPS_REF,
+        KERNEL_V2_INSIGHT_MAP_REF,
+        KERNEL_V2_CLAIM_INDEX_REF,
+        KERNEL_V2_RESEARCH_STATE_REF,
+        KERNEL_V2_RESEARCHER_CONTROL_REF,
+    ]
     researcher = mf.Step(
         id="researcher",
         brief="Own DeepResearch synthesis: turn the source packet into insight, claim audit, final report, and hand off to review.",
@@ -418,15 +454,57 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCH_STATE_REF,
             KERNEL_V2_SOURCE_CONTROL_REF,
         ],
-        outputs=[
-            KERNEL_V2_FINAL_REPORT_REF,
-            KERNEL_V2_EVIDENCE_INDEX_REF,
-            KERNEL_V2_SOURCE_GAPS_REF,
-            KERNEL_V2_INSIGHT_MAP_REF,
-            KERNEL_V2_CLAIM_INDEX_REF,
-            KERNEL_V2_RESEARCH_STATE_REF,
-            KERNEL_V2_RESEARCHER_CONTROL_REF,
-        ],
+        outputs=researcher_outputs,
+        read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "analysis", "claims", "state"],
+        write=["reports", "analysis", "claims", "state"],
+        tools=["read", "write", "edit"],
+        route_on=KERNEL_V2_RESEARCHER_CONTROL_REF,
+        route_fields=["decision"],
+        runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
+        network=False,
+        failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
+    )
+    researcher_repair_inputs = [
+        KERNEL_V2_CONTRACT_REF,
+        KERNEL_V2_REQUEST_REF,
+        KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF,
+        KERNEL_V2_OUTPUT_CONTRACT_REF,
+        *_request_input_refs(request),
+        *_seed_output_input_refs(request),
+        KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+        KERNEL_V2_SEARCH_PLAN_REF,
+        KERNEL_V2_PROVIDER_HITS_REF,
+        KERNEL_V2_SOURCE_PACKET_REF,
+        KERNEL_V2_COVERAGE_REPORT_REF,
+        KERNEL_V2_EVIDENCE_INDEX_REF,
+        KERNEL_V2_SOURCE_GAPS_REF,
+        KERNEL_V2_FINAL_REPORT_REF,
+        KERNEL_V2_INSIGHT_MAP_REF,
+        KERNEL_V2_CLAIM_INDEX_REF,
+        KERNEL_V2_RESEARCH_STATE_REF,
+        KERNEL_V2_SOURCE_CONTROL_REF,
+        KERNEL_V2_REVIEWER_OBSERVATION_REF,
+        KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+    ]
+    researcher_repair = mf.Step(
+        id="researcher_repair",
+        brief="Apply bounded same-contract DeepResearch repairs from reviewer or judge feedback, then hand off to review again.",
+        inputs=researcher_repair_inputs,
+        outputs=researcher_outputs,
+        read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "analysis", "claims", "reviews", "state"],
+        write=["reports", "analysis", "claims", "state"],
+        tools=["read", "write", "edit"],
+        route_on=KERNEL_V2_RESEARCHER_CONTROL_REF,
+        route_fields=["decision"],
+        runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
+        network=False,
+        failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
+    )
+    researcher_judge_repair = mf.Step(
+        id="researcher_judge_repair",
+        brief="Apply bounded same-contract DeepResearch repairs from judge feedback, then hand off to review again.",
+        inputs=[*researcher_repair_inputs, KERNEL_V2_JUDGE_REPORT_REF],
+        outputs=researcher_outputs,
         read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "analysis", "claims", "reviews", "judge", "state"],
         write=["reports", "analysis", "claims", "state"],
         tools=["read", "write", "edit"],
@@ -457,7 +535,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCH_STATE_REF,
             KERNEL_V2_RESEARCHER_CONTROL_REF,
         ],
-        outputs=[KERNEL_V2_REVIEWER_OBSERVATION_REF],
+        outputs=[KERNEL_V2_REVIEWER_OBSERVATION_REF, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF],
         read=["contract", "product_contract", "rubrics", "inputs", "sources", "reports", "analysis", "claims", "state"],
         write=["reviews"],
         role=mf.PiWorkerCallRole.EXECUTOR,
@@ -486,6 +564,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_CLAIM_INDEX_REF,
             KERNEL_V2_RESEARCH_STATE_REF,
             KERNEL_V2_REVIEWER_OBSERVATION_REF,
+            KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
         ],
         outputs=[KERNEL_V2_JUDGE_REPORT_REF],
         read=["contract", "product_contract", "rubrics", "inputs", "sources", "reports", "analysis", "claims", "reviews", "state"],
@@ -496,7 +575,7 @@ def build_deepresearch_kernel_v2_flow(
         runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
         failure=mf.FailurePolicy(retries=1, on_exhausted=mf.StepStatus.BLOCKED),
     )
-    steps = [source_mapper, researcher, reviewer, judge]
+    steps = [source_mapper, researcher, reviewer, researcher_repair, researcher_judge_repair, judge]
     routes: dict[str, str | mf.FlowStop] = {
         "source_mapper.ready_for_synthesis": "researcher",
         "source_mapper.continue": "source_mapper",
@@ -504,13 +583,19 @@ def build_deepresearch_kernel_v2_flow(
         "researcher.ready_for_review": "reviewer",
         "researcher.continue": "researcher",
         "researcher.blocked": mf.Flow.stop("blocked"),
+        "researcher_repair.ready_for_review": "reviewer",
+        "researcher_repair.continue": "researcher_repair",
+        "researcher_repair.blocked": mf.Flow.stop("blocked"),
+        "researcher_judge_repair.ready_for_review": "reviewer",
+        "researcher_judge_repair.continue": "researcher_judge_repair",
+        "researcher_judge_repair.blocked": mf.Flow.stop("blocked"),
         "reviewer.ready_for_judge": "judge",
-        "reviewer.revise_report": "researcher",
+        "reviewer.revise_report": "researcher_repair",
         "reviewer.continue": "source_mapper",
         "reviewer.blocked": mf.Flow.stop("blocked"),
         "reviewer.rejected": mf.Flow.stop("failed"),
         "judge.accepted": mf.Flow.stop("accepted"),
-        "judge.repair": "researcher",
+        "judge.repair": "researcher_judge_repair",
         "judge.revision_required": mf.Flow.stop("blocked"),
         "judge.rejected": mf.Flow.stop("failed"),
     }
@@ -553,6 +638,8 @@ def build_deepresearch_kernel_v2_flow(
             mf.Artifact(KERNEL_V2_SOURCE_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
             mf.Artifact(KERNEL_V2_RESEARCHER_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
             mf.Artifact(KERNEL_V2_REVIEWER_OBSERVATION_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_JUDGE_REPORT_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
         ],
         toolsets=toolsets,
@@ -577,6 +664,8 @@ class KernelV2FixtureAdapter:
         elif step_id == "source_mapper":
             self._write_source_mapper_outputs(Path(workspace), call)
         elif step_id == "researcher":
+            self._write_researcher_outputs(Path(workspace), call)
+        elif step_id in {"researcher_repair", "researcher_judge_repair"}:
             self._write_researcher_outputs(Path(workspace), call)
         elif step_id == "reviewer":
             self._write_reviewer_outputs(Path(workspace), call)
@@ -691,6 +780,9 @@ class KernelV2FixtureAdapter:
         )
 
     def _write_reviewer_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
+        source_packet = read_json_ref(workspace, KERNEL_V2_SOURCE_PACKET_REF, "kernel_v2_source_packet")
+        claim_index = read_json_ref(workspace, KERNEL_V2_CLAIM_INDEX_REF, "kernel_v2_claim_index")
+        write_json_ref(workspace, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, _fixture_claim_support_review(source_packet, claim_index))
         write_json_ref(
             workspace,
             KERNEL_V2_REVIEWER_OBSERVATION_REF,
@@ -698,6 +790,7 @@ class KernelV2FixtureAdapter:
                 "schema_version": "missionforge_deepresearch.kernel_v2.reviewer_observation.v1",
                 "decision": "ready_for_judge",
                 "reviewer_report_ref": KERNEL_V2_REVIEWER_OBSERVATION_REF,
+                "claim_support_review_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
                 "blocking_gaps": [],
                 "next_directive_ref": "",
             },
@@ -710,7 +803,11 @@ class KernelV2FixtureAdapter:
             {
                 "schema_version": "missionforge_deepresearch.kernel_v2.judge_report.v1",
                 "decision": "accepted",
-                "accepted_artifact_refs": [KERNEL_V2_FINAL_REPORT_REF, KERNEL_V2_SOURCE_PACKET_REF],
+                "accepted_artifact_refs": [
+                    KERNEL_V2_FINAL_REPORT_REF,
+                    KERNEL_V2_SOURCE_PACKET_REF,
+                    KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+                ],
                 "residual_risks": ["Fixture mode does not judge live research quality."],
             },
         )
@@ -738,6 +835,7 @@ def _write_kernel_v2_workspace(
     write_text_ref(run_root, KERNEL_V2_SEED_NORMALIZER_BRIEF_REF, _seed_normalizer_brief(request))
     write_text_ref(run_root, KERNEL_V2_SOURCE_MAPPER_BRIEF_REF, _source_mapper_brief(request))
     write_text_ref(run_root, KERNEL_V2_RESEARCHER_BRIEF_REF, _researcher_brief(request))
+    write_text_ref(run_root, KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF, _researcher_repair_brief(request))
     write_text_ref(run_root, KERNEL_V2_REVIEWER_RUBRIC_REF, _reviewer_rubric(request))
     write_text_ref(run_root, KERNEL_V2_JUDGE_RUBRIC_REF, _judge_rubric(request))
 
@@ -888,6 +986,8 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
         "insight_map_ref": KERNEL_V2_INSIGHT_MAP_REF,
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
         "claim_index_validation_ref": KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+        "claim_support_review_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+        "claim_support_review_validation_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF,
         "citation_projection_validation_ref": KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
         "research_state_ref": KERNEL_V2_RESEARCH_STATE_REF,
         "min_source_records": profile.min_source_records,
@@ -1080,6 +1180,32 @@ def _researcher_intensity_guidance(intensity: ResearchIntensity) -> list[str]:
     raise mf.ContractValidationError(f"unsupported research intensity for researcher brief: {intensity}")
 
 
+def _researcher_repair_brief(request: AcademicResearchRequest) -> str:
+    profile = research_intensity_profile(request.research_intensity)
+    return "\n".join(
+        [
+            "# DeepResearch v2 Researcher Repair Brief",
+            "",
+            "You own only bounded same-contract repair after reviewer or judge feedback.",
+            "Do not change the frozen task contract. If the requested repair changes topic, audience, scope, success criteria, or acceptance standards, set `state/researcher_control.json.decision` to `blocked` and explain that a contract revision is required.",
+            "Required feedback refs are `reviews/reviewer_observation.json`, `reviews/claim_support_review.json`, and `judge/judge_report.json` when present.",
+            "Treat `reviews/claim_support_review.json` as the reviewer-authored semantic claim-support audit. Use it to repair unsupported, weak, mismatched, or source-expansion-required claims against `sources/source_packet.json`, fetched/parsed evidence refs, and the frozen contract.",
+            "Do not satisfy a claim-support repair by only editing JSON status fields. Repair the reader-facing report, claim index, insight map, evidence index, source gaps, and research state so they agree.",
+            "For unsupported or mismatched claims, either remove or weaken the claim, replace the citation with a genuinely supporting source, add a bounded source-mapping continuation request, or mark revision-required when the frozen contract cannot be satisfied.",
+            "For parsed PDF claims, use parsed metadata/sections/references/provenance refs from source records in `supporting_evidence_refs`; raw PDF filenames are not content evidence.",
+            "Required outputs on every repair pass: `reports/final_report.md`, `reports/evidence_index.md`, `reports/source_gaps.md`, `analysis/insight_map.json`, `claims/claim_index.json`, `state/research_state.json`, and `state/researcher_control.json`.",
+            "Set `state/researcher_control.json.decision` to `ready_for_review` when the repaired workspace is coherent and ready for reviewer re-check.",
+            "Use `continue` only when one more bounded researcher repair pass is necessary before review.",
+            "Use `blocked` only when permissions, missing required evidence refs, or required contract revision prevent repair.",
+            *_optional_input_guidance(request),
+            f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
+            f"Topic: {request.topic}",
+            f"Audience: {request.audience}",
+            f"Language: {request.language}",
+        ]
+    )
+
+
 def _reviewer_rubric(request: AcademicResearchRequest) -> str:
     profile = research_intensity_profile(request.research_intensity)
     return "\n".join(
@@ -1090,6 +1216,7 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "User intervention snapshots may appear as visible refs ending in `interaction/safe_points/*-user_events.json`. Read them when visible.",
             "Treat user events as reviewer context, not as automatic contract changes.",
             "If the user intervention materially changes scope or acceptance criteria, prefer `blocked` or `rejected` with a revision note over silently accepting a changed task.",
+            "Required outputs: `reviews/reviewer_observation.json` and `reviews/claim_support_review.json`.",
             "Return `ready_for_judge`, `revise_report`, `continue`, `blocked`, or `rejected` in the decision field.",
             "Prefer `ready_for_judge` when the report is usable, structurally complete, cited, and explicit about evidence gaps; do not use `continue` merely because deeper research would be valuable.",
             "Use `revise_report` for bounded report defects such as truncation, missing required sections, missing References, citation formatting gaps, incomplete conclusion, weak thesis, thin insight, or narrative mismatch.",
@@ -1107,6 +1234,16 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "Audit placement check: detailed repo/code-audit maps should live in evidence artifacts or source gaps by default; the final report should include only a concise method/confidence summary unless the user requested an audit appendix.",
             "Evidence-conclusion calibration check: when evidence is metadata, abstract-only, README-level, or explicitly weak, require downgraded claim language and visible limits.",
             "Parsed PDF check: if a report or claim relies on seed PDF content, verify that `claims/claim_index.json.supporting_evidence_refs` points to parsed metadata/sections/references/provenance refs, not only the raw PDF filename.",
+            "Claim-support audit: read `claims/claim_index.json`, `sources/source_packet.json`, `reports/evidence_index.md`, fetched/full-text refs listed in source records, and parsed PDF refs when present. For each claim, decide whether the cited sources and evidence semantically support that claim.",
+            f"`reviews/claim_support_review.json` must use schema_version `{_CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION}`.",
+            "`reviews/claim_support_review.json` must include `claim_index_ref`, `source_packet_ref`, `evidence_index_ref`, `claim_reviews`, `overall_status`, and `repair_directive`.",
+            "`claim_reviews[]` must include `claim_id`, `support_status`, `supporting_source_ids`, `supporting_evidence_refs`, `rationale`, and `required_repair`.",
+            "Allowed `support_status` values: supported, weak, unsupported, mismatched, needs_source_expansion, not_reviewed.",
+            "Allowed `overall_status` values: passed, repair_required, source_expansion_required, revision_required, rejected.",
+            "`overall_status=passed` only when every material claim is supported or explicitly and acceptably caveated.",
+            "Set reviewer decision `revise_report` when claim support requires bounded same-contract report/claim repair.",
+            "Set reviewer decision `continue` only when the claim-support audit identifies narrow source expansion that is required before judge handoff.",
+            "Set reviewer decision `ready_for_judge` only when `reviews/claim_support_review.json.overall_status` is `passed`.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_reviewer_intensity_guidance(profile.intensity),
             f"Topic: {request.topic}",
@@ -1142,6 +1279,7 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "Return `accepted`, `repair`, `revision_required`, or `rejected` in the decision field.",
             "Use `repair` only for bounded same-contract fixes that the researcher can perform without changing the task contract.",
             "Judge the staged package as a whole: report, evidence index, source gaps, claim index, and research state must agree.",
+            "Read `reviews/claim_support_review.json` as the reviewer-authored semantic claim-support audit. Do not treat it as automatic acceptance; use it together with the claim index, source packet, parsed/fetched evidence refs, and final report.",
             "Use `sources/search_plan.json`, `sources/provider_hits.jsonl`, and `sources/coverage_report.json` to judge whether the report honestly discloses acquisition scope and coverage limits.",
             "Use `analysis/insight_map.json` as the semantic map for the package. Do not accept a report that lacks a defensible thesis, clear audience relevance, cross-source insight, or a coherent argument arc.",
             "Do not accept a report that is structurally complete but reads as a catalog of sources, unless the frozen contract explicitly requested only a bibliography or source inventory.",
@@ -1150,6 +1288,8 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "Do not accept a reader-facing literature review that exposes a full repo/code-audit map as a default body section unless the user explicitly requested an audit appendix.",
             "Do not accept evidence-conclusion mismatch: strong implementation, causal, benchmark, or trend claims need correspondingly strong source, paper, or repo-file evidence; otherwise require repair or revision.",
             "Do not accept parsed seed PDF content claims unless the claim index cites parsed metadata/sections/references/provenance refs through `supporting_evidence_refs`; raw PDF filenames alone are not content evidence.",
+            "Do not accept when `reviews/claim_support_review.json.overall_status` is repair_required, source_expansion_required, revision_required, or rejected unless you independently find the reviewer audit stale after a completed repair and explain why in `judge/judge_report.json`.",
+            "When claim support is inadequate, write `decision=repair` for bounded same-contract fixes, `revision_required` for contract-changing fixes, or `rejected` when the package is unsalvageable under the frozen contract.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_judge_intensity_guidance(profile.intensity),
             f"Audience: {request.audience}",
@@ -1377,8 +1517,50 @@ def _fixture_claim_index(source_packet: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _fixture_claim_support_review(source_packet: Mapping[str, Any], claim_index: Mapping[str, Any]) -> dict[str, Any]:
+    source_ids = {
+        str(record.get("source_id"))
+        for record in source_packet.get("source_records", [])
+        if isinstance(record, Mapping) and record.get("source_id")
+    }
+    reviews = []
+    for claim in claim_index.get("claims", []):
+        if not isinstance(claim, Mapping):
+            continue
+        claim_id = str(claim.get("claim_id") or "")
+        if not claim_id:
+            continue
+        supporting_source_ids = [
+            str(source_id)
+            for source_id in claim.get("supporting_source_ids", [])
+            if isinstance(source_id, str) and source_id in source_ids
+        ]
+        supporting_evidence_refs = [
+            str(ref) for ref in claim.get("supporting_evidence_refs", []) if isinstance(ref, str) and ref
+        ]
+        reviews.append(
+            {
+                "claim_id": claim_id,
+                "support_status": "supported",
+                "supporting_source_ids": supporting_source_ids,
+                "supporting_evidence_refs": supporting_evidence_refs,
+                "rationale": "Fixture reviewer marks the structural claim support audit as passed.",
+                "required_repair": "",
+            }
+        )
+    return {
+        "schema_version": _CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION,
+        "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
+        "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+        "evidence_index_ref": KERNEL_V2_EVIDENCE_INDEX_REF,
+        "claim_reviews": reviews,
+        "overall_status": "passed",
+        "repair_directive": "",
+    }
+
+
 def _kernel_v2_max_steps(max_review_rounds: int) -> int:
-    return max(4 + (max_review_rounds * 2), 6)
+    return max(4 + (max_review_rounds * 3), 7)
 
 
 def _write_kernel_v2_source_graph(run_root: Path) -> None:
@@ -1431,6 +1613,12 @@ def _write_kernel_v2_claim_index_validation(run_root: Path) -> str:
     payload = _kernel_v2_claim_index_validation(run_root)
     write_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF, payload)
     return KERNEL_V2_CLAIM_INDEX_VALIDATION_REF
+
+
+def _write_kernel_v2_claim_support_review_validation(run_root: Path) -> str:
+    payload = _kernel_v2_claim_support_review_validation(run_root)
+    write_json_ref(run_root, KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF, payload)
+    return KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF
 
 
 def _kernel_v2_claim_index_validation(run_root: Path) -> dict[str, Any]:
@@ -1504,11 +1692,125 @@ def _kernel_v2_claim_index_validation(run_root: Path) -> dict[str, Any]:
     }
 
 
+def _kernel_v2_claim_support_review_validation(run_root: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    claim_ids: set[str] = set()
+    source_ids: set[str] = set()
+    source_evidence_refs: set[str] = set()
+    try:
+        claim_index = json.loads((run_root / KERNEL_V2_CLAIM_INDEX_REF).read_text(encoding="utf-8"))
+        claims = claim_index.get("claims", [])
+        if isinstance(claims, list):
+            for claim in claims:
+                if isinstance(claim, Mapping) and isinstance(claim.get("claim_id"), str) and claim["claim_id"]:
+                    claim_ids.add(claim["claim_id"])
+        else:
+            failures.append("claims_not_list")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        failures.append("claim_index_unreadable")
+    try:
+        source_packet = json.loads((run_root / KERNEL_V2_SOURCE_PACKET_REF).read_text(encoding="utf-8"))
+        for record in source_packet.get("source_records", []):
+            if isinstance(record, Mapping) and isinstance(record.get("source_id"), str) and record["source_id"]:
+                source_ids.add(record["source_id"])
+                for ref in _source_record_evidence_refs(record):
+                    source_evidence_refs.add(ref)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        failures.append("source_packet_unreadable")
+    try:
+        review = json.loads((run_root / KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        review = {}
+        failures.append("claim_support_review_unreadable")
+    if review.get("schema_version") != _CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION:
+        failures.append("schema_version_invalid")
+    if review.get("claim_index_ref") != KERNEL_V2_CLAIM_INDEX_REF:
+        failures.append("claim_index_ref_invalid")
+    if review.get("source_packet_ref") != KERNEL_V2_SOURCE_PACKET_REF:
+        failures.append("source_packet_ref_invalid")
+    evidence_index_ref = review.get("evidence_index_ref")
+    if evidence_index_ref not in (None, "", KERNEL_V2_EVIDENCE_INDEX_REF):
+        failures.append("evidence_index_ref_invalid")
+    overall_status = review.get("overall_status")
+    if not isinstance(overall_status, str) or overall_status not in _CLAIM_SUPPORT_OVERALL_STATUSES:
+        failures.append("overall_status_invalid")
+    claim_reviews = review.get("claim_reviews")
+    if not isinstance(claim_reviews, list):
+        claim_reviews = []
+        failures.append("claim_reviews_not_list")
+    reviewed_claim_ids: set[str] = set()
+    for index, item in enumerate(claim_reviews):
+        if not isinstance(item, Mapping):
+            failures.append(f"claim_review_{index}_not_object")
+            continue
+        claim_id = item.get("claim_id")
+        failure_id = str(claim_id) if isinstance(claim_id, str) and claim_id else str(index)
+        if not isinstance(claim_id, str) or not claim_id:
+            failures.append(f"claim_review_{index}_missing_claim_id")
+        elif claim_id not in claim_ids:
+            failures.append(f"claim_review_{claim_id}_unknown_claim_id")
+        elif claim_id in reviewed_claim_ids:
+            failures.append(f"claim_review_{claim_id}_duplicate")
+        else:
+            reviewed_claim_ids.add(claim_id)
+        support_status = item.get("support_status")
+        if not isinstance(support_status, str) or support_status not in _CLAIM_SUPPORT_STATUSES:
+            failures.append(f"claim_review_{failure_id}_support_status_invalid")
+        supporting_source_ids = item.get("supporting_source_ids", [])
+        if supporting_source_ids is None:
+            supporting_source_ids = []
+        if not isinstance(supporting_source_ids, list):
+            failures.append(f"claim_review_{failure_id}_supporting_source_ids_not_list")
+        else:
+            for source_id in supporting_source_ids:
+                if not isinstance(source_id, str) or source_id not in source_ids:
+                    failures.append(f"claim_review_{failure_id}_unknown_source_id")
+        supporting_evidence_refs = item.get("supporting_evidence_refs", [])
+        if supporting_evidence_refs is None:
+            supporting_evidence_refs = []
+        if not isinstance(supporting_evidence_refs, list):
+            failures.append(f"claim_review_{failure_id}_supporting_evidence_refs_not_list")
+        else:
+            for ref in supporting_evidence_refs:
+                if not isinstance(ref, str):
+                    failures.append(f"claim_review_{failure_id}_invalid_evidence_ref")
+                    continue
+                try:
+                    mf.validate_ref(ref, f"claim_review_{failure_id}.supporting_evidence_refs[]")
+                except mf.ContractValidationError:
+                    failures.append(f"claim_review_{failure_id}_invalid_evidence_ref")
+                    continue
+                if source_evidence_refs and ref not in source_evidence_refs:
+                    failures.append(f"claim_review_{failure_id}_unknown_evidence_ref")
+        if not isinstance(item.get("rationale", ""), str):
+            failures.append(f"claim_review_{failure_id}_rationale_not_string")
+        if not isinstance(item.get("required_repair", ""), str):
+            failures.append(f"claim_review_{failure_id}_required_repair_not_string")
+    missing_claim_ids = sorted(claim_ids - reviewed_claim_ids)
+    if missing_claim_ids:
+        failures.append("claim_reviews_missing_claim_ids")
+    if not isinstance(review.get("repair_directive", ""), str):
+        failures.append("repair_directive_not_string")
+    return {
+        "schema_version": _CLAIM_SUPPORT_REVIEW_VALIDATION_SCHEMA_VERSION,
+        "status": "passed" if not failures else "failed",
+        "claim_support_review_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+        "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
+        "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+        "overall_status": str(overall_status or ""),
+        "failure_codes": failures,
+    }
+
+
 def _source_record_evidence_refs(record: Mapping[str, Any]) -> list[str]:
     refs: list[str] = []
     value = record.get("evidence_refs")
     if isinstance(value, list):
         refs.extend(str(item) for item in value if isinstance(item, str) and item)
+    for key in ("abstract_ref", "fulltext_ref", "full_text_ref"):
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            refs.append(value)
     for key in ("parse_refs", "parsed_pdf_refs"):
         mapping = record.get(key)
         if not isinstance(mapping, Mapping):
@@ -1592,6 +1894,7 @@ def _write_kernel_v2_run_status(
         product_status=product_status,
         citation_projection_validation=_optional_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF),
         claim_index_validation=_optional_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF),
+        claim_support_review_validation=_optional_json_ref(run_root, KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF),
         coverage_report=_optional_json_ref(run_root, KERNEL_V2_COVERAGE_REPORT_REF),
         interaction_summary=_kernel_v2_interaction_summary(run_root, flow_result=flow_result),
     )
@@ -1606,6 +1909,7 @@ def _kernel_v2_run_status(
     product_status: str | None = None,
     citation_projection_validation: Mapping[str, Any] | None = None,
     claim_index_validation: Mapping[str, Any] | None = None,
+    claim_support_review_validation: Mapping[str, Any] | None = None,
     coverage_report: Mapping[str, Any] | None = None,
     interaction_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1638,6 +1942,11 @@ def _kernel_v2_run_status(
         "citation_projection_failure_codes": _str_list((citation_projection_validation or {}).get("failure_codes", [])),
         "claim_index_validation_status": str((claim_index_validation or {}).get("status", "")),
         "claim_index_validation_failure_codes": _str_list((claim_index_validation or {}).get("failure_codes", [])),
+        "claim_support_review_status": str((claim_support_review_validation or {}).get("overall_status", "")),
+        "claim_support_review_validation_status": str((claim_support_review_validation or {}).get("status", "")),
+        "claim_support_review_validation_failure_codes": _str_list(
+            (claim_support_review_validation or {}).get("failure_codes", [])
+        ),
         "coverage_status": str((coverage_report or {}).get("mechanical_coverage_status", "")),
         "source_record_count": _non_negative_int((coverage_report or {}).get("source_record_count")),
         "target_source_count": _non_negative_int((coverage_report or {}).get("target_source_count")),
@@ -1648,6 +1957,7 @@ def _kernel_v2_run_status(
             product_status=status,
             citation_projection_validation=citation_projection_validation,
             claim_index_validation=claim_index_validation,
+            claim_support_review_validation=claim_support_review_validation,
         ),
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
@@ -1668,6 +1978,8 @@ def _kernel_v2_run_status(
         "insight_map_ref": KERNEL_V2_INSIGHT_MAP_REF,
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
         "claim_index_validation_ref": KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+        "claim_support_review_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+        "claim_support_review_validation_ref": KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF,
         "citation_projection_validation_ref": KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
         "usage_summary_ref": KERNEL_V2_USAGE_SUMMARY_REF,
     }
@@ -1739,9 +2051,14 @@ def _kernel_v2_product_status(run_root: Path, flow_result: mf.FlowRunResult) -> 
         return status
     citation_validation = _optional_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF)
     claim_validation = _optional_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF)
+    claim_support_validation = _optional_json_ref(run_root, KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF)
     if _citation_projection_failed(citation_validation):
         return "failed"
     if _claim_index_validation_failed(claim_validation):
+        return "failed"
+    if _claim_support_review_validation_failed(claim_support_validation):
+        return "failed"
+    if _claim_support_review_not_passed(claim_support_validation):
         return "failed"
     if status == "accepted" and (run_root / KERNEL_V2_FINAL_REPORT_REF).is_file() and citation_validation is None:
         return "failed"
@@ -1756,12 +2073,21 @@ def _claim_index_validation_failed(validation: Mapping[str, Any] | None) -> bool
     return validation is not None and validation.get("status") == "failed"
 
 
+def _claim_support_review_validation_failed(validation: Mapping[str, Any] | None) -> bool:
+    return validation is not None and validation.get("status") == "failed"
+
+
+def _claim_support_review_not_passed(validation: Mapping[str, Any] | None) -> bool:
+    return validation is not None and validation.get("overall_status") != "passed"
+
+
 def _kernel_v2_failure_summary(
     flow_failure_summary: Any,
     *,
     product_status: str,
     citation_projection_validation: Mapping[str, Any] | None,
     claim_index_validation: Mapping[str, Any] | None,
+    claim_support_review_validation: Mapping[str, Any] | None,
 ) -> str:
     if product_status != "failed":
         return flow_failure_summary if isinstance(flow_failure_summary, str) else ""
@@ -1775,6 +2101,14 @@ def _kernel_v2_failure_summary(
         if isinstance(codes, list) and codes:
             return "claim index validation failed: " + ", ".join(str(item) for item in codes)
         return "claim index validation failed"
+    if _claim_support_review_validation_failed(claim_support_review_validation):
+        codes = claim_support_review_validation.get("failure_codes", [])
+        if isinstance(codes, list) and codes:
+            return "claim support review validation failed: " + ", ".join(str(item) for item in codes)
+        return "claim support review validation failed"
+    if _claim_support_review_not_passed(claim_support_review_validation):
+        status = str((claim_support_review_validation or {}).get("overall_status", ""))
+        return f"claim support review requires repair: {status}" if status else "claim support review requires repair"
     return flow_failure_summary if isinstance(flow_failure_summary, str) else ""
 
 
@@ -1837,6 +2171,7 @@ def _kernel_v2_result(
         insight_map_ref=_outer_ref(run_ref, KERNEL_V2_INSIGHT_MAP_REF),
         claim_index_ref=_outer_ref(run_ref, KERNEL_V2_CLAIM_INDEX_REF),
         reviewer_observation_ref=_outer_ref(run_ref, KERNEL_V2_REVIEWER_OBSERVATION_REF),
+        claim_support_review_ref=_outer_ref(run_ref, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF),
         judge_report_ref=_outer_ref(run_ref, KERNEL_V2_JUDGE_REPORT_REF),
         usage_summary_ref=_outer_ref(run_ref, usage_summary_ref),
         run_status_ref=_outer_ref(run_ref, status_ref),
@@ -2014,6 +2349,8 @@ def _kernel_v2_product_evidence_refs(
         KERNEL_V2_INSIGHT_MAP_REF,
         KERNEL_V2_CLAIM_INDEX_REF,
         KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+        KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+        KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF,
         KERNEL_V2_EVIDENCE_INDEX_REF,
         KERNEL_V2_SOURCE_GAPS_REF,
         KERNEL_V2_RESEARCH_STATE_REF,
@@ -2034,6 +2371,7 @@ def _kernel_v2_product_evidence_refs(
             KERNEL_V2_SOURCE_CONTROL_REF,
             KERNEL_V2_RESEARCHER_CONTROL_REF,
             KERNEL_V2_REVIEWER_OBSERVATION_REF,
+            KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
             KERNEL_V2_JUDGE_REPORT_REF,
         }:
             refs.append(ref)

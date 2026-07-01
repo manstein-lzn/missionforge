@@ -102,6 +102,31 @@ class SourceGraphTests(unittest.TestCase):
         self.assertIn("sources/seed_pdfs/001-paper/provenance.json", source["evidence_refs"])
         self.assertEqual(source["evidence_strength"], "pdf_seed")
 
+    def test_project_source_graph_preserves_fetched_evidence_refs(self) -> None:
+        source_packet = {
+            "schema_version": "missionforge_deepresearch.source_packet.v1",
+            "request_id": "source-graph-fetched-evidence",
+            "source_records": [
+                {
+                    "source_id": "S1",
+                    "title": "Fetched Full Text",
+                    "locator": "https://example.test/paper",
+                    "abstract_ref": "sources/fetched/S1/abstract.json",
+                    "fulltext_ref": "sources/fetched/S1/fulltext.md",
+                    "evidence_strength": "full_text",
+                }
+            ],
+        }
+
+        projection = project_source_graph(source_packet)
+        source = projection["canonical_sources"]["sources"][0]
+
+        self.assertEqual(source["abstract_ref"], "sources/fetched/S1/abstract.json")
+        self.assertEqual(source["fulltext_ref"], "sources/fetched/S1/fulltext.md")
+        self.assertIn("sources/fetched/S1/abstract.json", source["evidence_refs"])
+        self.assertIn("sources/fetched/S1/fulltext.md", source["evidence_refs"])
+        self.assertEqual(source["evidence_strength"], "full_text")
+
 
 if __name__ == "__main__":
     unittest.main()

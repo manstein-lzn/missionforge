@@ -25,6 +25,15 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Active parsed-PDF evidence path: seed PDF `parse_refs` are preserved through
   source records, canonical sources, evidence indexes, and claim indexes as
   explicit evidence refs.
+- Active claim-support review path: reviewer PiWorker writes
+  `reviews/claim_support_review.json` as the semantic claim-to-evidence support
+  audit, runtime validates only schema/ref boundaries in
+  `state/claim_support_review_validation.json`, and Judge consumes the audit
+  plus parsed/fetched evidence refs before acceptance.
+- Active repair boundary: reviewer `revise_report` and Judge `repair` route to
+  dedicated repair steps. Reviewer repair reads reviewer feedback refs; Judge
+  repair additionally reads `judge/judge_report.json`; the initial researcher
+  step does not read stale review or judge artifacts.
 - Active academic acquisition scale: standard runs use a 50-source reference
   budget, intensive runs use 100, and request-level `target_source_count` can
   override either budget.
@@ -64,9 +73,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
-- Strengthen citation and claim support against parsed PDF provenance refs,
-  fetched/full-text refs, and source records without making Python a semantic
-  judge.
+- Harden citation and claim support with richer URL accessibility checks,
+  page/span-level parsed PDF provenance when available, and live fetched/full-text
+  evidence coverage without making Python a semantic judge.
 - Continue seed/PDF ingestion later with Web upload UI, OCR fallback, and
   richer page/span citation support.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
@@ -81,8 +90,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   product path.
 - Improve mature platform/source acquisition by letting the researcher inspect
   repository files and documentation metadata when authorized.
-- Strengthen claim-to-source mapping without requiring code to judge semantic
-  sufficiency.
+- Keep claim-to-source mapping PiWorker-authored while expanding the evidence
+  plane that Reviewer/Judge can inspect.
 - Keep improving insight-map driven reports: thesis-first writing,
   evidence-conclusion calibration, cross-source tensions, and reader-value
   implications.

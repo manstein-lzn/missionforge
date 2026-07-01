@@ -259,6 +259,7 @@ def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
         ("coverage_report", getattr(result, "coverage_report_ref", "")),
         ("citation_registry", getattr(result, "citation_registry_ref", "")),
         ("claim_index", getattr(result, "claim_index_ref", "")),
+        ("claim_support_review", getattr(result, "claim_support_review_ref", "")),
         ("result_package", getattr(result, "result_ref", "") or getattr(result, "run_result_ref", "")),
         ("run_status", getattr(result, "run_status_ref", "")),
         ("judge_report", getattr(result, "judge_report_ref", "")),

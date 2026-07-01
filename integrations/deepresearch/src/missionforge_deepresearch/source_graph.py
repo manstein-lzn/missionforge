@@ -142,6 +142,8 @@ def _normalize_source_record(record: Mapping[str, Any], index: int) -> dict[str,
         "identifiers": identifiers,
         "locators": locators,
         "provider": provider,
+        "abstract_ref": _clean(record.get("abstract_ref")),
+        "fulltext_ref": _clean(record.get("fulltext_ref")) or _clean(record.get("full_text_ref")),
         "parsed_pdf_refs": _str_mapping(record.get("parsed_pdf_refs")) or _str_mapping(record.get("parse_refs")),
         "evidence_refs": _evidence_refs(record),
         "evidence_strength": _clean(record.get("evidence_strength")) or "metadata",
@@ -159,6 +161,8 @@ def _new_bucket(canonical_key: str) -> dict[str, Any]:
         "identifiers": {},
         "locators": [],
         "provider_provenance": [],
+        "abstract_ref": "",
+        "fulltext_ref": "",
         "parsed_pdf_refs": {},
         "evidence_refs": [],
         "evidence_strengths": [],
@@ -181,6 +185,10 @@ def _merge_bucket(bucket: dict[str, Any], normalized: Mapping[str, Any]) -> None
     for locator in normalized["locators"]:
         if locator not in bucket["locators"]:
             bucket["locators"].append(locator)
+    if not bucket["abstract_ref"] and normalized["abstract_ref"]:
+        bucket["abstract_ref"] = normalized["abstract_ref"]
+    if not bucket["fulltext_ref"] and normalized["fulltext_ref"]:
+        bucket["fulltext_ref"] = normalized["fulltext_ref"]
     for key, value in normalized["parsed_pdf_refs"].items():
         if value and not bucket["parsed_pdf_refs"].get(key):
             bucket["parsed_pdf_refs"][key] = value
@@ -206,6 +214,8 @@ def _bucket_to_source(source_id: str, bucket: Mapping[str, Any]) -> CanonicalSou
         identifiers=dict(bucket["identifiers"]),
         locators=list(locators),
         provider_provenance=list(bucket["provider_provenance"]),
+        abstract_ref=str(bucket["abstract_ref"]),
+        fulltext_ref=str(bucket["fulltext_ref"]),
         parsed_pdf_refs=dict(bucket["parsed_pdf_refs"]),
         evidence_refs=list(bucket["evidence_refs"]),
         evidence_strength=evidence_strength,
@@ -274,6 +284,14 @@ def _evidence_refs(record: Mapping[str, Any]) -> list[str]:
     value = record.get("evidence_refs")
     if isinstance(value, list):
         refs.extend(_clean(item) for item in value if _clean(item))
+    refs.extend(
+        ref
+        for ref in [
+            _clean(record.get("abstract_ref")),
+            _clean(record.get("fulltext_ref")) or _clean(record.get("full_text_ref")),
+        ]
+        if ref
+    )
     for mapping_name in ("parsed_pdf_refs", "parse_refs"):
         refs.extend(_str_mapping(record.get(mapping_name)).values())
     return _dedupe_refs([ref for ref in refs if ref])
