@@ -1254,6 +1254,12 @@ Deliverables:
   judge-feedback repair to preserve minimal readable refs.
 - Product status downgrade when an accepted flow has malformed claim-support
   review refs or a reviewer-authored non-passing claim-support status.
+- Runtime-owned `state/acceptance_gate.json` that aggregates mechanical
+  citation, claim-index, claim-support, reviewer decision, and Judge decision
+  consistency before exposing product acceptance.
+- Explicit `revisions/revision_request.json` when Judge returns
+  `revision_required`; the flow and product status remain `revision_required`
+  instead of collapsing into generic blocked state.
 
 Exit criteria:
 
@@ -1264,10 +1270,34 @@ Exit criteria:
 - Initial researcher execution does not read stale reviewer/judge refs; only
   repair workers consume reviewer/judge feedback, and Judge feedback is only
   readable in the Judge repair path.
+- Acceptance gate fails reviewer/Judge decision inconsistencies such as
+  `ready_for_judge` with non-passing claim support or Judge acceptance with a
+  non-passing claim-support audit.
+- Judge `revision_required` writes a refs-only pending revision request while
+  preserving the frozen contract.
 - Remaining post-M6 hardening: richer URL accessibility checks, page/span-level
-  parsed PDF provenance when GROBID coordinates are available, and explicit
-  `revision_required` ledger records instead of collapsing all revision-required
-  decisions into generic blocked status.
+  parsed PDF provenance when GROBID coordinates are available, and broader live
+  fetched/full-text evidence coverage.
+
+### M6.1: Acceptance Gate And Revision Request Hardening
+
+Status: `complete`
+
+Deliverables:
+
+- `state/acceptance_gate.json`
+- `revisions/revision_request.json`
+- Product status preservation for `revision_required`
+- Run-status fields for acceptance-gate status and failure codes
+
+Exit criteria:
+
+- Accepted flows with reviewer/Judge claim-support inconsistency downgrade to
+  product `failed` through the acceptance gate.
+- Judge `revision_required` produces a pending revision request and lifecycle
+  phase `revision_required`.
+- The revision request cites refs only and does not mutate the frozen task
+  contract.
 
 ### M7: Optional Scholar/Commercial Browser Fallback
 

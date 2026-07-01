@@ -47,6 +47,8 @@ PROJECT_PROGRESS_REFS = {
     "reviewer_observation": "reviews/reviewer_observation.json",
     "claim_support_review": "reviews/claim_support_review.json",
     "judge_report": "judge/judge_report.json",
+    "acceptance_gate": "state/acceptance_gate.json",
+    "revision_request": "revisions/revision_request.json",
     "run_status": "state/run_status.json",
     "seed_pdf_index": "inputs/seed_pdf_index.json",
     "seed_source_packet": "sources/seed_source_packet.json",
@@ -416,8 +418,10 @@ def _print_research_result(output_stream: TextIO, config: FrontDeskTuiConfig, re
             ("coverage_report", result.coverage_report_ref),
             ("citation_registry", result.citation_registry_ref),
             ("claim_support_review", result.claim_support_review_ref),
+            ("acceptance_gate", result.acceptance_gate_ref),
             ("result_package", result.result_ref),
             ("judge_report", result.judge_report_ref),
+            ("revision_request", result.revision_request_ref),
             ("usage_summary", result.usage_summary_ref),
         ]:
             path = config.workspace / ref
@@ -442,8 +446,10 @@ def _print_research_result(output_stream: TextIO, config: FrontDeskTuiConfig, re
         ("coverage_report", result.coverage_report_ref),
         ("citation_registry", result.citation_registry_ref),
         ("claim_support_review", result.claim_support_review_ref),
+        ("acceptance_gate", result.acceptance_gate_ref),
         ("result_package", result.result_ref),
         ("judge_report", result.judge_report_ref),
+        ("revision_request", result.revision_request_ref),
         ("usage_summary", result.usage_summary_ref),
     ]:
         path = config.workspace / ref

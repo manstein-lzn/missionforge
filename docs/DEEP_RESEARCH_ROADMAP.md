@@ -30,6 +30,13 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   audit, runtime validates only schema/ref boundaries in
   `state/claim_support_review_validation.json`, and Judge consumes the audit
   plus parsed/fetched evidence refs before acceptance.
+- Active acceptance gate: runtime writes `state/acceptance_gate.json` after
+  flow completion to enforce mechanical citation, claim-index, claim-support,
+  reviewer-decision, and Judge-decision consistency before exposing product
+  acceptance.
+- Active revision request path: Judge `revision_required` preserves flow/product
+  status as `revision_required` and writes `revisions/revision_request.json`
+  without mutating the frozen contract.
 - Active repair boundary: reviewer `revise_report` and Judge `repair` route to
   dedicated repair steps. Reviewer repair reads reviewer feedback refs; Judge
   repair additionally reads `judge/judge_report.json`; the initial researcher
