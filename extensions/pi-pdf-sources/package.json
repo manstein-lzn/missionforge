@@ -1,0 +1,10 @@
+{
+  "name": "@missionforge/pi-pdf-sources",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-ai": "file:../../src/missionforge/_bundled/pi_agent_runtime/node_modules/@earendil-works/pi-ai",
+    "typebox": "file:../../src/missionforge/_bundled/pi_agent_runtime/node_modules/typebox"
+  }
+}

@@ -25,6 +25,20 @@ from .product_contract import (
     research_report_section_specs,
 )
 from .project_lifecycle import write_kernel_lifecycle_state, write_project_manifest
+from .seed_ingestion import (
+    KERNEL_V2_SEED_CONTROL_REF,
+    KERNEL_V2_SEED_GAPS_REF,
+    KERNEL_V2_SEED_NORMALIZER_BRIEF_REF,
+    KERNEL_V2_SEED_PAPERS_REF,
+    KERNEL_V2_SEED_PDF_INDEX_REF,
+    KERNEL_V2_SEED_SOURCE_PACKET_REF,
+    fixture_seed_control,
+    fixture_seed_gaps,
+    fixture_seed_source_packet,
+    has_seed_inputs,
+    seed_papers_payload,
+    seed_pdf_index_payload,
+)
 from .source_acquisition import (
     build_fixture_provider_capabilities,
     build_fixture_search_plan,
@@ -96,6 +110,11 @@ class DeepResearchKernelV2Result:
     final_report_ref: str
     citation_projected_report_ref: str
     report_html_ref: str
+    seed_papers_ref: str
+    seed_pdf_index_ref: str
+    seed_source_packet_ref: str
+    seed_gaps_ref: str
+    seed_control_ref: str
     provider_capabilities_ref: str
     search_plan_ref: str
     provider_hits_ref: str
@@ -135,6 +154,11 @@ class DeepResearchKernelV2Result:
             "final_report_ref": self.final_report_ref,
             "citation_projected_report_ref": self.citation_projected_report_ref,
             "report_html_ref": self.report_html_ref,
+            "seed_papers_ref": self.seed_papers_ref,
+            "seed_pdf_index_ref": self.seed_pdf_index_ref,
+            "seed_source_packet_ref": self.seed_source_packet_ref,
+            "seed_gaps_ref": self.seed_gaps_ref,
+            "seed_control_ref": self.seed_control_ref,
             "provider_capabilities_ref": self.provider_capabilities_ref,
             "search_plan_ref": self.search_plan_ref,
             "provider_hits_ref": self.provider_hits_ref,
@@ -169,6 +193,11 @@ class DeepResearchKernelV2Result:
             "final_report_ref",
             "citation_projected_report_ref",
             "report_html_ref",
+            "seed_papers_ref",
+            "seed_pdf_index_ref",
+            "seed_source_packet_ref",
+            "seed_gaps_ref",
+            "seed_control_ref",
             "provider_capabilities_ref",
             "search_plan_ref",
             "provider_hits_ref",
@@ -287,7 +316,8 @@ def build_deepresearch_kernel_v2_flow(
     """Declare the product flow without product-specific Python routing."""
 
     profile = research_intensity_profile(request.research_intensity)
-    tools = ["read", "write", "edit", "academic"] if live_extension_mode else ["read", "write", "edit"]
+    source_tools = ["read", "write", "edit", "academic"] if live_extension_mode else ["read", "write", "edit"]
+    seed_tools = ["read", "write", "edit", "academic", "pdf"] if live_extension_mode else ["read", "write", "edit"]
     toolsets = [
         mf.Toolset(
             id="academic",
@@ -295,8 +325,41 @@ def build_deepresearch_kernel_v2_flow(
             tools=["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
             capability=mf.ExtensionCapability.WEB,
             network=True,
-        )
+        ),
+        mf.Toolset(
+            id="pdf",
+            package="local:extensions/pi-pdf-sources",
+            tools=["pdf_provider_capabilities", "grobid_parse_pdf"],
+            capability=mf.ExtensionCapability.WEB,
+            network=True,
+            required_env=["GROBID_BASE_URL"],
+        ),
     ] if live_extension_mode else []
+    seed_normalizer = mf.Step(
+        id="seed_normalizer",
+        brief="Normalize optional seed papers and seed PDFs into a seed source packet before source mapping.",
+        inputs=[
+            KERNEL_V2_CONTRACT_REF,
+            KERNEL_V2_REQUEST_REF,
+            KERNEL_V2_SEED_NORMALIZER_BRIEF_REF,
+            KERNEL_V2_SEED_PAPERS_REF,
+            KERNEL_V2_SEED_PDF_INDEX_REF,
+            *_seed_normalizer_input_refs(request),
+        ],
+        outputs=[
+            KERNEL_V2_SEED_SOURCE_PACKET_REF,
+            KERNEL_V2_SEED_GAPS_REF,
+            KERNEL_V2_SEED_CONTROL_REF,
+        ],
+        read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "state"],
+        write=["sources", "reports", "state", "inputs"],
+        tools=seed_tools,
+        route_on=KERNEL_V2_SEED_CONTROL_REF,
+        route_fields=["decision"],
+        runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
+        network=live_extension_mode,
+        failure=mf.FailurePolicy(retries=0, on_exhausted=mf.StepStatus.BLOCKED),
+    )
     source_mapper = mf.Step(
         id="source_mapper",
         brief="Map the DeepResearch evidence base, write a durable source packet and research state, then hand off to synthesis.",
@@ -307,6 +370,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_OUTPUT_CONTRACT_REF,
             KERNEL_V2_INITIAL_SOURCE_PACKET_REF,
             *_request_input_refs(request),
+            *_seed_output_input_refs(request),
         ],
         outputs=[
             KERNEL_V2_PROVIDER_CAPABILITIES_REF,
@@ -321,7 +385,7 @@ def build_deepresearch_kernel_v2_flow(
         ],
         read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "state"],
         write=["sources", "reports", "state"],
-        tools=tools,
+        tools=source_tools,
         route_on=KERNEL_V2_SOURCE_CONTROL_REF,
         route_fields=["decision"],
         runtime_budget={
@@ -340,6 +404,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCHER_BRIEF_REF,
             KERNEL_V2_OUTPUT_CONTRACT_REF,
             *_request_input_refs(request),
+            *_seed_output_input_refs(request),
             KERNEL_V2_PROVIDER_CAPABILITIES_REF,
             KERNEL_V2_SEARCH_PLAN_REF,
             KERNEL_V2_PROVIDER_HITS_REF,
@@ -376,6 +441,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_REVIEWER_RUBRIC_REF,
             *_request_input_refs(request),
+            *_seed_output_input_refs(request),
             KERNEL_V2_SEARCH_PLAN_REF,
             KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
@@ -405,6 +471,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_JUDGE_RUBRIC_REF,
             *_request_input_refs(request),
+            *_seed_output_input_refs(request),
             KERNEL_V2_SEARCH_PLAN_REF,
             KERNEL_V2_PROVIDER_HITS_REF,
             KERNEL_V2_SOURCE_PACKET_REF,
@@ -426,27 +493,39 @@ def build_deepresearch_kernel_v2_flow(
         runtime_budget={"timeout_seconds": profile.piworker_timeout_seconds},
         failure=mf.FailurePolicy(retries=1, on_exhausted=mf.StepStatus.BLOCKED),
     )
+    steps = [source_mapper, researcher, reviewer, judge]
+    routes: dict[str, str | mf.FlowStop] = {
+        "source_mapper.ready_for_synthesis": "researcher",
+        "source_mapper.continue": "source_mapper",
+        "source_mapper.blocked": mf.Flow.stop("blocked"),
+        "researcher.ready_for_review": "reviewer",
+        "researcher.continue": "researcher",
+        "researcher.blocked": mf.Flow.stop("blocked"),
+        "reviewer.ready_for_judge": "judge",
+        "reviewer.revise_report": "researcher",
+        "reviewer.continue": "source_mapper",
+        "reviewer.blocked": mf.Flow.stop("blocked"),
+        "reviewer.rejected": mf.Flow.stop("failed"),
+        "judge.accepted": mf.Flow.stop("accepted"),
+        "judge.repair": "researcher",
+        "judge.revision_required": mf.Flow.stop("blocked"),
+        "judge.rejected": mf.Flow.stop("failed"),
+    }
+    if has_seed_inputs(request):
+        steps = [seed_normalizer, *steps]
+        routes = {
+            "seed_normalizer.ready_for_source_mapping": "source_mapper",
+            "seed_normalizer.blocked": mf.Flow.stop("blocked"),
+            **routes,
+        }
     return mf.Flow(
         id="deepresearch-v2",
-        steps=[source_mapper, researcher, reviewer, judge],
-        routes={
-            "source_mapper.ready_for_synthesis": "researcher",
-            "source_mapper.continue": "source_mapper",
-            "source_mapper.blocked": mf.Flow.stop("blocked"),
-            "researcher.ready_for_review": "reviewer",
-            "researcher.continue": "researcher",
-            "researcher.blocked": mf.Flow.stop("blocked"),
-            "reviewer.ready_for_judge": "judge",
-            "reviewer.revise_report": "researcher",
-            "reviewer.continue": "source_mapper",
-            "reviewer.blocked": mf.Flow.stop("blocked"),
-            "reviewer.rejected": mf.Flow.stop("failed"),
-            "judge.accepted": mf.Flow.stop("accepted"),
-            "judge.repair": "researcher",
-            "judge.revision_required": mf.Flow.stop("blocked"),
-            "judge.rejected": mf.Flow.stop("failed"),
-        },
+        steps=steps,
+        routes=routes,
         artifacts=[
+            mf.Artifact(KERNEL_V2_SEED_SOURCE_PACKET_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_SEED_GAPS_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(KERNEL_V2_SEED_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
             mf.Artifact(KERNEL_V2_PROVIDER_CAPABILITIES_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
             mf.Artifact(KERNEL_V2_SEARCH_PLAN_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
             mf.Artifact(KERNEL_V2_PROVIDER_HITS_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
@@ -490,7 +569,9 @@ class KernelV2FixtureAdapter:
         **_kwargs: Any,
     ) -> mf.WorkerAdapterResult:
         step_id = str(call.metadata.get("kernel_step_id", ""))
-        if step_id == "source_mapper":
+        if step_id == "seed_normalizer":
+            self._write_seed_normalizer_outputs(Path(workspace), call)
+        elif step_id == "source_mapper":
             self._write_source_mapper_outputs(Path(workspace), call)
         elif step_id == "researcher":
             self._write_researcher_outputs(Path(workspace), call)
@@ -519,10 +600,23 @@ class KernelV2FixtureAdapter:
             metrics={"metric_ref": metrics_ref},
         )
 
+    def _write_seed_normalizer_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
+        request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
+        seed_pdf_index = read_json_ref(workspace, KERNEL_V2_SEED_PDF_INDEX_REF, "kernel_v2_seed_pdf_index")
+        seed_packet = fixture_seed_source_packet(request, seed_pdf_index)
+        write_json_ref(workspace, KERNEL_V2_SEED_SOURCE_PACKET_REF, seed_packet)
+        write_text_ref(workspace, KERNEL_V2_SEED_GAPS_REF, fixture_seed_gaps(seed_pdf_index))
+        write_json_ref(workspace, KERNEL_V2_SEED_CONTROL_REF, fixture_seed_control())
+
     def _write_source_mapper_outputs(self, workspace: Path, call: mf.PiWorkerCall) -> None:
         request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
         profile = research_intensity_profile(request["research_intensity"])
         source_packet = _fixture_source_packet(request)
+        if (workspace / KERNEL_V2_SEED_SOURCE_PACKET_REF).is_file():
+            seed_packet = read_json_ref(workspace, KERNEL_V2_SEED_SOURCE_PACKET_REF, "kernel_v2_seed_source_packet")
+            seed_records = seed_packet.get("source_records", [])
+            if isinstance(seed_records, list):
+                source_packet["source_records"].extend([record for record in seed_records if isinstance(record, Mapping)])
         target_source_count = int(request.get("target_source_count") or profile.max_sources)
         provider_capabilities = build_fixture_provider_capabilities(
             request_id=str(request["request_id"]),
@@ -629,9 +723,12 @@ def _write_kernel_v2_workspace(
     write_json_ref(run_root, KERNEL_V2_REQUEST_REF, request.to_dict())
     write_json_ref(run_root, KERNEL_V2_CONTRACT_REF, contract)
     _write_previous_run_inputs(request, root=root, run_root=run_root)
+    write_json_ref(run_root, KERNEL_V2_SEED_PAPERS_REF, seed_papers_payload(request))
+    write_json_ref(run_root, KERNEL_V2_SEED_PDF_INDEX_REF, seed_pdf_index_payload(request, root=root, run_root=run_root))
     write_json_ref(run_root, KERNEL_V2_WORKSPACE_POLICY_REF, {"policy_id": "deepresearch-kernel-v2", "root_ref": "."})
     write_json_ref(run_root, KERNEL_V2_OUTPUT_CONTRACT_REF, _output_contract(request))
     write_json_ref(run_root, KERNEL_V2_INITIAL_SOURCE_PACKET_REF, _empty_source_packet(request))
+    write_text_ref(run_root, KERNEL_V2_SEED_NORMALIZER_BRIEF_REF, _seed_normalizer_brief(request))
     write_text_ref(run_root, KERNEL_V2_SOURCE_MAPPER_BRIEF_REF, _source_mapper_brief(request))
     write_text_ref(run_root, KERNEL_V2_RESEARCHER_BRIEF_REF, _researcher_brief(request))
     write_text_ref(run_root, KERNEL_V2_REVIEWER_RUBRIC_REF, _reviewer_rubric(request))
@@ -691,13 +788,30 @@ def _write_previous_run_inputs(request: AcademicResearchRequest, *, root: Path, 
     )
 
 
-def _request_input_refs(request: AcademicResearchRequest) -> list[str]:
-    refs = list(request.seed_pdf_refs)
+def _request_input_refs(request: AcademicResearchRequest, *, include_seed_indexes: bool = True) -> list[str]:
+    refs = []
+    if include_seed_indexes and has_seed_inputs(request):
+        refs.extend([KERNEL_V2_SEED_PAPERS_REF, KERNEL_V2_SEED_PDF_INDEX_REF])
+    refs.extend(request.seed_pdf_refs)
     if request.sample_report_ref:
         refs.append(request.sample_report_ref)
     if request.previous_run_refs:
         refs.append(KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
     return _dedupe_refs(refs)
+
+
+def _seed_normalizer_input_refs(request: AcademicResearchRequest) -> list[str]:
+    return _dedupe_refs(list(request.seed_pdf_refs))
+
+
+def _seed_output_input_refs(request: AcademicResearchRequest) -> list[str]:
+    if not has_seed_inputs(request):
+        return []
+    return [
+        KERNEL_V2_SEED_SOURCE_PACKET_REF,
+        KERNEL_V2_SEED_GAPS_REF,
+        KERNEL_V2_SEED_CONTROL_REF,
+    ]
 
 
 def _source_budget_guidance(request: AcademicResearchRequest, profile: ResearchIntensityProfile) -> str:
@@ -736,6 +850,11 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     profile = research_intensity_profile(request.research_intensity)
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2_output_contract.v1",
+        "seed_papers_ref": KERNEL_V2_SEED_PAPERS_REF,
+        "seed_pdf_index_ref": KERNEL_V2_SEED_PDF_INDEX_REF,
+        "seed_source_packet_ref": KERNEL_V2_SEED_SOURCE_PACKET_REF,
+        "seed_gaps_ref": KERNEL_V2_SEED_GAPS_REF,
+        "seed_control_ref": KERNEL_V2_SEED_CONTROL_REF,
         "provider_capabilities_ref": KERNEL_V2_PROVIDER_CAPABILITIES_REF,
         "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
         "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
@@ -759,6 +878,31 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     }
 
 
+def _seed_normalizer_brief(request: AcademicResearchRequest) -> str:
+    return "\n".join(
+        [
+            "# DeepResearch v2 Seed Normalizer Brief",
+            "",
+            "You own only optional seed-paper and seed-PDF normalization. Do not draft the final report and do not perform broad literature search in this step.",
+            "Seed inputs are accelerators, not task authority. The frozen task authority is `contract/task_contract.json` and `product_contract/research_request.json`.",
+            "Required inputs: `inputs/seed_papers.json` and `inputs/seed_pdf_index.json`.",
+            "Required outputs: `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and `state/seed_control.json`.",
+            "For DOI/arXiv/title/URL seed papers, use academic tools when available to resolve metadata candidates. Keep uncertainty and multiple candidates explicit.",
+            "For PDF seeds, do not manually parse binary PDF content and do not paste full extracted text into context.",
+            "Use `pdf_provider_capabilities` first when PDF tools are available. Use `grobid_parse_pdf` only for available staged PDF refs from `inputs/seed_pdf_index.json`.",
+            "Treat raw GROBID TEI as the authoritative parsed artifact. Any Markdown/text summary is a derived view and must cite the TEI/ref diagnostics.",
+            "If GROBID is unavailable, the PDF is missing, scanned, degraded, or parsing fails, record it in `reports/seed_gaps.md`; do not block the run unless no usable topic or source mapping can proceed.",
+            "`sources/seed_source_packet.json` should use schema_version `missionforge_deepresearch.seed_source_packet.v1` and include source_records for resolved seed papers and seed PDFs with stable ids like `SEED1`.",
+            "`state/seed_control.json` should use schema_version `missionforge_deepresearch.seed_control.v1` and decision `ready_for_source_mapping` when source mapping can continue.",
+            "Use `blocked` only when tool or permission failures prevent writing the required seed artifacts.",
+            *_optional_input_guidance(request),
+            f"Topic: {request.topic}",
+            f"Audience: {request.audience}",
+            f"Language: {request.language}",
+        ]
+    )
+
+
 def _source_mapper_brief(request: AcademicResearchRequest) -> str:
     profile = research_intensity_profile(request.research_intensity)
     return "\n".join(
@@ -770,6 +914,7 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "This is not the whole research run. Later researcher/reviewer passes can request narrow follow-up source expansion from your artifacts.",
             "Use academic/repo tools when available. Start live academic runs with `academic_provider_capabilities` and record provider availability, missing optional keys, and disabled enhancements before broad search.",
             "Default academic acquisition is no-key. Do not assume OpenAlex is available unless provider capabilities report it as enabled; missing OpenAlex is a source-gap diagnostic, not a task failure.",
+            "If `sources/seed_source_packet.json` is visible, use it as seed evidence and expansion guidance. Do not parse PDFs in this step; seed PDF parsing belongs to the seed normalizer.",
             "Before broad search, write `sources/search_plan.json` with query families, provider plan, seed expansion plan when seeds exist, inclusion criteria, stopping criteria, expected evidence classes, and source-count budget.",
             "Use schema_version `missionforge_deepresearch.search_plan.v1` for `sources/search_plan.json`.",
             "Batch independent searches from the search plan through `academic_search.queries` when live tools support it; providers inside each query and queries inside the batch may run concurrently.",
@@ -1440,6 +1585,11 @@ def _kernel_v2_run_status(
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
         "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
         "report_html_ref": KERNEL_V2_REPORT_HTML_REF,
+        "seed_papers_ref": KERNEL_V2_SEED_PAPERS_REF,
+        "seed_pdf_index_ref": KERNEL_V2_SEED_PDF_INDEX_REF,
+        "seed_source_packet_ref": KERNEL_V2_SEED_SOURCE_PACKET_REF,
+        "seed_gaps_ref": KERNEL_V2_SEED_GAPS_REF,
+        "seed_control_ref": KERNEL_V2_SEED_CONTROL_REF,
         "provider_capabilities_ref": KERNEL_V2_PROVIDER_CAPABILITIES_REF,
         "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
         "provider_hits_ref": KERNEL_V2_PROVIDER_HITS_REF,
@@ -1604,6 +1754,11 @@ def _kernel_v2_result(
         final_report_ref=_outer_ref(run_ref, KERNEL_V2_FINAL_REPORT_REF),
         citation_projected_report_ref=_outer_ref(run_ref, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
         report_html_ref=_outer_ref(run_ref, KERNEL_V2_REPORT_HTML_REF),
+        seed_papers_ref=_outer_ref(run_ref, KERNEL_V2_SEED_PAPERS_REF),
+        seed_pdf_index_ref=_outer_ref(run_ref, KERNEL_V2_SEED_PDF_INDEX_REF),
+        seed_source_packet_ref=_outer_ref(run_ref, KERNEL_V2_SEED_SOURCE_PACKET_REF),
+        seed_gaps_ref=_outer_ref(run_ref, KERNEL_V2_SEED_GAPS_REF),
+        seed_control_ref=_outer_ref(run_ref, KERNEL_V2_SEED_CONTROL_REF),
         provider_capabilities_ref=_outer_ref(run_ref, KERNEL_V2_PROVIDER_CAPABILITIES_REF),
         search_plan_ref=_outer_ref(run_ref, KERNEL_V2_SEARCH_PLAN_REF),
         provider_hits_ref=_outer_ref(run_ref, KERNEL_V2_PROVIDER_HITS_REF),
@@ -1767,6 +1922,11 @@ def _non_negative_float(value: Any) -> float:
 
 def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root: Path) -> list[str]:
     refs: list[str] = [
+        KERNEL_V2_SEED_PAPERS_REF,
+        KERNEL_V2_SEED_PDF_INDEX_REF,
+        KERNEL_V2_SEED_SOURCE_PACKET_REF,
+        KERNEL_V2_SEED_GAPS_REF,
+        KERNEL_V2_SEED_CONTROL_REF,
         KERNEL_V2_PROVIDER_CAPABILITIES_REF,
         KERNEL_V2_SEARCH_PLAN_REF,
         KERNEL_V2_PROVIDER_HITS_REF,
@@ -1789,6 +1949,7 @@ def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root:
     ]
     for ref in flow_result.flow_result.decision_refs:
         if ref in {
+            KERNEL_V2_SEED_CONTROL_REF,
             KERNEL_V2_SOURCE_CONTROL_REF,
             KERNEL_V2_RESEARCHER_CONTROL_REF,
             KERNEL_V2_REVIEWER_OBSERVATION_REF,

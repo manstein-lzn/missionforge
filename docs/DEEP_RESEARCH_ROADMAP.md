@@ -5,7 +5,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 ## Current Baseline
 
 - Active command: `academic kernel-v2-run`.
-- Active flow: researcher -> reviewer -> judge.
+- Active flow: source_mapper -> researcher -> reviewer -> judge.
+  Seeded runs insert `seed_normalizer` before source_mapper.
 - Active adapter: PiWorker through Codex current provider config or fixture
   mode for tests.
 - Active output: markdown final report, search plan, provider-hit JSONL,
@@ -14,6 +15,11 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Active source acquisition artifacts: `sources/provider_capabilities.json`,
   `sources/search_plan.json`, `sources/provider_hits.jsonl`,
   `sources/source_packet.json`, and `sources/coverage_report.json`.
+- Active seed artifacts: `inputs/seed_papers.json`,
+  `inputs/seed_pdf_index.json`, `sources/seed_source_packet.json`,
+  `reports/seed_gaps.md`, and `state/seed_control.json`.
+- Active PDF boundary: `pi-pdf-sources` delegates scholarly PDF parsing to
+  GROBID when configured and records diagnostics when unavailable.
 - Active academic acquisition scale: standard runs use a 50-source reference
   budget, intensive runs use 100, and request-level `target_source_count` can
   override either budget.
@@ -53,8 +59,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
-- Add seed-paper/PDF ingestion so optional user-supplied papers become parsed
-  source refs with diagnostics.
+- Continue seed/PDF ingestion: project GROBID TEI into metadata, section,
+  reference, and page/span provenance refs; add Web upload UI.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into

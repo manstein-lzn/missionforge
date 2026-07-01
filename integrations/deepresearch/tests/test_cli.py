@@ -117,6 +117,45 @@ class CliTests(unittest.TestCase):
             self.assertIn("Token 用量：", stderr_output)
             self.assertIn("cached_input_tokens: 0", stderr_output)
 
+    def test_academic_kernel_v2_run_accepts_seed_paper_and_pdf_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            seed_pdf = root / "inputs/seeds/paper.pdf"
+            seed_pdf.parent.mkdir(parents=True, exist_ok=True)
+            seed_pdf.write_bytes(b"%PDF-1.4\nfixture\n")
+
+            with patch("builtins.print") as print_mock, patch("sys.stderr"):
+                exit_code = main(
+                    [
+                        "academic",
+                        "kernel-v2-run",
+                        "--topic",
+                        "compiler autotuning survey",
+                        "--request-id",
+                        "kernel-v2-cli-seed-demo",
+                        "--workspace",
+                        str(root),
+                        "--seed-paper",
+                        "doi:10.1145/1234567.1234568",
+                        "--seed-pdf-ref",
+                        "inputs/seeds/paper.pdf",
+                        "--target-source-count",
+                        "80",
+                        "--kernel-v2-adapter-mode",
+                        "fixture",
+                    ]
+                )
+
+            payload = json.loads(print_mock.call_args.args[0])
+            seed_pdf_index = json.loads((root / payload["seed_pdf_index_ref"]).read_text(encoding="utf-8"))
+            seed_packet = json.loads((root / payload["seed_source_packet_ref"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertTrue(seed_pdf_index["entries"][0]["available"])
+        self.assertEqual(seed_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
+        self.assertEqual(len(seed_packet["source_records"]), 2)
+
     def test_academic_kernel_v2_run_prints_missing_outputs_for_blocked_result(self) -> None:
         expected = type(
             "Result",

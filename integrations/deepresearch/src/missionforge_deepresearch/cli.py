@@ -18,7 +18,7 @@ from .frontdesk import (
     run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
-from .product_contract import AcademicResearchRequest, ResearchIntensity, research_intensity_profile
+from .product_contract import AcademicResearchRequest, ResearchIntensity, SeedPaper, research_intensity_profile
 from .tui import FrontDeskTuiConfig, run_frontdesk_tui
 
 
@@ -153,6 +153,16 @@ def _add_kernel_v2_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--language", default="zh")
     parser.add_argument("--research-intensity", choices=[item.value for item in ResearchIntensity], default=ResearchIntensity.STANDARD.value)
     parser.add_argument("--previous-run-ref", action="append", default=[])
+    parser.add_argument(
+        "--seed-paper",
+        action="append",
+        default=[],
+        metavar="KIND:VALUE",
+        help="Optional seed paper, e.g. doi:10.1145/... or arxiv:2501.01234 or title:Paper Title.",
+    )
+    parser.add_argument("--seed-pdf-ref", action="append", default=[], help="Optional workspace PDF ref to use as a seed.")
+    parser.add_argument("--sample-report-ref", default=None)
+    parser.add_argument("--target-source-count", type=int, default=None)
     parser.add_argument("--live-extension-mode", action="store_true")
     parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
     parser.add_argument("--piworker-provider-config-source", choices=["env", "codex_current", "explicit"], default="codex_current")
@@ -237,6 +247,11 @@ def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
         ("final_report", getattr(result, "final_report_ref", "")),
         ("citation_projected_report", getattr(result, "citation_projected_report_ref", "")),
         ("report_html", getattr(result, "report_html_ref", "")),
+        ("seed_papers", getattr(result, "seed_papers_ref", "")),
+        ("seed_pdf_index", getattr(result, "seed_pdf_index_ref", "")),
+        ("seed_source_packet", getattr(result, "seed_source_packet_ref", "")),
+        ("seed_gaps", getattr(result, "seed_gaps_ref", "")),
+        ("seed_control", getattr(result, "seed_control_ref", "")),
         ("search_plan", getattr(result, "search_plan_ref", "")),
         ("provider_hits", getattr(result, "provider_hits_ref", "")),
         ("source_packet", getattr(result, "source_packet_ref", "")),
@@ -534,6 +549,8 @@ def _progress_state_from_kernel_status(status: str | None) -> str:
 
 def _kernel_v2_step_label(step_id: str | None) -> str:
     labels = {
+        "seed_normalizer": "Kernel v2 seed normalizer",
+        "source_mapper": "Kernel v2 source mapper",
         "researcher": "Kernel v2 researcher",
         "reviewer": "Kernel v2 reviewer",
         "judge": "Kernel v2 judge",
@@ -587,9 +604,23 @@ def _kernel_v2_inputs(args: argparse.Namespace) -> tuple[AcademicResearchRequest
         language=args.language,
         research_intensity=args.research_intensity,
         previous_run_refs=list(args.previous_run_ref),
+        seed_papers=_seed_papers_from_args(args.seed_paper),
+        seed_pdf_refs=list(args.seed_pdf_ref),
+        sample_report_ref=args.sample_report_ref,
+        target_source_count=args.target_source_count,
     )
     piworker_config, piworker_env = _piworker_inputs(args, request.research_intensity)
     return request, piworker_config, piworker_env
+
+
+def _seed_papers_from_args(values: list[str]) -> list[SeedPaper]:
+    result = []
+    for value in values:
+        if ":" not in value:
+            raise mf.ContractValidationError("--seed-paper must use KIND:VALUE")
+        kind, seed_value = value.split(":", 1)
+        result.append(SeedPaper(kind=kind.strip(), value=seed_value.strip()))
+    return result
 
 
 def _piworker_inputs(args: argparse.Namespace, research_intensity: ResearchIntensity | str) -> tuple[object, dict[str, str]]:

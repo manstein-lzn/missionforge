@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3_complete`; next priority is `seed_pdf_ingestion`
+Status: `m5a_seed_pdf_ingestion_foundation`; next priority is `tei_projection_and_pdf_provenance`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -153,13 +153,20 @@ backbone:
 - A product package under `integrations/deepresearch`.
 - A package-first API boundary using `import missionforge as mf`.
 - Kernel v2 flow:
-  `source_mapper -> researcher -> reviewer -> judge`.
+  `source_mapper -> researcher -> reviewer -> judge` by default, with a
+  conditional `seed_normalizer -> source_mapper -> researcher -> reviewer ->
+  judge` path when seed papers or seed PDFs are supplied.
 - A frozen task contract that includes the sanitized request payload and stable
   request payload hash, so optional seeds/provider policy/target source count
   are task authority rather than loose UI state.
 - Previous run refs are staged into current-run `inputs/previous_runs/` with an
   `inputs/previous_run_index.json`, preserving the run-root permission boundary.
 - Workspace refs for:
+  - `inputs/seed_papers.json`
+  - `inputs/seed_pdf_index.json`
+  - `sources/seed_source_packet.json`
+  - `reports/seed_gaps.md`
+  - `state/seed_control.json`
   - `sources/provider_capabilities.json`
   - `sources/search_plan.json`
   - `sources/provider_hits.jsonl`
@@ -185,6 +192,9 @@ backbone:
   - `academic_fetch`
   - `citation_lookup`
   - `repo_search`
+- Live PDF extension tools:
+  - `pdf_provider_capabilities`
+  - `grobid_parse_pdf`
 - Current provider adapters:
   - Semantic Scholar
   - arXiv
@@ -196,6 +206,9 @@ backbone:
   - GitHub repository search
 - Provider capability, missing-key, optional-enhancement status, search plans,
   provider-hit logs, and coverage reports are persisted as source artifacts.
+- Optional seed papers and seed PDFs are staged into explicit input artifacts.
+  PDF parsing is GROBID-first through `pi-pdf-sources`; raw TEI and diagnostics
+  are extension outputs, not hand-written Python PDF parsing.
 - Standard academic runs now target a 50-source reference budget by default;
   intensive runs target 100, while `target_source_count` may override the
   budget and coverage sufficiency remains a PiWorker/Judge decision.
@@ -280,7 +293,16 @@ Current state:
   refs are visible to worker steps under the `inputs` permission root.
 - `previous_run_refs` are staged into current-run input refs instead of exposing
   outer workspace paths directly.
-- There is no PDF upload or parsing pipeline.
+- `inputs/seed_papers.json` and `inputs/seed_pdf_index.json` are written for
+  each run. Available seed PDFs are staged under `inputs/seed_pdfs/` with hash,
+  byte length, availability, and diagnostics.
+- A conditional `seed_normalizer` PiWorker step writes
+  `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and
+  `state/seed_control.json` before source mapping when seeds exist.
+- `pi-pdf-sources` provides `pdf_provider_capabilities` and
+  `grobid_parse_pdf`. It delegates to a configured GROBID service and writes
+  raw TEI plus diagnostics; it rejects absolute paths and unsafe refs.
+- There is not yet a Web PDF upload UI or TEI-to-section/reference projection.
 
 Target:
 
@@ -294,11 +316,12 @@ Target:
   - `inputs/seed_papers.json`
   - `inputs/seed_pdf_index.json`
   - `sources/seed_source_packet.json`
-- Parse PDFs into refs:
+- Parse PDFs into refs through external providers, not custom PDF parsing:
   - raw PDF ref
-  - extracted text ref
+  - GROBID TEI ref
   - metadata candidate ref
   - parse diagnostics ref
+  - later page/span provenance refs
 
 ### G3: Source Graph, Deduplication, And Ranking
 
@@ -754,16 +777,25 @@ Keep:
 
 Tools:
 
-- `pdf_extract_text`
-- `pdf_extract_metadata`
-- `pdf_extract_references`
+- `pdf_provider_capabilities`
+- `grobid_parse_pdf`
 
 Outputs:
 
-- text ref
-- metadata ref
+- raw PDF manifest
+- raw GROBID TEI ref
 - parse diagnostics ref
-- discovered references
+- later TEI-derived metadata/sections/references refs
+
+Rules:
+
+- Do not implement a custom PDF parser in DeepResearch or MissionForge core.
+- Delegate scholarly PDF parsing to GROBID when configured.
+- Missing GROBID is a recorded seed gap, not a task failure.
+- Raw TEI is the authoritative parsed artifact; Markdown/text summaries are
+  derived views only.
+- Extension tools accept workspace refs, not absolute paths, and reject path
+  traversal.
 
 ### Add Optional `pi-browser-scholar`
 
@@ -1136,19 +1168,32 @@ Exit criteria:
 
 ### M5: PDF Seed Ingestion
 
-Status: `pending`
+Status: `partial`
 
 Deliverables:
 
-- `pi-pdf-sources` extension.
-- PDF upload/reference contract.
-- Extracted text/metadata refs.
-- PDF parse diagnostics.
+- `pi-pdf-sources` extension with GROBID provider capability and parse tool.
+- PDF reference contract through `seed_pdf_refs`.
+- `inputs/seed_papers.json` and `inputs/seed_pdf_index.json`.
+- Conditional `seed_normalizer` step.
+- `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and
+  `state/seed_control.json`.
+- PDF parse diagnostics through extension outputs.
 
 Exit criteria:
 
-- User-provided PDF seed becomes a canonical source or an explicit parse failure
-  artifact.
+- User-provided seed papers/PDFs become seed source packet entries or explicit
+  parse/missing-provider diagnostics.
+
+Implemented notes:
+
+- M5A is complete for artifact lifecycle, CLI seed refs, fixture flow, and
+  GROBID-first extension boundary.
+- DeepResearch does not hand-parse PDF binaries or dump extracted full text
+  into context.
+- Remaining M5 work: Web upload UI, TEI-to-metadata/sections/references
+  projection, page/span provenance, OCR fallback, and citation support against
+  parsed PDF spans.
 
 ### M6: Citation Support Judge
 

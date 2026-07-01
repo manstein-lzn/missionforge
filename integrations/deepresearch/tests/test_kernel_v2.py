@@ -22,6 +22,7 @@ from missionforge_deepresearch.project_lifecycle import (
     PROJECT_RUN_INDEX_REF,
     ROLE_CONTEXT_PACKAGE_POINTER_REFS,
 )
+from missionforge_deepresearch.seed_ingestion import seed_pdf_index_payload
 
 
 class DeepResearchKernelV2Tests(unittest.TestCase):
@@ -483,6 +484,26 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertFalse(any("max_turns" in step.runtime_budget for step in flow.steps[1:]))
         self.assertTrue(all("timeout_seconds" in step.runtime_budget for step in flow.steps))
 
+    def test_flow_shape_adds_seed_normalizer_only_for_seed_inputs(self) -> None:
+        flow = build_deepresearch_kernel_v2_flow(
+            AcademicResearchRequest(
+                request_id="kernel-v2-seed-flow",
+                topic="compiler autotuning",
+                seed_papers=[{"kind": "doi", "value": "10.1145/1234567.1234568"}],
+                seed_pdf_refs=["inputs/seeds/paper.pdf"],
+            ),
+            live_extension_mode=True,
+        )
+
+        self.assertEqual([step.id for step in flow.steps[:2]], ["seed_normalizer", "source_mapper"])
+        self.assertEqual(flow.routes["seed_normalizer.ready_for_source_mapping"], "source_mapper")
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_SOURCE_PACKET_REF, flow.steps[0].outputs)
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_SOURCE_PACKET_REF, flow.steps[1].inputs)
+        self.assertIn("pdf", flow.steps[0].tools)
+        self.assertIn("academic", flow.steps[0].tools)
+        self.assertEqual(flow.toolsets[1].package, "local:extensions/pi-pdf-sources")
+        self.assertEqual(flow.toolsets[1].tools, ["pdf_provider_capabilities", "grobid_parse_pdf"])
+
     def test_researcher_and_reviewer_cannot_self_accept(self) -> None:
         request = AcademicResearchRequest(request_id="kernel-v2-no-self-accept", topic="compiler autotuning")
 
@@ -616,6 +637,43 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             ["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
         )
 
+    def test_seeded_live_extension_mode_scopes_pdf_tools_to_seed_normalizer(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-seeded-extension",
+            topic="compiler autotuning",
+            seed_papers=[{"kind": "doi", "value": "10.1145/1234567.1234568"}],
+            seed_pdf_refs=["inputs/seeds/paper.pdf"],
+        )
+        adapter = KernelV2FixtureAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            seed_pdf = root / "inputs/seeds/paper.pdf"
+            seed_pdf.parent.mkdir(parents=True, exist_ok=True)
+            seed_pdf.write_bytes(b"%PDF-1.4\nfixture seed\n")
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=adapter,
+                live_extension_mode=True,
+                extension_installer=_fake_extension_installer,
+            )
+            run_root = root / result.run_workspace_ref
+            flow_result = _read_json(root, result.flow_result_ref)
+            seed_record = _read_json(run_root, flow_result["step_record_refs"][0])
+            source_mapper_record = _read_json(run_root, flow_result["step_record_refs"][1])
+            step_ids = [_read_json(run_root, ref)["step_id"] for ref in flow_result["step_record_refs"][:2]]
+            seed_lock = mf.ExtensionLock.from_dict(_read_json(run_root, seed_record["extension_lock_ref"]))
+            source_lock = mf.ExtensionLock.from_dict(_read_json(run_root, source_mapper_record["extension_lock_ref"]))
+
+        self.assertEqual(step_ids, ["seed_normalizer", "source_mapper"])
+        self.assertEqual(
+            [entry.package for entry in seed_lock.extensions],
+            ["local:extensions/pi-academic-sources", "local:extensions/pi-pdf-sources"],
+        )
+        self.assertEqual([entry.package for entry in source_lock.extensions], ["local:extensions/pi-academic-sources"])
+        self.assertEqual(seed_lock.extensions[1].required_env, ["GROBID_BASE_URL"])
+
     def test_kernel_v2_contract_freezes_optional_request_fields(self) -> None:
         request = AcademicResearchRequest.from_dict(
             {
@@ -637,6 +695,9 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             previous_result = root / "runs/previous/packages/deepresearch_kernel_v2_result.json"
             previous_result.parent.mkdir(parents=True, exist_ok=True)
             previous_result.write_text('{"status":"accepted"}\n', encoding="utf-8")
+            seed_pdf = root / "inputs/seeds/paper.pdf"
+            seed_pdf.parent.mkdir(parents=True, exist_ok=True)
+            seed_pdf.write_bytes(b"%PDF-1.4\nfixture seed\n")
             result = run_deepresearch_kernel_v2(
                 request,
                 workspace=root,
@@ -645,26 +706,61 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             contract = _read_json(root, result.contract_ref)
             flow_result = _read_json(root, result.flow_result_ref)
             run_root = root / result.run_workspace_ref
-            source_mapper_record = _read_json(run_root, flow_result["step_record_refs"][0])
+            step_ids = [_read_json(run_root, ref)["step_id"] for ref in flow_result["step_record_refs"]]
+            seed_record = _read_json(run_root, flow_result["step_record_refs"][0])
+            seed_call = _read_json(run_root, seed_record["piworker_call_ref"])
+            source_mapper_record = _read_json(run_root, flow_result["step_record_refs"][1])
             source_mapper_call = _read_json(run_root, source_mapper_record["piworker_call_ref"])
             source_mapper_manifest = _read_json(run_root, source_mapper_record["permission_manifest_ref"])
+            seed_pdf_index = _read_json(run_root, kernel_v2_module.KERNEL_V2_SEED_PDF_INDEX_REF)
+            staged_seed_pdf_exists = (run_root / seed_pdf_index["entries"][0]["staged_pdf_ref"]).is_file()
+            seed_source_packet = _read_json(root, result.seed_source_packet_ref)
+            seed_gaps = _read_text(root, result.seed_gaps_ref)
             previous_run_index = _read_json(run_root, kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
             staged_previous_run_exists = (run_root / previous_run_index["entries"][0]["staged_ref"]).is_file()
+            run_status = _read_json(root, result.run_status_ref)
 
         self.assertEqual(contract["request"]["seed_pdf_refs"], ["inputs/seeds/paper.pdf"])
         self.assertEqual(contract["request"]["sample_report_ref"], "inputs/sample_report.md")
         self.assertEqual(contract["request"]["target_source_count"], 100)
         self.assertEqual(contract["request"]["provider_policy"], "openalex_enhanced")
         self.assertEqual(contract["request_payload_hash"], mf.stable_json_hash(contract["request"]))
-        self.assertIn("inputs/seeds/paper.pdf", source_mapper_call["visible_refs"])
+        self.assertEqual(step_ids[:2], ["seed_normalizer", "source_mapper"])
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_PAPERS_REF, seed_call["visible_refs"])
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_PDF_INDEX_REF, seed_call["visible_refs"])
+        self.assertIn("inputs/seeds/paper.pdf", seed_call["visible_refs"])
+        self.assertNotIn("inputs/sample_report.md", seed_call["visible_refs"])
+        self.assertNotIn(kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF, seed_call["visible_refs"])
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_SOURCE_PACKET_REF, source_mapper_call["visible_refs"])
+        self.assertIn(kernel_v2_module.KERNEL_V2_SEED_GAPS_REF, source_mapper_call["visible_refs"])
         self.assertIn("inputs/sample_report.md", source_mapper_call["visible_refs"])
         self.assertIn(kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF, source_mapper_call["visible_refs"])
         self.assertIn("inputs", source_mapper_manifest["readable_refs"])
+        self.assertTrue(seed_pdf_index["entries"][0]["available"])
+        self.assertTrue(staged_seed_pdf_exists)
+        self.assertEqual(seed_source_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
+        self.assertEqual(len(seed_source_packet["source_records"]), 2)
+        self.assertIn("No fixture seed input gaps.", seed_gaps)
+        self.assertEqual(run_status["seed_control_ref"], kernel_v2_module.KERNEL_V2_SEED_CONTROL_REF)
         self.assertEqual(
             previous_run_index["entries"][0]["previous_run_ref"],
             "runs/previous/packages/deepresearch_kernel_v2_result.json",
         )
         self.assertTrue(staged_previous_run_exists)
+
+    def test_seed_pdf_index_rejects_unsafe_refs_even_when_called_directly(self) -> None:
+        class UnsafeRequest:
+            request_id = "unsafe-seed"
+            seed_pdf_refs = ["../secret.pdf"]
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaisesRegex(mf.ContractValidationError, "parent segments"):
+                seed_pdf_index_payload(
+                    UnsafeRequest(),
+                    root=root,
+                    run_root=root / "runs/unsafe-seed",
+                )
 
     def test_kernel_v2_marks_unknown_report_citation_as_failed(self) -> None:
         request = AcademicResearchRequest(
