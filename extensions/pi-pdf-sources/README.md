@@ -11,8 +11,9 @@ Tools:
 
 - `pdf_provider_capabilities`: report configured PDF parsing providers.
 - `grobid_parse_pdf`: submit an authorized workspace PDF ref to a configured
-  GROBID service and write raw TEI plus diagnostics under a
-  `sources/seed_pdfs/...` output ref prefix.
+  GROBID service and write raw TEI, diagnostics, parse result, metadata,
+  sections, references, and provenance JSON under a `sources/seed_pdfs/...`
+  output ref prefix.
 
 Configuration:
 

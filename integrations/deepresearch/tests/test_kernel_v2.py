@@ -740,9 +740,22 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("inputs", source_mapper_manifest["readable_refs"])
         self.assertTrue(seed_pdf_index["entries"][0]["available"])
         self.assertEqual(seed_pdf_index["entries"][0]["parser_output_prefix_ref"], "sources/seed_pdfs/001-paper")
+        self.assertEqual(seed_pdf_index["entries"][0]["parse_result_ref"], "sources/seed_pdfs/001-paper/parse_result.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["metadata_ref"], "sources/seed_pdfs/001-paper/metadata.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["sections_ref"], "sources/seed_pdfs/001-paper/sections.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["references_ref"], "sources/seed_pdfs/001-paper/references.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["provenance_ref"], "sources/seed_pdfs/001-paper/provenance.json")
         self.assertTrue(staged_seed_pdf_exists)
         self.assertEqual(seed_source_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
         self.assertEqual(len(seed_source_packet["source_records"]), 2)
+        self.assertEqual(
+            seed_source_packet["source_records"][1]["parse_refs"]["metadata_ref"],
+            "sources/seed_pdfs/001-paper/metadata.json",
+        )
+        self.assertEqual(
+            seed_source_packet["source_records"][1]["parse_refs"]["provenance_ref"],
+            "sources/seed_pdfs/001-paper/provenance.json",
+        )
         self.assertIn("No fixture seed input gaps.", seed_gaps)
         self.assertEqual(run_status["seed_control_ref"], kernel_v2_module.KERNEL_V2_SEED_CONTROL_REF)
         self.assertEqual(

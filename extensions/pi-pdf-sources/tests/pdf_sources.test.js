@@ -38,12 +38,15 @@ test("grobid_parse_pdf writes unavailable diagnostics when GROBID is not configu
     });
     const diagnostics = JSON.parse(await readFile(join(workspace, result.diagnostics_ref), "utf-8"));
     const manifest = JSON.parse(await readFile(join(workspace, result.manifest_ref), "utf-8"));
+    const parseResult = JSON.parse(await readFile(join(workspace, result.parse_result_ref), "utf-8"));
     assert.equal(result.status, "unavailable");
     assert.equal(result.tei_ref, "");
     assert.equal(diagnostics.status, "unavailable");
     assert.deepEqual(diagnostics.reason_codes, ["grobid_base_url_missing"]);
     assert.equal(manifest.pdf_ref, "inputs/seed_pdfs/001-paper.pdf");
     assert.match(manifest.sha256, /^sha256:/);
+    assert.equal(parseResult.status, "unavailable");
+    assert.equal(parseResult.parse_result_ref, "sources/seed_pdfs/001-paper/parse_result.json");
   } finally {
     process.chdir(previousCwd);
     restoreGrobidBaseUrl(previous);
@@ -62,7 +65,27 @@ test("grobid_parse_pdf posts PDF to GROBID and writes TEI", async () => {
   const seenUrls = [];
   globalThis.fetch = async (url) => {
     seenUrls.push(String(url));
-    return new Response("<TEI><text>parsed</text></TEI>", { status: 200 });
+    return new Response(
+      `<TEI>
+        <teiHeader>
+          <fileDesc>
+            <titleStmt>
+              <title>MissionForge PDF Parsing</title>
+              <author><persName><forename>Ada</forename><surname>Lovelace</surname></persName></author>
+            </titleStmt>
+            <sourceDesc>
+              <biblStruct><analytic><title>MissionForge PDF Parsing</title></analytic><idno type="DOI">10.1234/example</idno></biblStruct>
+            </sourceDesc>
+          </fileDesc>
+          <profileDesc><abstract><p>Structured parsing abstract.</p></abstract></profileDesc>
+        </teiHeader>
+        <text>
+          <body><div coords="1,10,20,30,40"><head>Introduction</head><p>Parsed paragraph.</p></div></body>
+          <back><listBibl><biblStruct xml:id="b1"><analytic><title>Related Work</title><author><persName><surname>Turing</surname></persName></author></analytic><idno type="DOI">10.5555/related</idno></biblStruct></listBibl></back>
+        </text>
+      </TEI>`,
+      { status: 200 },
+    );
   };
   try {
     const result = await grobidParsePdf({
@@ -71,11 +94,25 @@ test("grobid_parse_pdf posts PDF to GROBID and writes TEI", async () => {
     });
     const tei = await readFile(join(workspace, result.tei_ref), "utf-8");
     const diagnostics = JSON.parse(await readFile(join(workspace, result.diagnostics_ref), "utf-8"));
+    const metadata = JSON.parse(await readFile(join(workspace, result.projection_refs.metadata_ref), "utf-8"));
+    const sections = JSON.parse(await readFile(join(workspace, result.projection_refs.sections_ref), "utf-8"));
+    const references = JSON.parse(await readFile(join(workspace, result.projection_refs.references_ref), "utf-8"));
+    const provenance = JSON.parse(await readFile(join(workspace, result.projection_refs.provenance_ref), "utf-8"));
+    const parseResult = JSON.parse(await readFile(join(workspace, result.parse_result_ref), "utf-8"));
     assert.equal(result.status, "completed");
     assert.ok(seenUrls.includes("http://grobid.test/api/processFulltextDocument"));
-    assert.equal(tei, "<TEI><text>parsed</text></TEI>");
+    assert.match(tei, /MissionForge PDF Parsing/);
     assert.equal(diagnostics.status, "completed");
     assert.equal(diagnostics.tei_ref, "sources/seed_pdfs/001-paper/grobid.tei.xml");
+    assert.equal(metadata.title, "MissionForge PDF Parsing");
+    assert.equal(metadata.authors[0].full_name, "Ada Lovelace");
+    assert.equal(metadata.parse_result_ref, "sources/seed_pdfs/001-paper/parse_result.json");
+    assert.equal(sections.sections[0].heading, "Introduction");
+    assert.equal(sections.sections[0].provenance.page_refs[0], "page:1");
+    assert.equal(references.references[0].title, "Related Work");
+    assert.equal(provenance.counts.reference_count, 1);
+    assert.equal(provenance.parse_result_ref, "sources/seed_pdfs/001-paper/parse_result.json");
+    assert.equal(parseResult.projection_refs.metadata_ref, "sources/seed_pdfs/001-paper/metadata.json");
   } finally {
     process.chdir(previousCwd);
     globalThis.fetch = previousFetch;

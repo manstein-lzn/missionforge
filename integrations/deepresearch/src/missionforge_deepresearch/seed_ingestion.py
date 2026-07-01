@@ -79,6 +79,14 @@ def seed_pdf_index_payload(request: Any, *, root: Path, run_root: Path) -> dict[
                 "original_ref": original_ref,
                 "staged_pdf_ref": staged_pdf_ref,
                 "parser_output_prefix_ref": parser_output_prefix_ref,
+                "parse_result_ref": f"{parser_output_prefix_ref}/parse_result.json",
+                "manifest_ref": f"{parser_output_prefix_ref}/manifest.json",
+                "tei_ref": f"{parser_output_prefix_ref}/grobid.tei.xml",
+                "diagnostics_ref": f"{parser_output_prefix_ref}/diagnostics.json",
+                "metadata_ref": f"{parser_output_prefix_ref}/metadata.json",
+                "sections_ref": f"{parser_output_prefix_ref}/sections.json",
+                "references_ref": f"{parser_output_prefix_ref}/references.json",
+                "provenance_ref": f"{parser_output_prefix_ref}/provenance.json",
                 "available": available,
                 "sha256": digest,
                 "byte_length": byte_length,
@@ -138,6 +146,7 @@ def fixture_seed_source_packet(request_payload: Mapping[str, Any], seed_pdf_inde
                 "locator": str(entry.get("staged_pdf_ref") or entry.get("original_ref") or ""),
                 "evidence_note": "User-provided seed PDF; parse diagnostics are tracked separately.",
                 "evidence_strength": "pdf_seed",
+                "parse_refs": _seed_pdf_parse_refs(entry),
             }
         )
     return {
@@ -200,6 +209,20 @@ def no_seed_control() -> dict[str, Any]:
         "seed_source_packet_ref": KERNEL_V2_SEED_SOURCE_PACKET_REF,
         "seed_gaps_ref": KERNEL_V2_SEED_GAPS_REF,
     }
+
+
+def _seed_pdf_parse_refs(entry: Mapping[str, Any]) -> dict[str, str]:
+    fields = [
+        "parse_result_ref",
+        "manifest_ref",
+        "tei_ref",
+        "diagnostics_ref",
+        "metadata_ref",
+        "sections_ref",
+        "references_ref",
+        "provenance_ref",
+    ]
+    return {field: str(entry.get(field) or "") for field in fields}
 
 
 def _seed_paper_dict(item: Any) -> dict[str, str]:

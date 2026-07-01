@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m5a_seed_pdf_ingestion_foundation`; next priority is `tei_projection_and_pdf_provenance`
+Status: `m5b_tei_projection_and_pdf_provenance`; next priority is `web_upload_and_ocr_fallback`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -208,8 +208,8 @@ backbone:
   provider-hit logs, and coverage reports are persisted as source artifacts.
 - Optional seed papers and seed PDFs are staged into explicit input artifacts.
   PDF parsing is GROBID-first through `pi-pdf-sources`; raw TEI and diagnostics
-  are extension outputs under `sources/seed_pdfs/`, not hand-written Python PDF
-  parsing.
+  plus metadata, sections, references, and provenance projections are extension
+  outputs under `sources/seed_pdfs/`, not hand-written Python PDF parsing.
 - Standard academic runs now target a 50-source reference budget by default;
   intensive runs target 100, while `target_source_count` may override the
   budget and coverage sufficiency remains a PiWorker/Judge decision.
@@ -304,9 +304,10 @@ Current state:
   `state/seed_control.json` before source mapping when seeds exist.
 - `pi-pdf-sources` provides `pdf_provider_capabilities` and
   `grobid_parse_pdf`. It delegates to a configured GROBID service and writes
-  raw TEI plus diagnostics under `sources/seed_pdfs/`; it rejects absolute
-  paths and unsafe refs.
-- There is not yet a Web PDF upload UI or TEI-to-section/reference projection.
+  raw TEI, diagnostics, metadata, sections, references, and provenance under
+  `sources/seed_pdfs/`; it rejects absolute paths and unsafe refs.
+- There is not yet a Web PDF upload UI, OCR fallback, or source-mapper authored
+  semantic use of parsed PDF spans beyond the seed packet refs.
 
 Target:
 
@@ -789,7 +790,7 @@ Outputs:
 - raw PDF manifest
 - raw GROBID TEI ref under `sources/seed_pdfs/`
 - parse diagnostics ref under `sources/seed_pdfs/`
-- later TEI-derived metadata/sections/references refs
+- TEI-derived metadata, sections, references, and provenance refs
 
 Rules:
 
@@ -1182,7 +1183,7 @@ Deliverables:
 - Conditional `seed_normalizer` step.
 - `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and
   `state/seed_control.json`.
-- PDF parse diagnostics through extension outputs.
+- PDF parse diagnostics and TEI projection refs through extension outputs.
 
 Exit criteria:
 
@@ -1195,11 +1196,13 @@ Implemented notes:
 
 - M5A is complete for artifact lifecycle, CLI seed refs, fixture flow, and
   GROBID-first extension boundary.
+- M5B is complete for deterministic TEI metadata/sections/references/provenance
+  projection refs and seed packet `parse_refs`.
 - DeepResearch does not hand-parse PDF binaries or dump extracted full text
   into context.
-- Remaining M5 work: Web upload UI, TEI-to-metadata/sections/references
-  projection, page/span provenance, OCR fallback, and citation support against
-  parsed PDF spans.
+- Remaining M5 work: Web upload UI, OCR fallback, richer page/span provenance
+  when GROBID coordinates are available, and citation support against parsed PDF
+  spans.
 
 ### M6: Citation Support Judge
 

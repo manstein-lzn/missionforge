@@ -30,12 +30,13 @@ export default function pdfSourcesExtension(pi) {
     name: "grobid_parse_pdf",
     label: "GROBID Parse PDF",
     description:
-      "Submit an authorized workspace PDF ref to GROBID and write TEI plus diagnostics artifacts. This tool does not parse PDF content itself.",
+      "Submit an authorized workspace PDF ref to GROBID and write TEI, diagnostics, and structural projection artifacts. This tool does not parse PDF content itself.",
     promptSnippet:
       "Use grobid_parse_pdf for academic seed PDFs when GROBID is configured. Pass only workspace refs under inputs/.",
     promptGuidelines: [
       "Use workspace refs, not absolute paths.",
       "Write parser outputs under a sources/seed_pdfs/... prefix.",
+      "On successful GROBID parsing, use the returned metadata/sections/references/provenance refs instead of pasting TEI into context.",
       "Treat raw TEI as the authoritative parsed artifact; Markdown summaries are derived views only.",
       "If parsing is unavailable or degraded, record diagnostics and continue with public metadata search.",
     ],
