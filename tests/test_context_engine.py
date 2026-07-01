@@ -13,6 +13,8 @@ from missionforge import (
     ContextCompileResult,
     ContextEpoch,
     ContextPackage,
+    ContextPackageRestoreExpectation,
+    ContextPackageRestoreStatus,
     ContextInlinePolicy,
     ContextReadObservation,
     ContextReductionReason,
@@ -31,6 +33,7 @@ from missionforge import (
     ContextWorkingSetFreshness,
     ContextWorkingSetPinPolicy,
     ContractValidationError,
+    MemoryRefStore,
     PermissionManifest,
     ReadGate,
     build_call_context_view,
@@ -38,6 +41,7 @@ from missionforge import (
     build_context_epoch,
     build_thrash_diagnostics,
     compile_context_request,
+    evaluate_context_package_ref,
     filter_context_sources,
     reconcile_context_epoch,
 )
@@ -121,6 +125,92 @@ class ContextEngineTests(unittest.TestCase):
         forbidden["provider_messages"] = ["must not persist"]
         with self.assertRaises(ContractValidationError):
             ContextPackage.from_dict(forbidden)
+
+    def test_context_package_restore_evaluator_checks_hard_fingerprints(self) -> None:
+        store = MemoryRefStore()
+        contract_hash = _write_json(store, "contract/task_contract.json", {"objective": "demo"})
+        permission_hash = _write_json(store, "kernel/flow1/steps/researcher/permission_manifest.json", {"read": ["contract"]})
+        step_hash = _write_json(store, "kernel/flow1/steps/researcher/step_spec.json", {"id": "researcher"})
+        context_refs = [
+            "kernel/flow1/steps/researcher/context/policy.json",
+            "kernel/flow1/steps/researcher/context/compile_request.json",
+            "kernel/flow1/steps/researcher/context_projection.json",
+            "kernel/flow1/steps/researcher/context/baseline.json",
+            "kernel/flow1/steps/researcher/context/source_snapshot.json",
+            "kernel/flow1/steps/researcher/context/epoch.json",
+            "kernel/flow1/steps/researcher/context/cache_layout.json",
+            "kernel/flow1/steps/researcher/context/pressure.json",
+            "kernel/flow1/steps/researcher/context/turn_safe_point.json",
+            "kernel/flow1/steps/researcher/context/turn_boundary.json",
+            "kernel/flow1/steps/researcher/context/compile_result.json",
+        ]
+        context_hashes = {ref: _write_json(store, ref, {"ref": ref}) for ref in context_refs}
+        package_ref = "kernel/flow1/steps/researcher/context/package.json"
+        package = ContextPackage(
+            package_id="call1-context-package",
+            role="executor_piworker",
+            run_id="flow1",
+            step_id="researcher",
+            call_id="call1",
+            contract_ref="contract/task_contract.json",
+            contract_hash=contract_hash,
+            permission_manifest_ref="kernel/flow1/steps/researcher/permission_manifest.json",
+            permission_manifest_hash=permission_hash,
+            context_view_ref="kernel/flow1/steps/researcher/context_projection.json",
+            context_hash=HASH3,
+            policy_ref="kernel/flow1/steps/researcher/context/policy.json",
+            policy_hash=context_hashes["kernel/flow1/steps/researcher/context/policy.json"],
+            compile_request_ref="kernel/flow1/steps/researcher/context/compile_request.json",
+            compile_result_ref="kernel/flow1/steps/researcher/context/compile_result.json",
+            source_snapshot_ref="kernel/flow1/steps/researcher/context/source_snapshot.json",
+            epoch_ref="kernel/flow1/steps/researcher/context/epoch.json",
+            baseline_ref="kernel/flow1/steps/researcher/context/baseline.json",
+            cache_layout_ref="kernel/flow1/steps/researcher/context/cache_layout.json",
+            pressure_ref="kernel/flow1/steps/researcher/context/pressure.json",
+            turn_safe_point_ref="kernel/flow1/steps/researcher/context/turn_safe_point.json",
+            turn_boundary_ref="kernel/flow1/steps/researcher/context/turn_boundary.json",
+            step_spec_ref="kernel/flow1/steps/researcher/step_spec.json",
+            step_spec_hash=step_hash,
+            tool_schema_hash=HASH2,
+            visible_refs=["contract/task_contract.json"],
+            visible_ref_hashes={"contract/task_contract.json": contract_hash},
+            context_record_refs=context_refs,
+            context_record_hashes=context_hashes,
+            created_at="2026-07-01T00:00:00Z",
+        )
+        store.write_json(package_ref, package.to_dict())
+
+        reusable = evaluate_context_package_ref(
+            store,
+            package_ref,
+            expectation=ContextPackageRestoreExpectation(
+                role="executor_piworker",
+                run_id="flow1",
+                step_id="researcher",
+                contract_ref="contract/task_contract.json",
+                contract_hash=contract_hash,
+                permission_manifest_ref="kernel/flow1/steps/researcher/permission_manifest.json",
+                permission_manifest_hash=permission_hash,
+                step_spec_hash=step_hash,
+                tool_schema_hash=HASH2,
+                context_compiler_version="missionforge.context_runtime.v1",
+                visible_ref_hashes={"contract/task_contract.json": contract_hash},
+            ),
+        )
+        store.write_json("contract/task_contract.json", {"objective": "changed"})
+        stale = evaluate_context_package_ref(store, package_ref)
+        invalid = evaluate_context_package_ref(
+            store,
+            package_ref,
+            expectation=ContextPackageRestoreExpectation(step_id="frontdesk"),
+        )
+
+        self.assertEqual(reusable.status, ContextPackageRestoreStatus.REUSABLE)
+        self.assertFalse(reusable.recompile_required)
+        self.assertEqual(stale.status, ContextPackageRestoreStatus.STALE)
+        self.assertIn("visible_ref_hash_mismatch", stale.reason_codes)
+        self.assertEqual(invalid.status, ContextPackageRestoreStatus.INVALID)
+        self.assertIn("step_id_mismatch", invalid.reason_codes)
 
     def test_context_source_and_snapshot_are_refs_only(self) -> None:
         source = ContextSource(
@@ -659,6 +749,11 @@ def _view_with_visible_refs(visible_refs: list[str]) -> ContextView:
         visible_refs=["contract/task_contract.json", *visible_refs],
         expected_output_refs=["reports/final_report.md"],
     )
+
+
+def _write_json(store: MemoryRefStore, ref: str, payload: object) -> str:
+    store.write_json(ref, payload)
+    return store.hash_ref(ref)
 
 
 if __name__ == "__main__":

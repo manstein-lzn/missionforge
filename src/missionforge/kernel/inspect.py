@@ -36,6 +36,9 @@ _CONTEXT_ENGINE_REF_KEYS = (
     "context_turn_boundary_ref",
     "context_compile_result_ref",
     "context_package_ref",
+    "post_turn_context_projection_ref",
+    "post_turn_context_compile_result_ref",
+    "post_turn_context_package_ref",
 )
 
 

@@ -16,7 +16,13 @@ from missionforge_deepresearch.frontdesk import (
     FRONTDESK_SESSION_STATE_REF,
     FrontDeskFixtureAdapter,
     approve_frontdesk_requirements,
+    evaluate_frontdesk_resume_state,
     run_deepresearch_frontdesk_turn,
+)
+from missionforge_deepresearch.project_lifecycle import (
+    PROJECT_LIFECYCLE_STATE_REF,
+    PROJECT_RESUME_DIAGNOSTICS_REF,
+    ROLE_CONTEXT_PACKAGE_POINTER_REFS,
 )
 
 
@@ -34,6 +40,10 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
             first_control = _read_json(root, first.control_ref)
             first_turn = _read_json(root, first.assistant_turn_ref)
             first_state = _read_json(root, first.session_state_ref)
+            first_run_root = root / first.run_workspace_ref
+            first_lifecycle = _read_json(first_run_root, PROJECT_LIFECYCLE_STATE_REF)
+            first_resume = _read_json(first_run_root, PROJECT_RESUME_DIAGNOSTICS_REF)
+            first_pointer = _read_json(first_run_root, ROLE_CONTEXT_PACKAGE_POINTER_REFS["frontdesk"])
             second = run_deepresearch_frontdesk_turn(
                 user_message="面向工程选型和文献综述，需要覆盖 MLIR、HLS、Vitis 和开源实现。",
                 request_id="frontdesk-demo",
@@ -55,12 +65,42 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
         self.assertEqual(first_turn["questions"][0]["choices"][-1]["label"], "自定义想法")
         self.assertTrue(first_turn["questions"][0]["choices"][-1]["freeform"])
         self.assertIn("open_ambiguities", first_state)
+        self.assertEqual(first_lifecycle["phase"], "frontdesk")
+        self.assertEqual(first_lifecycle["active_agent"], "frontdesk")
+        self.assertTrue(first_lifecycle["latest_frontdesk_context_package_ref"].endswith("/context/post_turn/package.json"))
+        self.assertEqual(first_lifecycle["resume_diagnostics_ref"], PROJECT_RESUME_DIAGNOSTICS_REF)
+        self.assertEqual(first_resume["status"], "reusable")
+        self.assertEqual(first_resume["role_decisions"]["frontdesk"]["status"], "reusable")
+        self.assertEqual(first_pointer["context_package_ref"], first_lifecycle["latest_frontdesk_context_package_ref"])
         self.assertEqual(second.status, "ready_for_approval")
         self.assertIn("可执行调研题目", requirements)
         self.assertEqual(control["decision"], "ready_for_approval")
         self.assertEqual(request.request_id, "frontdesk-demo")
         self.assertEqual(request.research_intensity.value, "intensive")
         self.assertTrue(approval_exists)
+
+    def test_frontdesk_resume_evaluation_marks_changed_visible_refs_stale(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_frontdesk_turn(
+                initial_input="研究 deep research 工具",
+                request_id="frontdesk-resume-stale",
+                workspace=root,
+                adapter=FrontDeskFixtureAdapter(),
+            )
+            run_root = root / result.run_workspace_ref
+            dialogue = run_root / "frontdesk/dialogue.jsonl"
+            dialogue.write_text(dialogue.read_text(encoding="utf-8") + '{"role":"user","content":"offline edit"}\n', encoding="utf-8")
+            resume_ref = evaluate_frontdesk_resume_state(
+                request_id="frontdesk-resume-stale",
+                workspace=root,
+            )
+            diagnostics = _read_json(run_root, resume_ref)
+
+        self.assertEqual(resume_ref, PROJECT_RESUME_DIAGNOSTICS_REF)
+        self.assertEqual(diagnostics["status"], "recompile_required")
+        self.assertEqual(diagnostics["role_decisions"]["frontdesk"]["status"], "stale")
+        self.assertIn("visible_ref_hash_mismatch", diagnostics["role_decisions"]["frontdesk"]["reason_codes"])
 
     def test_approval_requires_ready_control(self) -> None:
         with TemporaryDirectory() as tmpdir:

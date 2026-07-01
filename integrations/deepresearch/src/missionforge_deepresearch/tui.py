@@ -31,10 +31,12 @@ from .frontdesk import (
     FRONTDESK_CONTROL_REF,
     FRONTDESK_REQUIREMENTS_REF,
     approve_frontdesk_requirements,
+    evaluate_frontdesk_resume_state,
     run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import DeepResearchKernelV2Result, deepresearch_kernel_v2_flow_run_id, run_deepresearch_kernel_v2
 from .product_contract import ResearchIntensity
+from .project_lifecycle import PROJECT_LIFECYCLE_STATE_REF, PROJECT_RESUME_DIAGNOSTICS_REF
 from .workspace import read_json_ref, read_text_ref
 
 
@@ -74,6 +76,16 @@ def run_frontdesk_tui(
     """Run a simple chat-style FrontDesk session in the terminal."""
 
     _print_intro(output_stream, config)
+    resume_ref = evaluate_frontdesk_resume_state(
+        request_id=config.request_id,
+        workspace=config.workspace,
+        audience=config.audience,
+        language=config.language,
+        research_intensity=config.research_intensity,
+        live_extension_mode=config.live_extension_mode,
+    )
+    if resume_ref:
+        _print_resume_status(output_stream, config)
     initial_seen = _has_initial_input(config)
     last_status = _read_existing_status(config)
     if last_status == "ready_for_approval":
@@ -298,6 +310,31 @@ def _print_status(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:
     _print_assistant_message(output_stream, config)
     _print_questions(output_stream, config)
     _print_project_board(output_stream, config)
+
+
+def _print_resume_status(output_stream: TextIO, config: FrontDeskTuiConfig) -> None:
+    run_root = _run_root(config)
+    lifecycle = _read_optional_json(run_root, PROJECT_LIFECYCLE_STATE_REF)
+    diagnostics = _read_optional_json(run_root, PROJECT_RESUME_DIAGNOSTICS_REF)
+    if not lifecycle and not diagnostics:
+        return
+    phase = _first_non_empty(_string_value(lifecycle, "phase"), "frontdesk")
+    active_agent = _first_non_empty(_string_value(lifecycle, "active_agent"), "frontdesk")
+    resume_status = _first_non_empty(_string_value(diagnostics, "status"), "missing_context")
+    rich_console = _rich_console(output_stream)
+    if rich_console is not None:
+        body = Table.grid(padding=(0, 1))
+        body.add_column(style="bold cyan", no_wrap=True)
+        body.add_column()
+        body.add_row("阶段", phase)
+        body.add_row("当前 agent", active_agent)
+        body.add_row("resume", f"[{_status_style(resume_status)}]{resume_status}[/]")
+        rich_console.print(Panel(body, title="项目恢复状态", border_style=_phase_border_style(resume_status)))
+        return
+    _section(output_stream, "项目恢复状态")
+    output_stream.write(f"  阶段: {phase}\n")
+    output_stream.write(f"  当前 agent: {active_agent}\n")
+    output_stream.write(f"  resume: {resume_status}\n")
 
 
 def _run_approved_research(
@@ -853,6 +890,14 @@ def _read_project_json(run_root: Path, key: str) -> dict[str, Any]:
     ref = PROJECT_PROGRESS_REFS[key]
     try:
         payload = read_json_ref(run_root, ref, key)
+    except (mf.ContractValidationError, OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _read_optional_json(run_root: Path, ref: str) -> dict[str, Any]:
+    try:
+        payload = read_json_ref(run_root, ref, ref)
     except (mf.ContractValidationError, OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}

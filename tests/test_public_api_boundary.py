@@ -37,6 +37,9 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "ContextCompileResult",
             "ContextEpoch",
             "ContextPackage",
+            "ContextPackageRestoreDecision",
+            "ContextPackageRestoreExpectation",
+            "ContextPackageRestoreStatus",
             "ContextInlinePolicy",
             "ContextManagementPolicy",
             "ContextPressureAction",
@@ -212,6 +215,8 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "write_extension_lock",
             "extension_load_report_from_lock",
             "ensure_json_value",
+            "evaluate_context_package_ref",
+            "evaluate_context_package_restore",
             "filter_context_sources",
             "reconcile_context_epoch",
         }

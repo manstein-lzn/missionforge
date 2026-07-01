@@ -18,6 +18,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   research lines, comparative analysis, limitations/counterevidence/open
   questions, trends/future directions, and references. Strategic memos are a
   user-requested genre, not the default.
+- Active project lifecycle: DeepResearch writes a project manifest, lifecycle
+  state, run index, resume diagnostics, and role-local ContextPackage pointers.
+  FrontDesk, source mapper, researcher, reviewer, and judge keep isolated
+  ContextPackage refs managed by MissionForge ContextEngine.
 
 ## Design Principles
 
@@ -42,9 +46,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
-- Make DeepResearch a persistent project with ContextPackage-based resume:
-  FrontDesk, researcher, reviewer, and judge each keep role-specific latest
-  context packages managed by MissionForge ContextEngine.
+- Keep hardening persistent project resume: reuse valid role ContextPackages,
+  recompile stale packages from refs/checkpoints/working sets, and surface
+  restore diagnostics in CLI/TUI/Web without moving token policy into
+  DeepResearch.
 - Add a project-oriented web console MVP for FrontDesk chat, lifecycle status,
   pause/resume/checkpoint/revision controls, source/citation inspection, and
   Markdown report preview.

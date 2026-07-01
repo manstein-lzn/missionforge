@@ -47,6 +47,7 @@ from .context_runtime import (
     _hash_authorized_refs,
     _next_context_feed_refs,
     _next_context_thrash_diagnostics_refs,
+    _rewrite_context_package_permission_hash,
     _token_estimates_for_authorized_refs,
     _write_context_engine_records,
 )
@@ -254,6 +255,20 @@ def run_step(
     compiled = _compiled_step_with_context_read_authority(compiled, context_engine_metadata)
     permission_manifest_hash = stable_json_hash(compiled.permission_manifest.to_dict())
     write_json_ref(record_store, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
+    context_package_ref = context_engine_metadata.get("context_package_ref", "")
+    if context_package_ref:
+        context_engine_metadata = {
+            **dict(context_engine_metadata),
+            "context_package_hash": _rewrite_context_package_permission_hash(
+                workspace=record_store,
+                context_package_ref=context_package_ref,
+                permission_manifest_hash=permission_manifest_hash,
+            ),
+        }
+        compiled = _compiled_step_with_context_metadata(
+            compiled,
+            {"context_package_hash": context_engine_metadata["context_package_hash"]},
+        )
     write_json_ref(record_store, piworker_call_ref, compiled.piworker_call.to_dict())
     skip_lock_ref = _expected_extension_lock_ref(
         compiled=compiled,
@@ -326,6 +341,25 @@ def run_step(
     )
     call_result = attempt_result.call_result
     write_json_ref(record_store, piworker_call_result_ref, call_result.to_dict())
+    provider_input_hashes = dict(input_hashes)
+    post_turn_context = _write_post_turn_context_package(
+        workspace=record_store,
+        compiled=compiled,
+        context=context,
+        ref_prefix=ref_prefix,
+        context_policy=context_policy,
+    )
+    if post_turn_context is not None:
+        context_engine_metadata = {
+            **dict(context_engine_metadata),
+            "post_turn_context_projection_ref": post_turn_context["metadata"].get("context_projection_ref", ""),
+            "post_turn_context_hash": post_turn_context["context_view"].context_hash,
+            "post_turn_context_compile_result_ref": post_turn_context["metadata"].get("context_compile_result_ref", ""),
+            "post_turn_context_package_ref": post_turn_context["metadata"].get("context_package_ref", ""),
+            "post_turn_context_package_hash": post_turn_context["metadata"].get("context_package_hash", ""),
+            "post_turn_context_package_phase": "post_turn",
+        }
+        input_hashes = post_turn_context["input_hashes"]
 
     step_record = StepRecord(
         step_id=step.id,
@@ -360,6 +394,7 @@ def run_step(
             "context_feed_refs": list(context.context_feed_refs or []),
             "context_projection_ref": active_context_projection_ref,
             "context_hash": context_view.context_hash,
+            "provider_input_hashes": provider_input_hashes,
             **context_engine_metadata,
             **(reduction_attempt.runtime_metadata if reduction_attempt is not None else {}),
             **_call_result_diagnostic_metadata(call_result),
@@ -648,6 +683,59 @@ def _normalize_attempt_result(
     )
     normalized.validate_against_call(compiled.piworker_call)
     return normalized
+
+
+def _write_post_turn_context_package(
+    *,
+    workspace: Any,
+    compiled: CompiledStep,
+    context: StepCompileContext,
+    ref_prefix: str,
+    context_policy: ContextManagementPolicy,
+) -> dict[str, Any]:
+    """Compile a post-provider safe-point package without another model call."""
+
+    read_gate = ReadGate(compiled.permission_manifest)
+    input_hashes = _hash_authorized_refs(workspace, compiled.step.inputs, read_gate)
+    input_token_estimates = _token_estimates_for_authorized_refs(workspace, compiled.step.inputs, read_gate)
+    permission_manifest_hash = stable_json_hash(compiled.permission_manifest.to_dict())
+    context_request = _build_context_compile_request(
+        compiled=compiled,
+        context=context,
+        workspace=workspace,
+        read_gate=read_gate,
+        input_hashes=input_hashes,
+        input_token_estimates=input_token_estimates,
+        permission_manifest_hash=permission_manifest_hash,
+    )
+    post_turn_root_ref = f"{ref_prefix}/context/post_turn"
+    post_turn_projection_ref = f"{post_turn_root_ref}/context_view.json"
+    compiled_context = compile_context_request(
+        request=context_request,
+        read_gate=read_gate,
+        view_ref=post_turn_projection_ref,
+        pressure_ref=f"{post_turn_root_ref}/pressure.json",
+        cache_layout_ref=f"{post_turn_root_ref}/cache_layout.json",
+        result_id=f"{compiled.piworker_call.call_id}-post-turn-context-compile",
+        layout_id=f"{compiled.piworker_call.call_id}-post-turn-cache-layout",
+        soft_ratio=context_policy.soft_pressure_ratio,
+        hard_ratio=context_policy.hard_pressure_ratio,
+    )
+    metadata = _write_context_engine_records(
+        workspace=workspace,
+        compiled=compiled,
+        context=context,
+        ref_prefix=ref_prefix,
+        context_projection_ref=post_turn_projection_ref,
+        compiled_context=compiled_context,
+        context_policy=context_policy,
+        context_root_ref=post_turn_root_ref,
+    )
+    return {
+        "metadata": metadata,
+        "context_view": compiled_context.view,
+        "input_hashes": input_hashes,
+    }
 
 
 def run_flow(

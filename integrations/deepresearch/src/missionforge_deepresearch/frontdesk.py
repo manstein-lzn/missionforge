@@ -16,6 +16,11 @@ from typing import Any, Mapping
 import missionforge as mf
 
 from .product_contract import AcademicResearchRequest, ResearchIntensity
+from .project_lifecycle import (
+    evaluate_project_context_packages,
+    write_frontdesk_lifecycle_state,
+    write_project_manifest,
+)
 from .workspace import read_json_ref, read_text_ref, resolve_workspace_ref, write_json_ref, write_text_ref
 
 
@@ -116,6 +121,7 @@ def run_deepresearch_frontdesk_turn(
     run_ref = f"runs/{request_id}"
     run_root = root / run_ref
     run_root.mkdir(parents=True, exist_ok=True)
+    write_project_manifest(run_root, request_id=request_id)
     if initial_input is not None and not (run_root / FRONTDESK_INITIAL_INPUT_REF).exists():
         write_text_ref(run_root, FRONTDESK_INITIAL_INPUT_REF, initial_input.strip() + "\n")
     if not (run_root / FRONTDESK_INITIAL_INPUT_REF).exists():
@@ -130,32 +136,26 @@ def run_deepresearch_frontdesk_turn(
     )
     contract_hash = mf.stable_json_hash(contract)
     _write_frontdesk_workspace(run_root, contract=contract)
-    call_id = _next_frontdesk_call_id(run_root, request_id)
-    compiled = _compile_frontdesk_call(
-        call_id=call_id,
-        contract=contract,
-        contract_hash=contract_hash,
-        live_extension_mode=live_extension_mode,
-    )
-    write_json_ref(run_root, compiled.permission_manifest_ref, compiled.permission_manifest.to_dict())
-    write_json_ref(run_root, "frontdesk/kernel/step_spec.json", compiled.step.to_dict())
-    extension_lock = mf.prepare_extension_lock(
-        compiled.permission_manifest,
-        source_permission_manifest_ref=compiled.permission_manifest_ref,
-        workspace=run_root,
-        ref_prefix=f"frontdesk/attempts/{call_id}",
-        mode="install" if live_extension_mode else "verify-installed",
-        installer=extension_installer if extension_installer is not None else mf.npm_install_extension,
-    )
-    write_json_ref(run_root, f"frontdesk/attempts/{call_id}/piworker_call.json", compiled.piworker_call.to_dict())
-    call_result = mf.run_piworker_call(
-        compiled.piworker_call,
+    flow_result = mf.run_flow(
+        _frontdesk_flow(live_extension_mode=live_extension_mode),
+        context=_frontdesk_flow_context(
+            request_id=request_id,
+            contract=contract,
+            contract_hash=contract_hash,
+        ),
         workspace=run_root,
         adapter=adapter,
-        extension_lock_ref=extension_lock.extension_lock_ref,
+        extension_lock_mode="install" if live_extension_mode else "verify-installed",
+        extension_installer=extension_installer,
+        max_steps=1,
+        resume=True,
         runtime_progress_sink=runtime_progress_sink,
     )
-    write_json_ref(run_root, f"frontdesk/attempts/{call_id}/piworker_call_result.json", call_result.to_dict())
+    if not flow_result.step_results:
+        raise mf.ContractValidationError("deepresearch_frontdesk flow did not produce a step result")
+    step_result = flow_result.step_results[-1]
+    call_result = step_result.call_result
+    _write_frontdesk_compat_runtime_refs(run_root, step_result)
     status = _frontdesk_status(run_root, call_result.status.value)
     research_request_ref = ""
     if status == "ready_for_approval":
@@ -185,14 +185,34 @@ def run_deepresearch_frontdesk_turn(
                 _outer_ref(run_ref, FRONTDESK_SESSION_STATE_REF),
                 _outer_ref(run_ref, FRONTDESK_REQUIREMENTS_REF),
                 _outer_ref(run_ref, FRONTDESK_CONTROL_REF),
-                _outer_ref(run_ref, f"frontdesk/attempts/{call_id}/piworker_call_result.json"),
-                _outer_ref(run_ref, extension_lock.extension_lock_ref) if extension_lock.extension_lock_ref else "",
+                _outer_ref(run_ref, flow_result.flow_result_ref),
+                _outer_ref(run_ref, step_result.step_record_ref),
+                _outer_ref(run_ref, step_result.piworker_call_result_ref),
+                _outer_ref(run_ref, step_result.step_record.metadata.get("context_package_ref", ""))
+                if isinstance(step_result.step_record.metadata.get("context_package_ref"), str)
+                else "",
+                _outer_ref(run_ref, step_result.step_record.extension_lock_ref)
+                if step_result.step_record.extension_lock_ref
+                else "",
             ]
         ),
         metric_refs=[_outer_ref(run_ref, ref) for ref in call_result.metric_refs],
         contract_hash=contract_hash,
     )
     write_json_ref(root, result.result_ref, result.to_dict())
+    write_frontdesk_lifecycle_state(
+        run_root,
+        request_id=request_id,
+        status=status,
+        result_ref=FRONTDESK_RESULT_REF,
+        flow_result=flow_result,
+        contract_ref=FRONTDESK_CONTRACT_REF,
+        requirements_ref=FRONTDESK_REQUIREMENTS_REF,
+        control_ref=FRONTDESK_CONTROL_REF,
+        assistant_turn_ref=FRONTDESK_ASSISTANT_TURN_REF,
+        session_state_ref=FRONTDESK_SESSION_STATE_REF,
+        research_request_ref=research_request_ref,
+    )
     return result
 
 
@@ -350,15 +370,70 @@ def _write_frontdesk_workspace(run_root: Path, *, contract: Mapping[str, Any]) -
         )
 
 
-def _compile_frontdesk_call(
+def deepresearch_frontdesk_flow_run_id(request_id: str) -> str:
+    """Return the FrontDesk flow id used for ContextPackage resume."""
+
+    return f"deepresearch-frontdesk-{request_id}"
+
+
+def evaluate_frontdesk_resume_state(
     *,
-    call_id: str,
-    contract: Mapping[str, Any],
-    contract_hash: str,
-    live_extension_mode: bool,
-) -> mf.CompiledStep:
+    request_id: str,
+    workspace: str | Path = ".",
+    audience: str = "R&D team",
+    language: str = "zh",
+    research_intensity: ResearchIntensity | str = ResearchIntensity.STANDARD,
+    live_extension_mode: bool = False,
+) -> str:
+    """Evaluate the latest FrontDesk ContextPackage and write diagnostics."""
+
+    root = Path(workspace).resolve()
+    run_root = root / f"runs/{request_id}"
+    if not run_root.exists():
+        return ""
+    write_project_manifest(run_root, request_id=request_id)
+    contract = _frontdesk_contract(
+        request_id=request_id,
+        audience=audience,
+        language=language,
+        research_intensity=research_intensity,
+        live_extension_mode=live_extension_mode,
+    )
+    contract_hash = mf.stable_json_hash(contract)
+    if (run_root / FRONTDESK_INITIAL_INPUT_REF).exists():
+        _write_frontdesk_workspace(run_root, contract=contract)
+    return evaluate_project_context_packages(
+        run_root,
+        request_id=request_id,
+        expectations={
+            "frontdesk": _frontdesk_restore_expectation(
+                run_root=run_root,
+                request_id=request_id,
+                contract=contract,
+                contract_hash=contract_hash,
+                live_extension_mode=live_extension_mode,
+            )
+        },
+    )
+
+
+def _frontdesk_flow(*, live_extension_mode: bool) -> mf.Flow:
+    return mf.Flow(
+        id="deepresearch-frontdesk",
+        steps=[_frontdesk_step(live_extension_mode=live_extension_mode)],
+        artifacts=[
+            mf.Artifact(FRONTDESK_ASSISTANT_TURN_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(FRONTDESK_SESSION_STATE_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(FRONTDESK_REQUIREMENTS_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(FRONTDESK_CONTROL_REF, role=mf.ArtifactRole.DECISION, owner="piworker"),
+        ],
+        toolsets=[_frontdesk_academic_toolset()] if live_extension_mode else [],
+    )
+
+
+def _frontdesk_step(*, live_extension_mode: bool) -> mf.Step:
     tools = ["read", "write", "edit", "academic"] if live_extension_mode else ["read", "write", "edit"]
-    step = mf.Step(
+    return mf.Step(
         id="frontdesk",
         brief=(
             "Interact with the user as a DeepResearch FrontDesk. Clarify the research need, "
@@ -393,6 +468,95 @@ def _compile_frontdesk_call(
         network=live_extension_mode,
         role=mf.PiWorkerCallRole.FRONTDESK_AUTHOR,
     )
+
+
+def _frontdesk_flow_context(
+    *,
+    request_id: str,
+    contract: Mapping[str, Any],
+    contract_hash: str,
+) -> mf.StepCompileContext:
+    flow_id = deepresearch_frontdesk_flow_run_id(request_id)
+    return mf.StepCompileContext(
+        flow_id=flow_id,
+        contract_id=str(contract["contract_id"]),
+        contract_hash=contract_hash,
+        contract_ref=FRONTDESK_CONTRACT_REF,
+        workspace_policy_ref=FRONTDESK_WORKSPACE_POLICY_REF,
+    )
+
+
+def _frontdesk_restore_step_context(
+    *,
+    request_id: str,
+    contract: Mapping[str, Any],
+    contract_hash: str,
+) -> mf.StepCompileContext:
+    flow_id = deepresearch_frontdesk_flow_run_id(request_id)
+    return mf.StepCompileContext(
+        flow_id=flow_id,
+        contract_id=str(contract["contract_id"]),
+        contract_hash=contract_hash,
+        contract_ref=FRONTDESK_CONTRACT_REF,
+        workspace_policy_ref=FRONTDESK_WORKSPACE_POLICY_REF,
+        ref_prefix=f"kernel/{flow_id}/runs/{flow_id}/steps/001-frontdesk",
+        call_id=f"{flow_id}-001-frontdesk",
+    )
+
+
+def _frontdesk_restore_expectation(
+    *,
+    run_root: Path,
+    request_id: str,
+    contract: Mapping[str, Any],
+    contract_hash: str,
+    live_extension_mode: bool,
+) -> mf.ContextPackageRestoreExpectation:
+    compiled = mf.compile_step(
+        _frontdesk_step(live_extension_mode=live_extension_mode),
+        context=_frontdesk_restore_step_context(
+            request_id=request_id,
+            contract=contract,
+            contract_hash=contract_hash,
+        ),
+        toolsets={"academic": _frontdesk_academic_toolset()} if live_extension_mode else {},
+    )
+    store = mf.FileRefStore(run_root)
+    visible_ref_hashes = {
+        ref: store.hash_ref(ref)
+        for ref in compiled.piworker_call.visible_refs
+        if store.exists(ref)
+    }
+    return mf.ContextPackageRestoreExpectation(
+        role=compiled.piworker_call.role.value,
+        run_id=deepresearch_frontdesk_flow_run_id(request_id),
+        step_id=compiled.step.id,
+        contract_ref=compiled.piworker_call.contract_ref,
+        contract_hash=compiled.piworker_call.contract_hash,
+        permission_manifest_ref=compiled.permission_manifest_ref,
+        permission_manifest_hash=mf.stable_json_hash(compiled.permission_manifest.to_dict()),
+        step_spec_hash=compiled.step.spec_hash,
+        tool_schema_hash=mf.stable_json_hash({"allowed_tools": list(compiled.permission_manifest.allowed_tools)}),
+        context_compiler_version="missionforge.context_runtime.v1",
+        visible_ref_hashes=visible_ref_hashes,
+    )
+
+
+def _write_frontdesk_compat_runtime_refs(run_root: Path, step_result: mf.StepRunResult) -> None:
+    """Keep legacy FrontDesk debug refs available while Kernel owns runtime state."""
+
+    write_json_ref(run_root, FRONTDESK_PERMISSION_MANIFEST_REF, step_result.compiled.permission_manifest.to_dict())
+    write_json_ref(run_root, "frontdesk/kernel/step_spec.json", step_result.compiled.step.to_dict())
+
+
+def _compile_frontdesk_call(
+    *,
+    call_id: str,
+    contract: Mapping[str, Any],
+    contract_hash: str,
+    live_extension_mode: bool,
+) -> mf.CompiledStep:
+    step = _frontdesk_step(live_extension_mode=live_extension_mode)
     context = mf.StepCompileContext(
         flow_id=f"deepresearch-frontdesk-{contract['contract_id']}",
         contract_id=str(contract["contract_id"]),

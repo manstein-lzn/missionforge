@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `first_slice_landed`; next priority is `context_package_resume`
+Status: `m3a_complete`; next priority is `search_planning_multi_wave_acquisition`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -201,6 +201,19 @@ backbone:
   product result is downgraded to `failed`.
 - FrontDesk assistant turns support candidate choices with a freeform option;
   choices are UX protocol, not frozen task truth.
+- Persistent project lifecycle and ContextPackage resume foundation:
+  - `project/project_manifest.json`
+  - `project/lifecycle_state.json`
+  - `project/run_index.json`
+  - `project/resume_diagnostics.json`
+  - role-local ContextPackage pointers under `context/{role}/`
+  - FrontDesk runs through a single-step Kernel flow, so FrontDesk also gets
+    ContextEngine-owned ContextPackages and StepRecords.
+  - Kernel StepRecords preserve provider pre-turn ContextPackage metadata and
+    also record post-turn ContextPackage refs for lifecycle/resume.
+  - DeepResearch lifecycle records opaque ContextPackage refs and core-authored
+    restore decisions; it does not trim, summarize, or inspect provider
+    message internals.
 
 These are necessary but not sufficient for the full requested product.
 
@@ -996,7 +1009,7 @@ Exit criteria:
 
 ### M3A: Persistent Project Lifecycle And ContextPackage Resume
 
-Status: `pending`
+Status: `complete`
 
 Deliverables:
 
@@ -1025,6 +1038,20 @@ Exit criteria:
   unless the permission manifest allows it.
 - Revision tests prove resumed conversation cannot modify frozen scope without
   an explicit revision record.
+
+Implemented notes:
+
+- MissionForge core exposes product-neutral ContextPackage restore evaluation:
+  reusable, stale, or invalid.
+- FrontDesk startup evaluates the latest FrontDesk ContextPackage and writes
+  project resume diagnostics without starting a model call.
+- DeepResearch lifecycle prefers post-turn ContextPackages for project resume
+  while preserving provider pre-turn package refs in Kernel StepRecords.
+- Role package pointers keep FrontDesk, source mapper, researcher, reviewer,
+  and judge context packages isolated by role.
+- Stale visible refs, role/step mismatch, missing packages, and changed hard
+  fingerprints are recorded as explicit diagnostics and require recompile or
+  denial before direct reuse.
 
 ### M3B: Web Console MVP
 

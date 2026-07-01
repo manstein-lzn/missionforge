@@ -18,7 +18,9 @@ from missionforge_deepresearch.product_contract import ResearchIntensity
 from missionforge_deepresearch.project_lifecycle import (
     PROJECT_LIFECYCLE_STATE_REF,
     PROJECT_MANIFEST_REF,
+    PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
+    ROLE_CONTEXT_PACKAGE_POINTER_REFS,
 )
 
 
@@ -61,16 +63,26 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             research_state = _read_json(root, f"{result.run_workspace_ref}/state/research_state.json")
             project_manifest = _read_json(run_root, PROJECT_MANIFEST_REF)
             lifecycle_state = _read_json(run_root, PROJECT_LIFECYCLE_STATE_REF)
+            resume_diagnostics = _read_json(run_root, PROJECT_RESUME_DIAGNOSTICS_REF)
             run_index = _read_json(run_root, PROJECT_RUN_INDEX_REF)
             usage_summary = _read_json(root, result.usage_summary_ref)
             run_events = _read_jsonl(root, result.run_events_ref)
             run_snapshot = _read_json(root, result.run_snapshot_ref)
+            researcher_pointer = _read_json(run_root, ROLE_CONTEXT_PACKAGE_POINTER_REFS["researcher"])
             lifecycle_packages = [
                 _read_json(run_root, lifecycle_state["latest_source_mapper_context_package_ref"]),
                 _read_json(run_root, lifecycle_state["latest_researcher_context_package_ref"]),
                 _read_json(run_root, lifecycle_state["latest_reviewer_context_package_ref"]),
                 _read_json(run_root, lifecycle_state["latest_judge_context_package_ref"]),
             ]
+            wrong_role_restore = mf.evaluate_context_package_ref(
+                run_root,
+                lifecycle_state["latest_researcher_context_package_ref"],
+                expectation=mf.ContextPackageRestoreExpectation(
+                    role=mf.PiWorkerCallRole.FRONTDESK_AUTHOR.value,
+                    step_id="frontdesk",
+                ),
+            )
 
         self.assertEqual(result.status, "accepted")
         self.assertEqual(payload, result.to_dict())
@@ -108,7 +120,15 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(lifecycle_state["current_contract_ref"], "contract/task_contract.json")
         self.assertEqual(lifecycle_state["latest_run_ref"], "packages/deepresearch_kernel_v2_result.json")
         self.assertEqual(lifecycle_state["research_state_ref"], "state/research_state.json")
-        self.assertTrue(lifecycle_state["latest_researcher_context_package_ref"].endswith("/context/package.json"))
+        self.assertTrue(lifecycle_state["latest_researcher_context_package_ref"].endswith("/context/post_turn/package.json"))
+        self.assertEqual(lifecycle_state["resume_diagnostics_ref"], PROJECT_RESUME_DIAGNOSTICS_REF)
+        self.assertEqual(lifecycle_state["context_package_pointers"]["researcher"], ROLE_CONTEXT_PACKAGE_POINTER_REFS["researcher"])
+        self.assertEqual(resume_diagnostics["status"], "reusable")
+        self.assertEqual(resume_diagnostics["role_decisions"]["researcher"]["status"], "reusable")
+        self.assertEqual(researcher_pointer["context_package_ref"], lifecycle_state["latest_researcher_context_package_ref"])
+        self.assertEqual(wrong_role_restore.status, mf.ContextPackageRestoreStatus.INVALID)
+        self.assertIn("role_mismatch", wrong_role_restore.reason_codes)
+        self.assertIn("step_id_mismatch", wrong_role_restore.reason_codes)
         self.assertEqual(run_index["runs"][0]["result_ref"], "packages/deepresearch_kernel_v2_result.json")
         self.assertEqual(run_index["runs"][0]["context_packages"]["judge"], lifecycle_state["latest_judge_context_package_ref"])
         self.assertEqual(
@@ -246,6 +266,48 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(run_status["interaction_stop_reason"], "user_pause_requested")
         self.assertEqual(run_status["pending_user_event_count"], 1)
         self.assertIn("interaction/safe_points/001-source_mapper-user_events.json", run_status["last_interaction_snapshot_ref"])
+
+    def test_revision_intervention_blocks_without_mutating_frozen_contract(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-revision-request",
+            topic="deep research platform survey",
+            audience="MissionForge runtime team",
+            language="zh",
+        )
+        adapter = CountingKernelV2FixtureAdapter()
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_root = root / "runs/kernel-v2-revision-request"
+            port = mf.FileInteractionPort(run_root)
+            port.submit_text(
+                "请把研究范围改成只比较前端产品。",
+                run_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
+                target="flow",
+                kind=mf.UserEventKind.CONTRACT_REVISION_REQUEST,
+            )
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=adapter,
+            )
+            original_contract = _read_json(root, result.contract_ref)
+            run_status = _read_json(root, result.run_status_ref)
+            flow_result = _read_json(root, result.flow_result_ref)
+            snapshot = _read_json(
+                run_root,
+                "kernel/deepresearch-v2-kernel-v2-revision-request/runs/"
+                "deepresearch-v2-kernel-v2-revision-request/executions/001/"
+                "interaction/safe_points/001-source_mapper-user_events.json",
+            )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(adapter.call_count, 0)
+        self.assertEqual(flow_result["metadata"]["stop_reason"], "user_contract_revision_requested")
+        self.assertEqual(run_status["interaction_stop_reason"], "user_contract_revision_requested")
+        self.assertEqual(original_contract["request"]["topic"], "deep research platform survey")
+        self.assertEqual(snapshot["events"][0]["kind"], "contract_revision_request")
+        self.assertNotIn("current_revision_ref", original_contract)
 
     def test_source_mapper_and_researcher_briefs_require_artifacts_before_budget_exhaustion(self) -> None:
         request = AcademicResearchRequest(

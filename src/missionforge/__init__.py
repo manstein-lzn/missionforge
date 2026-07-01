@@ -87,6 +87,13 @@ from .context_engine import (
     filter_context_sources,
     reconcile_context_epoch,
 )
+from .context_resume import (
+    ContextPackageRestoreDecision,
+    ContextPackageRestoreExpectation,
+    ContextPackageRestoreStatus,
+    evaluate_context_package_ref,
+    evaluate_context_package_restore,
+)
 from .tool_projection import (
     BoundedToolOutput,
     ToolOutputProjection,
@@ -282,6 +289,9 @@ __all__ = [
     "ContextCompileResult",
     "ContextEpoch",
     "ContextPackage",
+    "ContextPackageRestoreDecision",
+    "ContextPackageRestoreExpectation",
+    "ContextPackageRestoreStatus",
     "ContextPressureAction",
     "ContextPressureDiagnostics",
     "ContextReadObservation",
@@ -451,6 +461,8 @@ __all__ = [
     "write_extension_lock",
     "extension_load_report_from_lock",
     "ensure_json_value",
+    "evaluate_context_package_ref",
+    "evaluate_context_package_restore",
     "filter_context_sources",
     "require_enum",
     "require_mapping",

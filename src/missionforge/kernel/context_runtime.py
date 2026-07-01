@@ -1048,6 +1048,20 @@ def _hash_existing_refs(workspace: Any, refs: list[str]) -> dict[str, str]:
     return hashes
 
 
+def _rewrite_context_package_permission_hash(
+    *,
+    workspace: Any,
+    context_package_ref: str,
+    permission_manifest_hash: str,
+) -> str:
+    """Rewrite the package after runtime grants ContextEngine read authority."""
+
+    package = ContextPackage.from_dict(read_json_ref(workspace, context_package_ref))
+    updated = replace(package, permission_manifest_hash=permission_manifest_hash)
+    write_json_ref(workspace, context_package_ref, updated.to_dict())
+    return updated.context_package_hash
+
+
 def _context_source_snapshot_payload(
     *,
     context_view: ContextView,
