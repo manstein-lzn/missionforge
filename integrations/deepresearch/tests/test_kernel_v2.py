@@ -15,6 +15,11 @@ from missionforge_deepresearch.kernel_v2 import (
     run_deepresearch_kernel_v2,
 )
 from missionforge_deepresearch.product_contract import ResearchIntensity
+from missionforge_deepresearch.project_lifecycle import (
+    PROJECT_LIFECYCLE_STATE_REF,
+    PROJECT_MANIFEST_REF,
+    PROJECT_RUN_INDEX_REF,
+)
 
 
 class DeepResearchKernelV2Tests(unittest.TestCase):
@@ -41,17 +46,31 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             calls = [_read_json(run_root, record["piworker_call_ref"]) for record in step_records]
             permission_manifests = [_read_json(run_root, record["permission_manifest_ref"]) for record in step_records]
             final_report_exists = (root / result.final_report_ref).is_file()
+            citation_projected_report = (root / result.citation_projected_report_ref).read_text(encoding="utf-8")
             report_html_exists = (root / result.report_html_ref).is_file()
+            report_html = (root / result.report_html_ref).read_text(encoding="utf-8")
             source_packet_exists = (root / result.source_packet_ref).is_file()
+            source_graph_exists = (root / result.source_graph_ref).is_file()
+            canonical_sources = _read_json(root, result.canonical_sources_ref)
+            citation_registry = _read_json(root, result.citation_registry_ref)
             insight_map_exists = (root / result.insight_map_ref).is_file()
             claim_index_exists = (root / result.claim_index_ref).is_file()
             reviewer_observation_exists = (root / result.reviewer_observation_ref).is_file()
             judge_report_exists = (root / result.judge_report_ref).is_file()
             run_status = _read_json(root, result.run_status_ref)
             research_state = _read_json(root, f"{result.run_workspace_ref}/state/research_state.json")
+            project_manifest = _read_json(run_root, PROJECT_MANIFEST_REF)
+            lifecycle_state = _read_json(run_root, PROJECT_LIFECYCLE_STATE_REF)
+            run_index = _read_json(run_root, PROJECT_RUN_INDEX_REF)
             usage_summary = _read_json(root, result.usage_summary_ref)
             run_events = _read_jsonl(root, result.run_events_ref)
             run_snapshot = _read_json(root, result.run_snapshot_ref)
+            lifecycle_packages = [
+                _read_json(run_root, lifecycle_state["latest_source_mapper_context_package_ref"]),
+                _read_json(run_root, lifecycle_state["latest_researcher_context_package_ref"]),
+                _read_json(run_root, lifecycle_state["latest_reviewer_context_package_ref"]),
+                _read_json(run_root, lifecycle_state["latest_judge_context_package_ref"]),
+            ]
 
         self.assertEqual(result.status, "accepted")
         self.assertEqual(payload, result.to_dict())
@@ -62,8 +81,15 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(run_snapshot["status"], "accepted")
         self.assertEqual(run_snapshot["latest_event_ref"], result.run_events_ref.removeprefix(f"{result.run_workspace_ref}/"))
         self.assertTrue(final_report_exists)
+        self.assertIn("[cite: 1](#ref-1)", citation_projected_report)
+        self.assertIn('<a id="ref-1"></a>[1]', citation_projected_report)
         self.assertTrue(report_html_exists)
+        self.assertIn('<a href="#ref-1">[cite: 1]</a>', report_html)
+        self.assertIn('<a id="ref-1"></a>[1]', report_html)
         self.assertTrue(source_packet_exists)
+        self.assertTrue(source_graph_exists)
+        self.assertEqual(canonical_sources["sources"][0]["source_id"], "S1")
+        self.assertEqual(citation_registry["entries"][0]["source_id"], "S1")
         self.assertTrue(insight_map_exists)
         self.assertTrue(claim_index_exists)
         self.assertTrue(reviewer_observation_exists)
@@ -75,6 +101,21 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(research_state["project_phase"], "final_package_ready")
         self.assertIn("project_milestones", research_state)
         self.assertIn("coverage_map", research_state)
+        self.assertEqual(project_manifest["request_id"], "kernel-v2-smoke")
+        self.assertEqual(project_manifest["lifecycle_state_ref"], PROJECT_LIFECYCLE_STATE_REF)
+        self.assertEqual(lifecycle_state["phase"], "accepted")
+        self.assertEqual(lifecycle_state["control_agent"], "frontdesk")
+        self.assertEqual(lifecycle_state["current_contract_ref"], "contract/task_contract.json")
+        self.assertEqual(lifecycle_state["latest_run_ref"], "packages/deepresearch_kernel_v2_result.json")
+        self.assertEqual(lifecycle_state["research_state_ref"], "state/research_state.json")
+        self.assertTrue(lifecycle_state["latest_researcher_context_package_ref"].endswith("/context/package.json"))
+        self.assertEqual(run_index["runs"][0]["result_ref"], "packages/deepresearch_kernel_v2_result.json")
+        self.assertEqual(run_index["runs"][0]["context_packages"]["judge"], lifecycle_state["latest_judge_context_package_ref"])
+        self.assertEqual(
+            [package["schema_version"] for package in lifecycle_packages],
+            ["missionforge.context_package.v1"] * 4,
+        )
+        self.assertEqual([package["step_id"] for package in lifecycle_packages], ["source_mapper", "researcher", "reviewer", "judge"])
         self.assertEqual([record["step_id"] for record in step_records], ["source_mapper", "researcher", "reviewer", "judge"])
         self.assertEqual([call["role"] for call in calls], ["executor_piworker", "executor_piworker", "executor_piworker", "judge_piworker"])
         self.assertIn("sources/initial_source_packet.json", calls[0]["visible_refs"])
@@ -98,6 +139,8 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual([step["step_id"] for step in usage_summary["steps"]], ["source_mapper", "researcher", "reviewer", "judge"])
         self.assertFalse(any("/kernel/" in ref or "/attempts/" in ref for ref in result.evidence_refs))
         self.assertIn(f"{result.run_workspace_ref}/sources/source_packet.json", result.evidence_refs)
+        self.assertIn(f"{result.run_workspace_ref}/sources/source_graph.json", result.evidence_refs)
+        self.assertIn(f"{result.run_workspace_ref}/citations/citation_registry.json", result.evidence_refs)
         self.assertIn(f"{result.run_workspace_ref}/analysis/insight_map.json", result.evidence_refs)
         self.assertIn(f"{result.run_workspace_ref}/state/research_state.json", result.evidence_refs)
         self.assertEqual(flow_result["decision_refs"], [
@@ -221,7 +264,8 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("Write the required artifacts before any second broad search wave.", source_mapper)
         self.assertIn("record the follow-up targets in `reports/source_gaps.md`", source_mapper)
         self.assertIn("context pressure is reported", source_mapper)
-        self.assertIn("Do not spend this phase trying to fill the cap.", source_mapper)
+        self.assertIn("Source-count budget guidance", source_mapper)
+        self.assertIn("not a fixed acceptance count", source_mapper)
         self.assertIn("ready_for_synthesis", source_mapper)
         self.assertIn("sources/source_packet.json", source_mapper)
         self.assertIn("The source mapper already owns source acquisition.", brief)
@@ -464,8 +508,114 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(lock.extensions[0].package, "local:extensions/pi-academic-sources")
         self.assertEqual(
             lock.extensions[0].metadata["tool_names"],
-            ["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
+            ["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
         )
+
+    def test_kernel_v2_contract_freezes_optional_request_fields(self) -> None:
+        request = AcademicResearchRequest.from_dict(
+            {
+                "request_id": "kernel-v2-contract-fields",
+                "topic": "compiler autotuning",
+                "seed_papers": [{"kind": "doi", "value": "10.1145/1234567.1234568"}],
+                "seed_pdf_refs": ["inputs/seeds/paper.pdf"],
+                "sample_report_ref": "inputs/sample_report.md",
+                "target_source_count": 100,
+                "provider_policy": "openalex_enhanced",
+                "previous_run_refs": ["runs/previous/packages/deepresearch_kernel_v2_result.json"],
+                "constraints": ["Prefer recent systems papers."],
+                "non_goals": ["Do not run benchmarks."],
+            }
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            previous_result = root / "runs/previous/packages/deepresearch_kernel_v2_result.json"
+            previous_result.parent.mkdir(parents=True, exist_ok=True)
+            previous_result.write_text('{"status":"accepted"}\n', encoding="utf-8")
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            contract = _read_json(root, result.contract_ref)
+            flow_result = _read_json(root, result.flow_result_ref)
+            run_root = root / result.run_workspace_ref
+            source_mapper_record = _read_json(run_root, flow_result["step_record_refs"][0])
+            source_mapper_call = _read_json(run_root, source_mapper_record["piworker_call_ref"])
+            source_mapper_manifest = _read_json(run_root, source_mapper_record["permission_manifest_ref"])
+            previous_run_index = _read_json(run_root, kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
+            staged_previous_run_exists = (run_root / previous_run_index["entries"][0]["staged_ref"]).is_file()
+
+        self.assertEqual(contract["request"]["seed_pdf_refs"], ["inputs/seeds/paper.pdf"])
+        self.assertEqual(contract["request"]["sample_report_ref"], "inputs/sample_report.md")
+        self.assertEqual(contract["request"]["target_source_count"], 100)
+        self.assertEqual(contract["request"]["provider_policy"], "openalex_enhanced")
+        self.assertEqual(contract["request_payload_hash"], mf.stable_json_hash(contract["request"]))
+        self.assertIn("inputs/seeds/paper.pdf", source_mapper_call["visible_refs"])
+        self.assertIn("inputs/sample_report.md", source_mapper_call["visible_refs"])
+        self.assertIn(kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF, source_mapper_call["visible_refs"])
+        self.assertIn("inputs", source_mapper_manifest["readable_refs"])
+        self.assertEqual(
+            previous_run_index["entries"][0]["previous_run_ref"],
+            "runs/previous/packages/deepresearch_kernel_v2_result.json",
+        )
+        self.assertTrue(staged_previous_run_exists)
+
+    def test_kernel_v2_marks_unknown_report_citation_as_failed(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-bad-citation",
+            topic="compiler autotuning",
+            audience="R&D compiler team",
+            language="zh",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=BadCitationKernelV2FixtureAdapter(),
+            )
+            run_status = _read_json(root, result.run_status_ref)
+            validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/state/citation_projection_validation.json",
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+
+        self.assertEqual(flow_result["status"], "accepted")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(run_status["status"], "failed")
+        self.assertEqual(run_status["citation_projection_status"], "failed")
+        self.assertIn("unknown_source_id:S999", validation["failure_codes"])
+
+    def test_kernel_v2_marks_unknown_claim_source_as_failed(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-bad-claim",
+            topic="compiler autotuning",
+            audience="R&D compiler team",
+            language="zh",
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=BadClaimKernelV2FixtureAdapter(),
+            )
+            run_status = _read_json(root, result.run_status_ref)
+            validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/state/claim_index_validation.json",
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+
+        self.assertEqual(flow_result["status"], "accepted")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(run_status["status"], "failed")
+        self.assertEqual(run_status["claim_index_validation_status"], "failed")
+        self.assertIn("claim_C1_unknown_source_id", validation["failure_codes"])
 
     def test_kernel_v2_intensity_briefs_distinguish_standard_and_intensive(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -687,6 +837,25 @@ class TokenMetricsKernelV2FixtureAdapter(KernelV2FixtureAdapter):
             },
         )
         return result
+
+
+class BadCitationKernelV2FixtureAdapter(KernelV2FixtureAdapter):
+    def _write_researcher_outputs(self, workspace: Path, call) -> None:
+        super()._write_researcher_outputs(workspace, call)
+        report = (workspace / kernel_v2_module.KERNEL_V2_FINAL_REPORT_REF).read_text(encoding="utf-8")
+        kernel_v2_module.write_text_ref(
+            workspace,
+            kernel_v2_module.KERNEL_V2_FINAL_REPORT_REF,
+            report.replace("[S1]", "[S999]", 1),
+        )
+
+
+class BadClaimKernelV2FixtureAdapter(KernelV2FixtureAdapter):
+    def _write_researcher_outputs(self, workspace: Path, call) -> None:
+        super()._write_researcher_outputs(workspace, call)
+        claim_index = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF)
+        claim_index["claims"][0]["supporting_source_ids"] = ["S999"]
+        kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF, claim_index)
 
 
 class AcceptingResearcherKernelV2FixtureAdapter(KernelV2FixtureAdapter):

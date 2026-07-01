@@ -36,6 +36,7 @@ class PublicApiBoundaryTests(unittest.TestCase):
             "ContextCompileRequest",
             "ContextCompileResult",
             "ContextEpoch",
+            "ContextPackage",
             "ContextInlinePolicy",
             "ContextManagementPolicy",
             "ContextPressureAction",

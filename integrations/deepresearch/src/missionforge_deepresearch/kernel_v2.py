@@ -11,16 +11,21 @@ from dataclasses import dataclass
 from html import escape
 import json
 from pathlib import Path
+import re
 from typing import Any, Callable, Mapping
 
 import missionforge as mf
 
+from .citation_projector import CITATION_PROJECTION_VALIDATION_SCHEMA_VERSION, project_report_citations
 from .product_contract import (
     AcademicResearchRequest,
     ResearchIntensity,
+    ResearchIntensityProfile,
     research_intensity_profile,
     research_report_section_specs,
 )
+from .project_lifecycle import write_kernel_lifecycle_state, write_project_manifest
+from .source_graph import project_source_graph
 from .workspace import read_json_ref, write_json_ref, write_text_ref
 
 
@@ -34,18 +39,26 @@ KERNEL_V2_CONTRACT_REF = "contract/task_contract.json"
 KERNEL_V2_WORKSPACE_POLICY_REF = "policy/workspace_policy.json"
 KERNEL_V2_REQUEST_REF = "product_contract/research_request.json"
 KERNEL_V2_OUTPUT_CONTRACT_REF = "product_contract/output_contract.json"
+KERNEL_V2_PREVIOUS_RUN_INDEX_REF = "inputs/previous_run_index.json"
 KERNEL_V2_SOURCE_MAPPER_BRIEF_REF = "manuals/source_mapper.md"
 KERNEL_V2_RESEARCHER_BRIEF_REF = "manuals/researcher.md"
 KERNEL_V2_REVIEWER_RUBRIC_REF = "rubrics/reviewer.md"
 KERNEL_V2_JUDGE_RUBRIC_REF = "rubrics/judge.md"
 KERNEL_V2_INITIAL_SOURCE_PACKET_REF = "sources/initial_source_packet.json"
 KERNEL_V2_SOURCE_PACKET_REF = "sources/source_packet.json"
+KERNEL_V2_CANONICAL_SOURCES_REF = "sources/canonical_sources.json"
+KERNEL_V2_DEDUPE_MAP_REF = "sources/dedupe_map.json"
+KERNEL_V2_SOURCE_GRAPH_REF = "sources/source_graph.json"
 KERNEL_V2_FINAL_REPORT_REF = "reports/final_report.md"
+KERNEL_V2_CITATION_PROJECTED_REPORT_REF = "reports/final_report.citation_projected.md"
 KERNEL_V2_EVIDENCE_INDEX_REF = "reports/evidence_index.md"
 KERNEL_V2_SOURCE_GAPS_REF = "reports/source_gaps.md"
+KERNEL_V2_CITATION_REGISTRY_REF = "citations/citation_registry.json"
+KERNEL_V2_REPORT_CITATION_MAP_REF = "citations/report_citation_map.json"
 KERNEL_V2_INSIGHT_MAP_REF = "analysis/insight_map.json"
 KERNEL_V2_CLAIM_INDEX_REF = "claims/claim_index.json"
 KERNEL_V2_CLAIM_INDEX_VALIDATION_REF = "state/claim_index_validation.json"
+KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF = "state/citation_projection_validation.json"
 KERNEL_V2_REPORT_HTML_REF = "exports/final_report.html"
 KERNEL_V2_RESEARCH_STATE_REF = "state/research_state.json"
 KERNEL_V2_SOURCE_CONTROL_REF = "state/source_control.json"
@@ -70,8 +83,12 @@ class DeepResearchKernelV2Result:
     run_snapshot_ref: str
     contract_ref: str
     final_report_ref: str
+    citation_projected_report_ref: str
     report_html_ref: str
     source_packet_ref: str
+    source_graph_ref: str
+    canonical_sources_ref: str
+    citation_registry_ref: str
     insight_map_ref: str
     claim_index_ref: str
     reviewer_observation_ref: str
@@ -101,8 +118,12 @@ class DeepResearchKernelV2Result:
             "run_snapshot_ref": self.run_snapshot_ref,
             "contract_ref": self.contract_ref,
             "final_report_ref": self.final_report_ref,
+            "citation_projected_report_ref": self.citation_projected_report_ref,
             "report_html_ref": self.report_html_ref,
             "source_packet_ref": self.source_packet_ref,
+            "source_graph_ref": self.source_graph_ref,
+            "canonical_sources_ref": self.canonical_sources_ref,
+            "citation_registry_ref": self.citation_registry_ref,
             "insight_map_ref": self.insight_map_ref,
             "claim_index_ref": self.claim_index_ref,
             "reviewer_observation_ref": self.reviewer_observation_ref,
@@ -127,8 +148,12 @@ class DeepResearchKernelV2Result:
             "run_snapshot_ref",
             "contract_ref",
             "final_report_ref",
+            "citation_projected_report_ref",
             "report_html_ref",
             "source_packet_ref",
+            "source_graph_ref",
+            "canonical_sources_ref",
+            "citation_registry_ref",
             "insight_map_ref",
             "claim_index_ref",
             "reviewer_observation_ref",
@@ -162,11 +187,12 @@ def run_deepresearch_kernel_v2(
     run_ref = f"runs/{request.request_id}"
     run_root = root / run_ref
     run_root.mkdir(parents=True, exist_ok=True)
+    write_project_manifest(run_root, request_id=request.request_id)
     contract = _task_contract(request)
     contract_hash = mf.stable_json_hash(contract)
     flow = build_deepresearch_kernel_v2_flow(request, live_extension_mode=live_extension_mode)
     profile = research_intensity_profile(request.research_intensity)
-    _write_kernel_v2_workspace(request, run_root=run_root, contract=contract)
+    _write_kernel_v2_workspace(request, root=root, run_root=run_root, contract=contract)
     context = mf.StepCompileContext(
         flow_id=deepresearch_kernel_v2_flow_run_id(request.request_id),
         contract_id=contract["contract_id"],
@@ -187,19 +213,40 @@ def run_deepresearch_kernel_v2(
         interaction_port=mf.FileInteractionPort(run_root),
         runtime_progress_sink=runtime_progress_sink,
     )
+    _write_kernel_v2_source_graph(run_root)
+    _write_kernel_v2_citation_projection(run_root)
     _write_kernel_v2_report_html(run_root)
     _write_kernel_v2_claim_index_validation(run_root)
+    product_status = _kernel_v2_product_status(run_root, flow_result)
     usage_summary_ref = _write_kernel_v2_usage_summary(request, run_root=run_root, flow_result=flow_result)
-    status_ref = _write_kernel_v2_run_status(request, run_root=run_root, flow_result=flow_result)
+    status_ref = _write_kernel_v2_run_status(
+        request,
+        run_root=run_root,
+        flow_result=flow_result,
+        product_status=product_status,
+    )
     result = _kernel_v2_result(
         request=request,
         run_ref=run_ref,
+        run_root=run_root,
         contract_hash=contract_hash,
         flow_result=flow_result,
         usage_summary_ref=usage_summary_ref,
         status_ref=status_ref,
+        product_status=product_status,
     )
     write_json_ref(root, result.result_ref, result.to_dict())
+    write_kernel_lifecycle_state(
+        run_root,
+        request_id=request.request_id,
+        product_status=product_status,
+        flow_result=flow_result,
+        result_ref=KERNEL_V2_RESULT_REF,
+        contract_ref=KERNEL_V2_CONTRACT_REF,
+        run_status_ref=KERNEL_V2_RUN_STATUS_REF,
+        research_state_ref=KERNEL_V2_RESEARCH_STATE_REF,
+        final_report_ref=KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
+    )
     return result
 
 
@@ -222,7 +269,7 @@ def build_deepresearch_kernel_v2_flow(
         mf.Toolset(
             id="academic",
             package="local:extensions/pi-academic-sources",
-            tools=["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
+            tools=["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
             capability=mf.ExtensionCapability.WEB,
             network=True,
         )
@@ -236,6 +283,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_SOURCE_MAPPER_BRIEF_REF,
             KERNEL_V2_OUTPUT_CONTRACT_REF,
             KERNEL_V2_INITIAL_SOURCE_PACKET_REF,
+            *_request_input_refs(request),
         ],
         outputs=[
             KERNEL_V2_SOURCE_PACKET_REF,
@@ -244,7 +292,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCH_STATE_REF,
             KERNEL_V2_SOURCE_CONTROL_REF,
         ],
-        read=["contract", "product_contract", "manuals", "sources", "reports", "state"],
+        read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "state"],
         write=["sources", "reports", "state"],
         tools=tools,
         route_on=KERNEL_V2_SOURCE_CONTROL_REF,
@@ -264,6 +312,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_RESEARCHER_BRIEF_REF,
             KERNEL_V2_OUTPUT_CONTRACT_REF,
+            *_request_input_refs(request),
             KERNEL_V2_SOURCE_PACKET_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
             KERNEL_V2_SOURCE_GAPS_REF,
@@ -279,7 +328,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCH_STATE_REF,
             KERNEL_V2_RESEARCHER_CONTROL_REF,
         ],
-        read=["contract", "product_contract", "manuals", "sources", "reports", "analysis", "claims", "reviews", "judge", "state"],
+        read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "analysis", "claims", "reviews", "judge", "state"],
         write=["reports", "analysis", "claims", "state"],
         tools=["read", "write", "edit"],
         route_on=KERNEL_V2_RESEARCHER_CONTROL_REF,
@@ -295,6 +344,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_CONTRACT_REF,
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_REVIEWER_RUBRIC_REF,
+            *_request_input_refs(request),
             KERNEL_V2_SOURCE_PACKET_REF,
             KERNEL_V2_FINAL_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
@@ -305,7 +355,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_RESEARCHER_CONTROL_REF,
         ],
         outputs=[KERNEL_V2_REVIEWER_OBSERVATION_REF],
-        read=["contract", "product_contract", "rubrics", "sources", "reports", "analysis", "claims", "state"],
+        read=["contract", "product_contract", "rubrics", "inputs", "sources", "reports", "analysis", "claims", "state"],
         write=["reviews"],
         role=mf.PiWorkerCallRole.EXECUTOR,
         route_on=KERNEL_V2_REVIEWER_OBSERVATION_REF,
@@ -320,6 +370,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_CONTRACT_REF,
             KERNEL_V2_REQUEST_REF,
             KERNEL_V2_JUDGE_RUBRIC_REF,
+            *_request_input_refs(request),
             KERNEL_V2_SOURCE_PACKET_REF,
             KERNEL_V2_FINAL_REPORT_REF,
             KERNEL_V2_EVIDENCE_INDEX_REF,
@@ -330,7 +381,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_REVIEWER_OBSERVATION_REF,
         ],
         outputs=[KERNEL_V2_JUDGE_REPORT_REF],
-        read=["contract", "product_contract", "rubrics", "sources", "reports", "analysis", "claims", "reviews", "state"],
+        read=["contract", "product_contract", "rubrics", "inputs", "sources", "reports", "analysis", "claims", "reviews", "state"],
         write=["judge"],
         role=mf.PiWorkerCallRole.JUDGE,
         route_on=KERNEL_V2_JUDGE_REPORT_REF,
@@ -360,7 +411,14 @@ def build_deepresearch_kernel_v2_flow(
         },
         artifacts=[
             mf.Artifact(KERNEL_V2_SOURCE_PACKET_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CANONICAL_SOURCES_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_DEDUPE_MAP_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_SOURCE_GRAPH_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_FINAL_REPORT_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
+            mf.Artifact(KERNEL_V2_CITATION_PROJECTED_REPORT_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_CITATION_REGISTRY_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_REPORT_CITATION_MAP_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
+            mf.Artifact(KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF, role=mf.ArtifactRole.PROJECTION, owner="runtime"),
             mf.Artifact(KERNEL_V2_EVIDENCE_INDEX_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
             mf.Artifact(KERNEL_V2_SOURCE_GAPS_REF, role=mf.ArtifactRole.OUTPUT, owner="piworker"),
             mf.Artifact(KERNEL_V2_INSIGHT_MAP_REF, role=mf.ArtifactRole.STATE, owner="piworker"),
@@ -490,11 +548,13 @@ class KernelV2FixtureAdapter:
 def _write_kernel_v2_workspace(
     request: AcademicResearchRequest,
     *,
+    root: Path,
     run_root: Path,
     contract: Mapping[str, Any],
 ) -> None:
     write_json_ref(run_root, KERNEL_V2_REQUEST_REF, request.to_dict())
     write_json_ref(run_root, KERNEL_V2_CONTRACT_REF, contract)
+    _write_previous_run_inputs(request, root=root, run_root=run_root)
     write_json_ref(run_root, KERNEL_V2_WORKSPACE_POLICY_REF, {"policy_id": "deepresearch-kernel-v2", "root_ref": "."})
     write_json_ref(run_root, KERNEL_V2_OUTPUT_CONTRACT_REF, _output_contract(request))
     write_json_ref(run_root, KERNEL_V2_INITIAL_SOURCE_PACKET_REF, _empty_source_packet(request))
@@ -506,10 +566,13 @@ def _write_kernel_v2_workspace(
 
 def _task_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     profile = research_intensity_profile(request.research_intensity)
+    request_payload = request.to_dict()
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2_task_contract.v1",
         "contract_id": f"deepresearch-kernel-v2-{request.request_id}",
         "request_ref": KERNEL_V2_REQUEST_REF,
+        "request_payload_hash": mf.stable_json_hash(request_payload),
+        "request": request_payload,
         "objective": f"Produce a citation-backed academic deep research report for: {request.topic}",
         "audience": request.audience,
         "language": request.language,
@@ -526,15 +589,89 @@ def _require_adapter(adapter: mf.PiWorkerCallAdapter | None) -> mf.PiWorkerCallA
     return adapter
 
 
+def _write_previous_run_inputs(request: AcademicResearchRequest, *, root: Path, run_root: Path) -> None:
+    if not request.previous_run_refs:
+        return
+    entries = []
+    for index, previous_ref in enumerate(request.previous_run_refs, start=1):
+        source_path = root / previous_ref
+        if not source_path.is_file():
+            raise mf.ContractValidationError(f"previous_run_ref does not exist: {previous_ref}")
+        staged_ref = f"inputs/previous_runs/{index:03d}-{source_path.name}"
+        staged_path = run_root / staged_ref
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        staged_path.write_bytes(source_path.read_bytes())
+        entries.append(
+            {
+                "previous_run_ref": previous_ref,
+                "staged_ref": staged_ref,
+            }
+        )
+    write_json_ref(
+        run_root,
+        KERNEL_V2_PREVIOUS_RUN_INDEX_REF,
+        {
+            "schema_version": "missionforge_deepresearch.kernel_v2.previous_run_index.v1",
+            "entries": entries,
+        },
+    )
+
+
+def _request_input_refs(request: AcademicResearchRequest) -> list[str]:
+    refs = list(request.seed_pdf_refs)
+    if request.sample_report_ref:
+        refs.append(request.sample_report_ref)
+    if request.previous_run_refs:
+        refs.append(KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
+    return _dedupe_refs(refs)
+
+
+def _source_budget_guidance(request: AcademicResearchRequest, profile: ResearchIntensityProfile) -> str:
+    target = request.target_source_count or profile.max_sources
+    return (
+        f"Source-count budget guidance: aim around {target} source records when the topic needs that scale, "
+        "and exceed or undershoot it only with an explicit coverage rationale in `reports/source_gaps.md` "
+        "and `state/research_state.json`."
+    )
+
+
+def _optional_input_guidance(request: AcademicResearchRequest) -> list[str]:
+    guidance = []
+    if request.seed_papers:
+        guidance.append(
+            "Optional seed papers are frozen in `contract/research_request.json.seed_papers`; use them as starting points, not as required proof."
+        )
+    input_refs = _request_input_refs(request)
+    if input_refs:
+        guidance.append(
+            "Optional input refs are visible under `inputs`: " + ", ".join(input_refs) + ". "
+            "Use them when relevant and record parse/fetch gaps explicitly."
+        )
+    if request.previous_run_refs:
+        guidance.append(
+            "Previous run refs are staged through `inputs/previous_run_index.json`; read staged refs from that index rather than reaching outside the run workspace."
+        )
+    if request.provider_policy == "openalex_enhanced":
+        guidance.append(
+            "OpenAlex-enhanced policy was requested, but OpenAlex remains optional; use it only if provider capabilities report it enabled."
+        )
+    return guidance
+
+
 def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
     profile = research_intensity_profile(request.research_intensity)
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2_output_contract.v1",
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+        "source_graph_ref": KERNEL_V2_SOURCE_GRAPH_REF,
+        "canonical_sources_ref": KERNEL_V2_CANONICAL_SOURCES_REF,
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
+        "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
+        "citation_registry_ref": KERNEL_V2_CITATION_REGISTRY_REF,
         "insight_map_ref": KERNEL_V2_INSIGHT_MAP_REF,
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
         "claim_index_validation_ref": KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+        "citation_projection_validation_ref": KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
         "research_state_ref": KERNEL_V2_RESEARCH_STATE_REF,
         "min_source_records": profile.min_source_records,
         "min_final_report_chars": profile.min_final_report_chars,
@@ -553,24 +690,28 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "You own only the first-pass evidence-mapping phase. Do not draft the final report in this step.",
             "Your goal is to create a durable, useful evidence base that the synthesis researcher can read and turn into a report, then hand off.",
             "This is not the whole research run. Later researcher/reviewer passes can request narrow follow-up source expansion from your artifacts.",
-            "Use academic/repo tools when available. Batch independent searches, but keep the batch bounded enough to leave time to write artifacts.",
+            "Use academic/repo tools when available. Start live academic runs with `academic_provider_capabilities` and record provider availability, missing optional keys, and disabled enhancements before broad search.",
+            "Default academic acquisition is no-key. Do not assume OpenAlex is available unless provider capabilities report it as enabled; missing OpenAlex is a source-gap diagnostic, not a task failure.",
+            "Batch independent searches, but keep the batch bounded enough to leave time to write artifacts.",
             "Do not keep searching until timeout. After a representative source set exists, write the required artifacts and hand off.",
             "Write the required artifacts before any second broad search wave. If you are tempted to continue searching broadly, record the follow-up targets in `reports/source_gaps.md` and `state/research_state.json` instead.",
             "Once you have enough sources to make synthesis useful, stop expanding and set `ready_for_synthesis`; do not chase the maximum source count in this phase.",
             "If tool failures repeat, context pressure is reported, or a context checkpoint/safe-point appears, stop searching and write the durable artifacts from the evidence already gathered.",
-            "Required outputs: `sources/source_packet.json`, `reports/evidence_index.md`, `reports/source_gaps.md`, `state/research_state.json`, and `state/source_control.json`.",
+            "Required outputs: `sources/source_packet.json`, `sources/provider_capabilities.json` when academic tools are available, `reports/evidence_index.md`, `reports/source_gaps.md`, `state/research_state.json`, and `state/source_control.json`.",
             "Treat `sources/source_packet.json` as the durable source authority. Include `source_records` with `source_id`, `title`, `source_type`, `year`, `locator`, `evidence_note`, and `evidence_strength` when available.",
+            "Use stable source ids like `S1`, `S2`, ... in `sources/source_packet.json`; a mechanical projector will later produce canonical sources, dedupe maps, and citation anchors.",
             "Treat `reports/evidence_index.md` as a compact reading map grouped by research line, not a full report.",
             "Treat `reports/source_gaps.md` as the place to record inaccessible sources, weak evidence classes, and follow-up checks.",
             "Treat `state/research_state.json` as the compact project board and posterior summary. Include `project_phase`, `latest_project_update`, `project_milestones`, `coverage_map`, `next_actions`, `source_count`, `current_synthesis`, and `unresolved_gaps` when possible.",
             "Set `state/source_control.json.decision` to `ready_for_synthesis` once a usable evidence base exists, even if imperfect.",
             "Use `continue` only if one more bounded evidence batch is necessary before any synthesis would be useful.",
             "Use `blocked` only when tools or permissions prevent writing a usable source packet.",
+            *_optional_input_guidance(request),
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_source_mapper_intensity_guidance(profile.intensity),
             f"First-pass handoff target: at least {profile.min_source_records} useful source records when feasible.",
-            f"Overall run cap: {profile.max_sources} source records. Do not spend this phase trying to fill the cap.",
-            "These are source-quality targets, not permission to exhaust the runtime.",
+            _source_budget_guidance(request, profile),
+            "These are source-quality targets and budget guidance, not a fixed acceptance count or permission to exhaust the runtime.",
             f"Topic: {request.topic}",
             f"Audience: {request.audience}",
             f"Language: {request.language}",
@@ -642,12 +783,14 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "If evidence is mostly metadata, abstract-only, or README-level, downgrade conclusion strength and use attribution language rather than strong causal claims.",
             "Treat `claims/claim_index.json` as the claim-to-evidence audit artifact. Use schema_version `missionforge_deepresearch.kernel_v2.claim_index.v1` and a `claims` array. Each claim should include `claim_id`, `claim`, `supporting_source_ids`, `evidence_strength`, `verification_status`, and `confidence_note`.",
             "Use citations like [S1] for material claims.",
+            "Do not hand-author numbered citation anchors; the product citation projector will convert source-id citations to `[cite: N](#ref-N)` and write `citations/citation_registry.json`.",
             "The final report must include all required sections from `product_contract/output_contract.json`, including a References/参考文献 section inside `reports/final_report.md` itself.",
             "Before setting `ready_for_review`, reread the tail of `reports/final_report.md` and ensure it is not truncated.",
+            *_optional_input_guidance(request),
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_researcher_intensity_guidance(profile.intensity),
             f"Target at least {profile.min_final_report_chars} characters when source coverage supports it.",
-            f"Target at least {profile.min_source_records} useful source records when feasible, capped at {profile.max_sources}.",
+            f"Target at least {profile.min_source_records} useful source records when feasible. {_source_budget_guidance(request, profile)}",
             "These are quality targets, not permission to defer writing. Prefer a reviewable partial synthesis over no artifacts.",
             "If source coverage is weaker than the target, write a useful report anyway, make limitations explicit in `reports/source_gaps.md`, and use `continue` only for a bounded source-mapping request.",
             "Set `state/researcher_control.json.decision` to `ready_for_review` when the workspace is ready for reviewer.",
@@ -967,8 +1110,44 @@ def _kernel_v2_max_steps(max_review_rounds: int) -> int:
     return max(4 + (max_review_rounds * 2), 6)
 
 
-def _write_kernel_v2_report_html(run_root: Path) -> str:
+def _write_kernel_v2_source_graph(run_root: Path) -> None:
+    if not (run_root / KERNEL_V2_SOURCE_PACKET_REF).is_file():
+        return
+    source_packet = read_json_ref(run_root, KERNEL_V2_SOURCE_PACKET_REF, "kernel_v2_source_packet")
+    projection = project_source_graph(source_packet)
+    write_json_ref(run_root, KERNEL_V2_CANONICAL_SOURCES_REF, projection["canonical_sources"])
+    write_json_ref(run_root, KERNEL_V2_DEDUPE_MAP_REF, projection["dedupe_map"])
+    write_json_ref(run_root, KERNEL_V2_SOURCE_GRAPH_REF, projection["source_graph"])
+
+
+def _write_kernel_v2_citation_projection(run_root: Path) -> None:
     report_path = run_root / KERNEL_V2_FINAL_REPORT_REF
+    if not report_path.is_file():
+        return
+    if not (run_root / KERNEL_V2_CANONICAL_SOURCES_REF).is_file():
+        write_json_ref(
+            run_root,
+            KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
+            {
+                "schema_version": CITATION_PROJECTION_VALIDATION_SCHEMA_VERSION,
+                "status": "failed",
+                "failure_codes": ["missing_canonical_sources"],
+            },
+        )
+        return
+    markdown = report_path.read_text(encoding="utf-8")
+    canonical_sources = read_json_ref(run_root, KERNEL_V2_CANONICAL_SOURCES_REF, "kernel_v2_canonical_sources")
+    projection = project_report_citations(markdown=markdown, canonical_sources_payload=canonical_sources)
+    write_text_ref(run_root, KERNEL_V2_CITATION_PROJECTED_REPORT_REF, projection["projected_markdown"])
+    write_json_ref(run_root, KERNEL_V2_CITATION_REGISTRY_REF, projection["citation_registry"])
+    write_json_ref(run_root, KERNEL_V2_REPORT_CITATION_MAP_REF, projection["report_citation_map"])
+    write_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF, projection["validation"])
+
+
+def _write_kernel_v2_report_html(run_root: Path) -> str:
+    report_path = run_root / KERNEL_V2_CITATION_PROJECTED_REPORT_REF
+    if not report_path.is_file():
+        report_path = run_root / KERNEL_V2_FINAL_REPORT_REF
     if not report_path.is_file():
         return KERNEL_V2_REPORT_HTML_REF
     markdown = report_path.read_text(encoding="utf-8")
@@ -1040,7 +1219,7 @@ def _render_report_html(markdown: str) -> str:
 
     def flush_paragraph() -> None:
         if paragraph:
-            body.append(f"<p>{'<br>'.join(paragraph)}</p>")
+            body.append(f"<p>{'<br>'.join(_render_inline_markdown(item) for item in paragraph)}</p>")
             paragraph.clear()
 
     for raw_line in markdown.splitlines():
@@ -1057,13 +1236,13 @@ def _render_report_html(markdown: str) -> str:
             continue
         if stripped.startswith("|"):
             flush_paragraph()
-            body.append(f"<pre class=\"table-row\">{escape(stripped)}</pre>")
+            body.append(f"<pre class=\"table-row\">{_render_inline_markdown(stripped)}</pre>")
             continue
         if stripped.startswith(("- ", "* ")):
             flush_paragraph()
-            body.append(f"<ul><li>{escape(stripped[2:].strip())}</li></ul>")
+            body.append(f"<ul><li>{_render_inline_markdown(stripped[2:].strip())}</li></ul>")
             continue
-        paragraph.append(escape(stripped))
+        paragraph.append(stripped)
     flush_paragraph()
     return "\n".join(
         [
@@ -1089,15 +1268,26 @@ def _render_report_html(markdown: str) -> str:
     )
 
 
+def _render_inline_markdown(text: str) -> str:
+    html = escape(text)
+    html = re.sub(r"\[cite:\s*(\d+)\]\(#ref-\1\)", r'<a href="#ref-\1">[cite: \1]</a>', html)
+    html = re.sub(r"&lt;a id=&quot;(ref-\d+)&quot;&gt;&lt;/a&gt;", r'<a id="\1"></a>', html)
+    return html
+
+
 def _write_kernel_v2_run_status(
     request: AcademicResearchRequest,
     *,
     run_root: Path,
     flow_result: mf.FlowRunResult,
+    product_status: str,
 ) -> str:
     status_payload = _kernel_v2_run_status(
         request,
         flow_result=flow_result,
+        product_status=product_status,
+        citation_projection_validation=_optional_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF),
+        claim_index_validation=_optional_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF),
         interaction_summary=_kernel_v2_interaction_summary(run_root, flow_result=flow_result),
     )
     write_json_ref(run_root, KERNEL_V2_RUN_STATUS_REF, status_payload)
@@ -1108,9 +1298,13 @@ def _kernel_v2_run_status(
     request: AcademicResearchRequest,
     *,
     flow_result: mf.FlowRunResult,
+    product_status: str | None = None,
+    citation_projection_validation: Mapping[str, Any] | None = None,
+    claim_index_validation: Mapping[str, Any] | None = None,
     interaction_summary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    status = _kernel_v2_projected_status(flow_result)
+    flow_projected_status = _kernel_v2_projected_status(flow_result)
+    status = product_status or flow_projected_status
     last_record = flow_result.step_results[-1].step_record if flow_result.step_results else None
     metadata = dict(last_record.metadata) if last_record is not None else {}
     failure_summary = metadata.get("failure_summary")
@@ -1125,6 +1319,7 @@ def _kernel_v2_run_status(
         "request_id": request.request_id,
         "status": status,
         "flow_status": flow_result.flow_result.status,
+        "flow_projected_status": flow_projected_status,
         "flow_stop_reason": flow_stop_reason,
         "flow_result_ref": flow_result.flow_result_ref,
         "flow_ledger_ref": flow_ledger_ref,
@@ -1133,15 +1328,29 @@ def _kernel_v2_run_status(
         "interaction_stop_reason": interaction_stop_reason,
         "pending_user_event_count": interaction.get("pending_user_event_count", 0),
         "last_interaction_snapshot_ref": interaction.get("last_interaction_snapshot_ref", ""),
+        "citation_projection_status": str((citation_projection_validation or {}).get("status", "")),
+        "citation_projection_failure_codes": _str_list((citation_projection_validation or {}).get("failure_codes", [])),
+        "claim_index_validation_status": str((claim_index_validation or {}).get("status", "")),
+        "claim_index_validation_failure_codes": _str_list((claim_index_validation or {}).get("failure_codes", [])),
         "blocked_step_id": last_record.step_id if last_record is not None and status.endswith("_blocked") else "",
         "blocker_kind": _blocker_kind(metadata) if last_record is not None and status.endswith("_blocked") else "",
-        "failure_summary": failure_summary if isinstance(failure_summary, str) else "",
+        "failure_summary": _kernel_v2_failure_summary(
+            failure_summary,
+            product_status=status,
+            citation_projection_validation=citation_projection_validation,
+            claim_index_validation=claim_index_validation,
+        ),
         "final_report_ref": KERNEL_V2_FINAL_REPORT_REF,
+        "citation_projected_report_ref": KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
         "report_html_ref": KERNEL_V2_REPORT_HTML_REF,
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
+        "source_graph_ref": KERNEL_V2_SOURCE_GRAPH_REF,
+        "canonical_sources_ref": KERNEL_V2_CANONICAL_SOURCES_REF,
+        "citation_registry_ref": KERNEL_V2_CITATION_REGISTRY_REF,
         "insight_map_ref": KERNEL_V2_INSIGHT_MAP_REF,
         "claim_index_ref": KERNEL_V2_CLAIM_INDEX_REF,
         "claim_index_validation_ref": KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+        "citation_projection_validation_ref": KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
         "usage_summary_ref": KERNEL_V2_USAGE_SUMMARY_REF,
     }
 
@@ -1206,6 +1415,57 @@ def _kernel_v2_projected_status(flow_result: mf.FlowRunResult) -> str:
     return flow_status
 
 
+def _kernel_v2_product_status(run_root: Path, flow_result: mf.FlowRunResult) -> str:
+    status = _kernel_v2_projected_status(flow_result)
+    if status != "accepted":
+        return status
+    citation_validation = _optional_json_ref(run_root, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF)
+    claim_validation = _optional_json_ref(run_root, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF)
+    if _citation_projection_failed(citation_validation):
+        return "failed"
+    if _claim_index_validation_failed(claim_validation):
+        return "failed"
+    if status == "accepted" and (run_root / KERNEL_V2_FINAL_REPORT_REF).is_file() and citation_validation is None:
+        return "failed"
+    return status
+
+
+def _citation_projection_failed(validation: Mapping[str, Any] | None) -> bool:
+    return validation is not None and validation.get("status") == "failed"
+
+
+def _claim_index_validation_failed(validation: Mapping[str, Any] | None) -> bool:
+    return validation is not None and validation.get("status") == "failed"
+
+
+def _kernel_v2_failure_summary(
+    flow_failure_summary: Any,
+    *,
+    product_status: str,
+    citation_projection_validation: Mapping[str, Any] | None,
+    claim_index_validation: Mapping[str, Any] | None,
+) -> str:
+    if product_status != "failed":
+        return flow_failure_summary if isinstance(flow_failure_summary, str) else ""
+    if _citation_projection_failed(citation_projection_validation):
+        codes = citation_projection_validation.get("failure_codes", [])
+        if isinstance(codes, list) and codes:
+            return "citation projection validation failed: " + ", ".join(str(item) for item in codes)
+        return "citation projection validation failed"
+    if _claim_index_validation_failed(claim_index_validation):
+        codes = claim_index_validation.get("failure_codes", [])
+        if isinstance(codes, list) and codes:
+            return "claim index validation failed: " + ", ".join(str(item) for item in codes)
+        return "claim index validation failed"
+    return flow_failure_summary if isinstance(flow_failure_summary, str) else ""
+
+
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
 def _blocker_kind(metadata: Mapping[str, Any]) -> str:
     if metadata.get("non_retryable_provider_error") is True:
         return "provider"
@@ -1219,19 +1479,20 @@ def _kernel_v2_result(
     *,
     request: AcademicResearchRequest,
     run_ref: str,
+    run_root: Path,
     contract_hash: str,
     flow_result: mf.FlowRunResult,
     usage_summary_ref: str,
     status_ref: str,
+    product_status: str,
 ) -> DeepResearchKernelV2Result:
     flow = flow_result.flow_result
-    status = _kernel_v2_projected_status(flow_result)
     flow_ledger_ref = flow.ledger_refs[0] if flow.ledger_refs else "kernel/missing_flow_ledger.jsonl"
     run_events_ref = _flow_metadata_ref(flow.metadata, "run_events_ref", "kernel/missing_run_events.jsonl")
     run_snapshot_ref = _flow_metadata_ref(flow.metadata, "run_snapshot_ref", "kernel/missing_run_snapshot.json")
     return DeepResearchKernelV2Result(
         request_id=request.request_id,
-        status=status,
+        status=product_status,
         run_workspace_ref=run_ref,
         result_ref=_outer_ref(run_ref, KERNEL_V2_RESULT_REF),
         flow_result_ref=_outer_ref(run_ref, flow_result.flow_result_ref),
@@ -1240,8 +1501,12 @@ def _kernel_v2_result(
         run_snapshot_ref=_outer_ref(run_ref, run_snapshot_ref),
         contract_ref=_outer_ref(run_ref, KERNEL_V2_CONTRACT_REF),
         final_report_ref=_outer_ref(run_ref, KERNEL_V2_FINAL_REPORT_REF),
+        citation_projected_report_ref=_outer_ref(run_ref, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
         report_html_ref=_outer_ref(run_ref, KERNEL_V2_REPORT_HTML_REF),
         source_packet_ref=_outer_ref(run_ref, KERNEL_V2_SOURCE_PACKET_REF),
+        source_graph_ref=_outer_ref(run_ref, KERNEL_V2_SOURCE_GRAPH_REF),
+        canonical_sources_ref=_outer_ref(run_ref, KERNEL_V2_CANONICAL_SOURCES_REF),
+        citation_registry_ref=_outer_ref(run_ref, KERNEL_V2_CITATION_REGISTRY_REF),
         insight_map_ref=_outer_ref(run_ref, KERNEL_V2_INSIGHT_MAP_REF),
         claim_index_ref=_outer_ref(run_ref, KERNEL_V2_CLAIM_INDEX_REF),
         reviewer_observation_ref=_outer_ref(run_ref, KERNEL_V2_REVIEWER_OBSERVATION_REF),
@@ -1250,13 +1515,14 @@ def _kernel_v2_result(
         run_status_ref=_outer_ref(run_ref, status_ref),
         draft_artifact_refs=[
             _outer_ref(run_ref, KERNEL_V2_FINAL_REPORT_REF),
+            _outer_ref(run_ref, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
             _outer_ref(run_ref, KERNEL_V2_REPORT_HTML_REF),
             _outer_ref(run_ref, KERNEL_V2_EVIDENCE_INDEX_REF),
             _outer_ref(run_ref, KERNEL_V2_SOURCE_GAPS_REF),
         ],
         evidence_refs=[
             _outer_ref(run_ref, ref)
-            for ref in _kernel_v2_product_evidence_refs(flow_result)
+            for ref in _kernel_v2_product_evidence_refs(flow_result, run_root=run_root)
         ],
         metric_refs=[_outer_ref(run_ref, usage_summary_ref)],
         contract_hash=contract_hash,
@@ -1394,9 +1660,15 @@ def _non_negative_float(value: Any) -> float:
     return 0.0
 
 
-def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult) -> list[str]:
+def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root: Path) -> list[str]:
     refs: list[str] = [
         KERNEL_V2_SOURCE_PACKET_REF,
+        KERNEL_V2_CANONICAL_SOURCES_REF,
+        KERNEL_V2_DEDUPE_MAP_REF,
+        KERNEL_V2_SOURCE_GRAPH_REF,
+        KERNEL_V2_CITATION_REGISTRY_REF,
+        KERNEL_V2_REPORT_CITATION_MAP_REF,
+        KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
         KERNEL_V2_INSIGHT_MAP_REF,
         KERNEL_V2_CLAIM_INDEX_REF,
         KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
@@ -1414,7 +1686,18 @@ def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult) -> list[str]
             KERNEL_V2_JUDGE_REPORT_REF,
         }:
             refs.append(ref)
-    return _dedupe_refs(refs)
+    return [ref for ref in _dedupe_refs(refs) if (run_root / ref).is_file()]
+
+
+def _optional_json_ref(run_root: Path, ref: str) -> dict[str, Any] | None:
+    path = run_root / ref
+    if not path.is_file():
+        return None
+    try:
+        payload = read_json_ref(run_root, ref, "kernel_v2_optional_json")
+    except (OSError, json.JSONDecodeError, mf.ContractValidationError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _flow_metadata_ref(metadata: Mapping[str, Any], key: str, fallback: str) -> str:

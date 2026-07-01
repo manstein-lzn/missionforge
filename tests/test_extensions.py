@@ -165,6 +165,7 @@ class ExtensionTests(unittest.TestCase):
             installed = root / ".missionforge/extensions/pi-academic-sources"
             self.assertTrue((installed / "package.json").is_file())
             self.assertTrue((installed / "index.js").is_file())
+            self.assertTrue((installed / "src" / "academic_sources.js").is_file())
             self.assertEqual(lock.extensions[0].install_path, ".missionforge/extensions/pi-academic-sources")
             self.assertEqual(lock.extensions[0].name, "@missionforge/pi-academic-sources")
             self.assertEqual(lock.extensions[0].version, "0.1.0")

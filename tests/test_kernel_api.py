@@ -13,6 +13,7 @@ from missionforge import (
     ContextCheckpointCreator,
     ContextCompileResult,
     ContextEpoch,
+    ContextPackage,
     ContextReductionResult,
     ContextReductionStatus,
     ContextTurnBoundary,
@@ -535,6 +536,7 @@ class KernelApiTests(unittest.TestCase):
             cache_layout_payload = _read_json(root, result.step_record.metadata["context_cache_layout_ref"])
             turn_boundary_payload = _read_json(root, result.step_record.metadata["context_turn_boundary_ref"])
             compile_result_payload = _read_json(root, result.step_record.metadata["context_compile_result_ref"])
+            context_package_payload = _read_json(root, result.step_record.metadata["context_package_ref"])
 
         self.assertIsInstance(result, StepRunResult)
         self.assertEqual(adapter.seen_call.call_id, "demo-flow-researcher")
@@ -553,9 +555,25 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual(context_projection_payload["volatile_tail"][0]["source_refs"], ["sources/source_packet.json"])
         self.assertEqual(result.step_record.metadata["context_hash"], context_projection_payload["context_hash"])
         self.assertNotIn(result.step_record.metadata["context_compile_result_ref"], call_payload["visible_refs"])
+        self.assertNotIn(result.step_record.metadata["context_package_ref"], call_payload["visible_refs"])
         self.assertIn(result.step_record.metadata["context_compile_result_ref"], permission_payload["readable_refs"])
         self.assertIn(result.step_record.metadata["context_projection_ref"], permission_payload["readable_refs"])
         self.assertIn(result.step_record.metadata["context_turn_boundary_ref"], permission_payload["readable_refs"])
+        self.assertIn(result.step_record.metadata["context_package_ref"], permission_payload["readable_refs"])
+        context_package = ContextPackage.from_dict(context_package_payload)
+        self.assertEqual(context_package.context_view_ref, result.step_record.metadata["context_projection_ref"])
+        self.assertEqual(context_package.compile_result_ref, result.step_record.metadata["context_compile_result_ref"])
+        self.assertEqual(context_package.context_hash, context_projection_payload["context_hash"])
+        self.assertEqual(
+            result.step_record.metadata["context_package_hash"],
+            context_package_payload["context_package_hash"],
+        )
+        self.assertIn(result.step_record.metadata["context_compile_result_ref"], context_package.context_record_refs)
+        self.assertIn(result.step_record.metadata["context_projection_ref"], context_package.context_record_refs)
+        self.assertIn(
+            result.step_record.metadata["context_compile_result_ref"],
+            context_package.context_record_hashes,
+        )
         self.assertEqual(source_snapshot_payload["schema_version"], "missionforge.context_source_snapshot_index.v1")
         self.assertEqual(source_snapshot_payload["view_ref"], result.step_record.metadata["context_projection_ref"])
         self.assertEqual(source_snapshot_payload["context_hash"], context_projection_payload["context_hash"])
@@ -1852,6 +1870,7 @@ class KernelApiTests(unittest.TestCase):
         self.assertEqual([record.status for record in inspection.step_records], ["completed", "completed"])
         self.assertEqual(len(inspection.context_projection_refs), 2)
         self.assertTrue(any(ref.endswith("/context/compile_result.json") for ref in inspection.context_engine_refs))
+        self.assertTrue(any(ref.endswith("/context/package.json") for ref in inspection.context_engine_refs))
         self.assertTrue(all(record.context_engine_refs for record in inspection.step_records))
         self.assertEqual(inspection.decision_refs, ["reviews/observation.json", "judge/report.json"])
         self.assertEqual(inspection.final_artifact_refs, ["reviews/observation.json", "judge/report.json"])

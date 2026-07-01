@@ -52,6 +52,8 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
         self.assertEqual(first_control["session_state_ref"], FRONTDESK_SESSION_STATE_REF)
         self.assertIn("先不生成正式调研计划", first_turn["message"])
         self.assertGreaterEqual(len(first_turn["questions"]), 2)
+        self.assertEqual(first_turn["questions"][0]["choices"][-1]["label"], "自定义想法")
+        self.assertTrue(first_turn["questions"][0]["choices"][-1]["freeform"])
         self.assertIn("open_ambiguities", first_state)
         self.assertEqual(second.status, "ready_for_approval")
         self.assertIn("可执行调研题目", requirements)
@@ -110,7 +112,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
         self.assertEqual(manifest["extension_grants"][0]["package"], "local:extensions/pi-academic-sources")
         self.assertEqual(
             manifest["extension_grants"][0]["metadata"]["tool_names"],
-            ["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
+            ["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
         )
         self.assertEqual(lock.extensions[0].package, "local:extensions/pi-academic-sources")
 

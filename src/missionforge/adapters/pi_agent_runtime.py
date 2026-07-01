@@ -1469,6 +1469,8 @@ def _context_engine_payload_from_call(call: PiWorkerCall) -> dict[str, Any]:
         "context_pressure_ref": _metadata_ref(metadata, "context_pressure_ref"),
         "context_turn_safe_point_ref": _metadata_ref(metadata, "context_turn_safe_point_ref"),
         "context_turn_boundary_ref": _metadata_ref(metadata, "context_turn_boundary_ref"),
+        "context_package_ref": _metadata_ref(metadata, "context_package_ref"),
+        "context_package_hash": _metadata_hash(metadata, "context_package_hash"),
         "context_hash": _metadata_hash(metadata, "context_hash"),
         "context_compile_action": _metadata_text(metadata, "context_compile_action"),
     }
@@ -1520,6 +1522,14 @@ def _validate_context_engine_payload(payload: Mapping[str, Any]) -> dict[str, An
         "context_turn_boundary_ref": _optional_ref_field(
             data.get("context_turn_boundary_ref"),
             "pi_agent_context_engine.context_turn_boundary_ref",
+        ),
+        "context_package_ref": _optional_ref_field(
+            data.get("context_package_ref"),
+            "pi_agent_context_engine.context_package_ref",
+        ),
+        "context_package_hash": _optional_hash_field(
+            data.get("context_package_hash"),
+            "pi_agent_context_engine.context_package_hash",
         ),
         "context_hash": _optional_hash_field(data.get("context_hash"), "pi_agent_context_engine.context_hash"),
         "context_compile_action": _optional_text_field(

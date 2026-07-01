@@ -6,6 +6,7 @@ import missionforge as mf
 from missionforge_deepresearch.product_contract import (
     AcademicResearchRequest,
     ResearchIntensity,
+    SeedPaper,
     deepresearch_quality_dimensions,
     research_intensity_profile,
     research_report_section_specs,
@@ -32,6 +33,47 @@ class ProductContractTests(unittest.TestCase):
         self.assertEqual(AcademicResearchRequest.from_dict(request.to_dict()), request)
         self.assertEqual(request.research_intensity, ResearchIntensity.STANDARD)
         self.assertEqual(request.previous_run_refs, ["runs/previous/packages/deepresearch_run_result.json"])
+        self.assertEqual(request.seed_papers, [])
+        self.assertEqual(request.provider_policy, "default_no_key")
+        self.assertEqual(request.citation_style, "cite_anchor_v1")
+
+    def test_academic_request_accepts_optional_seed_papers(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="seed-demo",
+            topic="compiler autotuning",
+            seed_papers=[
+                SeedPaper(kind="doi", value="10.1145/1234567.1234568"),
+                {"kind": "arxiv", "value": "2501.01234", "note": "seed preprint"},
+            ],
+            seed_pdf_refs=["inputs/seeds/paper.pdf"],
+            sample_report_ref="inputs/sample_report.md",
+            target_source_count=100,
+            provider_policy="openalex_enhanced",
+        )
+
+        payload = request.to_dict()
+
+        self.assertEqual(payload["seed_papers"][0]["kind"], "doi")
+        self.assertEqual(payload["target_source_count"], 100)
+        self.assertEqual(AcademicResearchRequest.from_dict(payload), request)
+
+    def test_academic_request_rejects_invalid_seed_paper(self) -> None:
+        with self.assertRaisesRegex(mf.ContractValidationError, "seed_paper.doi"):
+            AcademicResearchRequest(
+                request_id="bad-seed",
+                topic="compiler autotuning",
+                seed_papers=[SeedPaper(kind="doi", value="not-a-doi")],
+            ).validate()
+
+    def test_academic_request_rejects_invalid_target_source_count(self) -> None:
+        with self.assertRaisesRegex(mf.ContractValidationError, "target_source_count"):
+            AcademicResearchRequest.from_dict(
+                {
+                    "request_id": "bad-count",
+                    "topic": "compiler autotuning",
+                    "target_source_count": "many",
+                }
+            )
 
     def test_academic_request_accepts_research_intensity(self) -> None:
         request = AcademicResearchRequest(

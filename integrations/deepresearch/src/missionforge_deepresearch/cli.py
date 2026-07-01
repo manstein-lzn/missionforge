@@ -235,8 +235,11 @@ def _emit_user_artifact_summary(args: argparse.Namespace, result: Any) -> None:
         ("frontdesk_control", getattr(result, "control_ref", "")),
         ("frontdesk_research_request", getattr(result, "research_request_ref", "")),
         ("final_report", getattr(result, "final_report_ref", "")),
+        ("citation_projected_report", getattr(result, "citation_projected_report_ref", "")),
         ("report_html", getattr(result, "report_html_ref", "")),
         ("source_packet", getattr(result, "source_packet_ref", "")),
+        ("source_graph", getattr(result, "source_graph_ref", "")),
+        ("citation_registry", getattr(result, "citation_registry_ref", "")),
         ("claim_index", getattr(result, "claim_index_ref", "")),
         ("result_package", getattr(result, "result_ref", "") or getattr(result, "run_result_ref", "")),
         ("run_status", getattr(result, "run_status_ref", "")),
@@ -301,8 +304,33 @@ def _frontdesk_question_text(question: Any) -> str:
             parts.append(f"为什么问：{why}")
         if hint:
             parts.append(f"回答示例：{hint}")
+        choices = _frontdesk_choice_texts(question.get("choices"))
+        if choices:
+            parts.append("候选：" + "；".join(choices))
         return " ".join(parts)
     return str(question).strip()
+
+
+def _frontdesk_choice_texts(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    choices: list[str] = []
+    for index, choice in enumerate(value, start=1):
+        if not isinstance(choice, dict):
+            continue
+        label = str(choice.get("label") or "").strip()
+        description = str(choice.get("description") or "").strip()
+        if not label:
+            continue
+        suffixes = []
+        if choice.get("recommended") is True:
+            suffixes.append("推荐")
+        if choice.get("freeform") is True:
+            suffixes.append("自定义")
+        marker = f" ({', '.join(suffixes)})" if suffixes else ""
+        detail = f": {description}" if description else ""
+        choices.append(f"{index}. {label}{marker}{detail}")
+    return choices
 
 
 def _usage_summary_lines(workspace: Path, usage_summary_ref: Any) -> list[str]:

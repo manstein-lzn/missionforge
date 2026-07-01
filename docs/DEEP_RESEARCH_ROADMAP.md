@@ -28,11 +28,29 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   them with deterministic prose or insight scoring in Python.
 - Keep code responsible for refs, permissions, schemas, progress, resume,
   source tool boundaries, final paths, and token accounting.
+- Treat resume as ContextPackage restoration, not chat-history replay. Raw
+  dialogue is only one source inside a role-specific compiled context package.
+- Treat ContextPackages as opaque ContextEngine data in DeepResearch. Token
+  pressure, compaction, retention, and stale-package recompile belong in
+  MissionForge core.
+- Treat the web console as the primary product surface for non-developer users.
+  CLI/TUI remain developer and automation surfaces.
 - Make reviewer and judge feedback complete in one pass rather than
   drip-feeding tiny issues across loops.
 
 ## Near-Term Work
 
+- Upgrade DeepResearch toward the academic literature-review product standard
+  in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
+- Make DeepResearch a persistent project with ContextPackage-based resume:
+  FrontDesk, researcher, reviewer, and judge each keep role-specific latest
+  context packages managed by MissionForge ContextEngine.
+- Add a project-oriented web console MVP for FrontDesk chat, lifecycle status,
+  pause/resume/checkpoint/revision controls, source/citation inspection, and
+  Markdown report preview.
+- Make academic acquisition default to a no-key provider stack. OpenAlex may
+  enhance coverage when configured, but missing OpenAlex credentials must not
+  block the default product path.
 - Improve mature platform/source acquisition by letting the researcher inspect
   repository files and documentation metadata when authorized.
 - Strengthen claim-to-source mapping without requiring code to judge semantic
@@ -45,8 +63,13 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   comprehensive, and evidence-calibrated; strategic memos should only appear
   when explicitly requested.
 - Improve report export: HTML first, PDF later through a separate renderer.
+- Keep CLI/TUI and web console on the same refs, lifecycle state, interaction
+  events, approvals, and revision records. The frontend must not become a
+  parallel source of truth.
 - Keep usage accounting visible: input, cached input, output, and total tokens.
-- Keep resume artifact-based and explicit.
+- Keep resume package-based, artifact-backed, and explicit: unchanged
+  fingerprints may reuse the latest ContextPackage; stale packages must
+  recompile from refs, checkpoints, and working sets.
 
 ## Non-Goals
 

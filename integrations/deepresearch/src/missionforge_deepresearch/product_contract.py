@@ -11,6 +11,9 @@ import missionforge as mf
 
 RESEARCH_REQUEST_SCHEMA_VERSION = "missionforge_deepresearch.research_request.v1"
 
+PROVIDER_POLICIES = {"default_no_key", "openalex_enhanced"}
+CITATION_STYLES = {"cite_anchor_v1"}
+
 
 _REPORT_SECTION_DEFINITIONS = [
     {
@@ -255,6 +258,44 @@ def deepresearch_quality_dimensions() -> list[dict[str, str]]:
 
 
 @dataclass(frozen=True)
+class SeedPaper:
+    """Optional seed paper locator supplied by the user."""
+
+    kind: str
+    value: str
+    note: str = ""
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "SeedPaper":
+        data = _strict_mapping(payload, "seed_paper", {"kind", "value", "note"})
+        seed = cls(
+            kind=mf.require_non_empty_str(data.get("kind"), "seed_paper.kind"),
+            value=mf.require_non_empty_str(data.get("value"), "seed_paper.value"),
+            note=str(data.get("note", "") or "").strip(),
+        )
+        seed.validate()
+        return seed
+
+    def validate(self) -> None:
+        kind = mf.require_non_empty_str(self.kind, "seed_paper.kind")
+        if kind not in {"title", "doi", "arxiv", "url"}:
+            raise mf.ContractValidationError("seed_paper.kind must be title, doi, arxiv, or url")
+        value = mf.require_non_empty_str(self.value, "seed_paper.value")
+        if kind == "url" and not value.startswith(("http://", "https://")):
+            raise mf.ContractValidationError("seed_paper.url value must start with http:// or https://")
+        if kind == "doi" and not value.lower().startswith("10."):
+            raise mf.ContractValidationError("seed_paper.doi value must start with 10.")
+
+    def to_dict(self) -> dict[str, str]:
+        self.validate()
+        return {
+            "kind": self.kind,
+            "value": self.value,
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True)
 class AcademicResearchRequest:
     """Sanitized academic research request."""
 
@@ -266,6 +307,15 @@ class AcademicResearchRequest:
     previous_run_refs: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
     non_goals: list[str] = field(default_factory=list)
+    seed_papers: list[SeedPaper] = field(default_factory=list)
+    seed_pdf_refs: list[str] = field(default_factory=list)
+    sample_report_ref: str | None = None
+    target_source_count: int | None = None
+    provider_policy: str = "default_no_key"
+    requested_provider_families: list[str] = field(default_factory=list)
+    optional_provider_families: list[str] = field(default_factory=list)
+    citation_style: str = "cite_anchor_v1"
+    report_template_id: str = "academic_literature_review.zh"
     schema_version: str = RESEARCH_REQUEST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -278,6 +328,7 @@ class AcademicResearchRequest:
                 "academic_research_request.research_intensity",
             ),
         )
+        object.__setattr__(self, "seed_papers", [_coerce_seed_paper(item) for item in self.seed_papers])
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "AcademicResearchRequest":
@@ -294,6 +345,15 @@ class AcademicResearchRequest:
                 "previous_run_refs",
                 "constraints",
                 "non_goals",
+                "seed_papers",
+                "seed_pdf_refs",
+                "sample_report_ref",
+                "target_source_count",
+                "provider_policy",
+                "requested_provider_families",
+                "optional_provider_families",
+                "citation_style",
+                "report_template_id",
             },
         )
         request = cls(
@@ -316,6 +376,33 @@ class AcademicResearchRequest:
             ),
             constraints=mf.require_str_list(data.get("constraints", []), "academic_research_request.constraints"),
             non_goals=mf.require_str_list(data.get("non_goals", []), "academic_research_request.non_goals"),
+            seed_papers=_seed_paper_list(data.get("seed_papers", []), "academic_research_request.seed_papers"),
+            seed_pdf_refs=_ref_list(data.get("seed_pdf_refs", []), "academic_research_request.seed_pdf_refs"),
+            sample_report_ref=_optional_ref(data.get("sample_report_ref"), "academic_research_request.sample_report_ref"),
+            target_source_count=_optional_positive_int(
+                data.get("target_source_count"),
+                "academic_research_request.target_source_count",
+            ),
+            provider_policy=mf.require_non_empty_str(
+                data.get("provider_policy", "default_no_key"),
+                "academic_research_request.provider_policy",
+            ),
+            requested_provider_families=mf.require_str_list(
+                data.get("requested_provider_families", []),
+                "academic_research_request.requested_provider_families",
+            ),
+            optional_provider_families=mf.require_str_list(
+                data.get("optional_provider_families", []),
+                "academic_research_request.optional_provider_families",
+            ),
+            citation_style=mf.require_non_empty_str(
+                data.get("citation_style", "cite_anchor_v1"),
+                "academic_research_request.citation_style",
+            ),
+            report_template_id=mf.require_non_empty_str(
+                data.get("report_template_id", "academic_literature_review.zh"),
+                "academic_research_request.report_template_id",
+            ),
         )
         request.validate()
         return request
@@ -336,6 +423,23 @@ class AcademicResearchRequest:
         _validate_unique_refs(self.previous_run_refs, "academic_research_request.previous_run_refs")
         mf.require_str_list(self.constraints, "academic_research_request.constraints")
         mf.require_str_list(self.non_goals, "academic_research_request.non_goals")
+        _validate_seed_papers(self.seed_papers, "academic_research_request.seed_papers")
+        _validate_unique_refs(self.seed_pdf_refs, "academic_research_request.seed_pdf_refs")
+        _optional_ref(self.sample_report_ref, "academic_research_request.sample_report_ref")
+        _optional_positive_int(self.target_source_count, "academic_research_request.target_source_count")
+        if self.provider_policy not in PROVIDER_POLICIES:
+            raise mf.ContractValidationError("academic_research_request.provider_policy is unsupported")
+        mf.require_str_list(
+            self.requested_provider_families,
+            "academic_research_request.requested_provider_families",
+        )
+        mf.require_str_list(
+            self.optional_provider_families,
+            "academic_research_request.optional_provider_families",
+        )
+        if self.citation_style not in CITATION_STYLES:
+            raise mf.ContractValidationError("academic_research_request.citation_style is unsupported")
+        mf.require_non_empty_str(self.report_template_id, "academic_research_request.report_template_id")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -353,6 +457,15 @@ class AcademicResearchRequest:
             "previous_run_refs": list(self.previous_run_refs),
             "constraints": list(self.constraints),
             "non_goals": list(self.non_goals),
+            "seed_papers": [item.to_dict() for item in self.seed_papers],
+            "seed_pdf_refs": list(self.seed_pdf_refs),
+            "sample_report_ref": self.sample_report_ref,
+            "target_source_count": self.target_source_count,
+            "provider_policy": self.provider_policy,
+            "requested_provider_families": list(self.requested_provider_families),
+            "optional_provider_families": list(self.optional_provider_families),
+            "citation_style": self.citation_style,
+            "report_template_id": self.report_template_id,
         }
 
 
@@ -374,10 +487,59 @@ def _ref_list(value: Any, field_name: str) -> list[str]:
     return [mf.validate_ref(item, f"{field_name}[]") for item in mf.require_str_list(value, field_name)]
 
 
+def _optional_ref(value: Any, field_name: str) -> str | None:
+    if value is None or value == "":
+        return None
+    return mf.validate_ref(value, field_name)
+
+
 def _validate_unique_refs(values: list[str], field_name: str) -> None:
     refs = _ref_list(values, field_name)
     if len(refs) != len(set(refs)):
         raise mf.ContractValidationError(f"{field_name} must not contain duplicate refs")
+
+
+def _coerce_seed_paper(value: Any) -> SeedPaper:
+    if isinstance(value, SeedPaper):
+        return value
+    if isinstance(value, Mapping):
+        return SeedPaper.from_dict(value)
+    raise mf.ContractValidationError("seed_paper must be an object")
+
+
+def _seed_paper_list(value: Any, field_name: str) -> list[SeedPaper]:
+    items = _require_list(value, field_name)
+    return [_coerce_seed_paper(item) for item in items]
+
+
+def _validate_seed_papers(values: list[SeedPaper], field_name: str) -> None:
+    seen: set[tuple[str, str]] = set()
+    for item in values:
+        item.validate()
+        key = (item.kind, item.value.lower())
+        if key in seen:
+            raise mf.ContractValidationError(f"{field_name} must not contain duplicate seeds")
+        seen.add(key)
+
+
+def _optional_positive_int(value: Any, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise mf.ContractValidationError(f"{field_name} must be a positive integer")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise mf.ContractValidationError(f"{field_name} must be a positive integer") from None
+    if number <= 0:
+        raise mf.ContractValidationError(f"{field_name} must be positive")
+    return number
+
+
+def _require_list(value: Any, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise mf.ContractValidationError(f"{field_name} must be a list")
+    return value
 
 
 def _language_key(language: str) -> str:

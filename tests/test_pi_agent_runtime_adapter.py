@@ -307,6 +307,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                     "context_pressure_ref": None,
                     "context_turn_safe_point_ref": None,
                     "context_turn_boundary_ref": None,
+                    "context_package_ref": None,
+                    "context_package_hash": None,
                     "context_hash": None,
                     "context_compile_action": "",
                 },
@@ -385,6 +387,8 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
                 "context_pressure_ref": "kernel/demo-flow/steps/researcher/context/pressure.json",
                 "context_turn_safe_point_ref": "kernel/demo-flow/steps/researcher/context/turn_safe_point.json",
                 "context_turn_boundary_ref": "kernel/demo-flow/steps/researcher/context/turn_boundary.json",
+                "context_package_ref": "kernel/demo-flow/steps/researcher/context/package.json",
+                "context_package_hash": "sha256:" + "c" * 64,
                 "context_hash": "sha256:" + "b" * 64,
                 "context_compile_action": "continue",
             },
@@ -410,6 +414,11 @@ class PiAgentRuntimeAdapterTests(unittest.TestCase):
             context_engine["context_cache_layout_ref"],
             "kernel/demo-flow/steps/researcher/context/cache_layout.json",
         )
+        self.assertEqual(
+            context_engine["context_package_ref"],
+            "kernel/demo-flow/steps/researcher/context/package.json",
+        )
+        self.assertEqual(context_engine["context_package_hash"], "sha256:" + "c" * 64)
         self.assertEqual(context_engine["context_hash"], "sha256:" + "b" * 64)
         self.assertEqual(context_engine["context_compile_action"], "continue")
 

@@ -50,11 +50,54 @@ CONTEXT_COMPILE_REQUEST_SCHEMA_VERSION = "missionforge.context_compile_request.v
 CONTEXT_COMPILE_RESULT_SCHEMA_VERSION = "missionforge.context_compile_result.v1"
 CONTEXT_TURN_BOUNDARY_SCHEMA_VERSION = "missionforge.context_turn_boundary.v1"
 CONTEXT_CHECKPOINT_SCHEMA_VERSION = "missionforge.context_checkpoint.v1"
+CONTEXT_PACKAGE_SCHEMA_VERSION = "missionforge.context_package.v1"
 CONTEXT_REDUCTION_REQUEST_SCHEMA_VERSION = "missionforge.context_reduction_request.v1"
 CONTEXT_REDUCTION_RESULT_SCHEMA_VERSION = "missionforge.context_reduction_result.v1"
 CONTEXT_COMPACTION_RECORD_SCHEMA_VERSION = "missionforge.context_compaction_record.v1"
 CONTEXT_READ_OBSERVATION_SCHEMA_VERSION = "missionforge.context_read_observation.v1"
 CONTEXT_THRASH_DIAGNOSTICS_SCHEMA_VERSION = "missionforge.context_thrash_diagnostics.v1"
+
+
+_CONTEXT_PACKAGE_FIELDS = {
+    "schema_version",
+    "package_id",
+    "role",
+    "run_id",
+    "step_id",
+    "call_id",
+    "contract_ref",
+    "contract_hash",
+    "permission_manifest_ref",
+    "permission_manifest_hash",
+    "context_view_ref",
+    "context_hash",
+    "policy_ref",
+    "policy_hash",
+    "compile_request_ref",
+    "compile_result_ref",
+    "source_snapshot_ref",
+    "epoch_ref",
+    "baseline_ref",
+    "cache_layout_ref",
+    "pressure_ref",
+    "turn_safe_point_ref",
+    "turn_boundary_ref",
+    "step_spec_ref",
+    "step_spec_hash",
+    "tool_schema_hash",
+    "checkpoint_ref",
+    "working_set_ref",
+    "visible_refs",
+    "visible_ref_hashes",
+    "context_record_refs",
+    "context_record_hashes",
+    "context_feed_refs",
+    "diagnostics_refs",
+    "context_compiler_version",
+    "metadata",
+    "created_at",
+    "context_package_hash",
+}
 
 
 class ContextSourceKind(StrEnum):
@@ -1211,6 +1254,256 @@ class ContextCheckpoint:
         }
         if include_hash:
             payload["checkpoint_hash"] = self.checkpoint_hash
+        return payload
+
+
+@dataclass(frozen=True)
+class ContextPackage:
+    """Opaque ContextEngine package for one resumable provider-turn boundary.
+
+    A ContextPackage indexes the core-owned context records that were active for
+    a role at a safe point. It is refs-only: it does not embed rendered provider
+    messages, prompts, transcripts, artifact bodies, stdout/stderr, or secrets.
+    """
+
+    package_id: str
+    role: str
+    run_id: str
+    step_id: str
+    call_id: str
+    contract_ref: str
+    contract_hash: str
+    permission_manifest_ref: str
+    permission_manifest_hash: str
+    context_view_ref: str
+    context_hash: str
+    policy_ref: str
+    policy_hash: str
+    compile_request_ref: str
+    compile_result_ref: str
+    source_snapshot_ref: str
+    epoch_ref: str
+    baseline_ref: str
+    cache_layout_ref: str
+    pressure_ref: str
+    turn_safe_point_ref: str
+    turn_boundary_ref: str
+    step_spec_ref: str | None = None
+    step_spec_hash: str | None = None
+    tool_schema_hash: str | None = None
+    checkpoint_ref: str | None = None
+    working_set_ref: str | None = None
+    visible_refs: list[str] = field(default_factory=list)
+    visible_ref_hashes: Mapping[str, str] = field(default_factory=dict)
+    context_record_refs: list[str] = field(default_factory=list)
+    context_record_hashes: Mapping[str, str] = field(default_factory=dict)
+    context_feed_refs: list[str] = field(default_factory=list)
+    diagnostics_refs: list[str] = field(default_factory=list)
+    context_compiler_version: str = "missionforge.context_runtime.v1"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    created_at: str = ""
+    schema_version: str = CONTEXT_PACKAGE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "ContextPackage":
+        data = _refs_only_mapping(payload, "context_package")
+        _reject_unknown_fields(data, _CONTEXT_PACKAGE_FIELDS, "context_package")
+        package = cls(
+            package_id=_safe_id(data.get("package_id"), "context_package.package_id"),
+            role=require_non_empty_str(data.get("role"), "context_package.role"),
+            run_id=_safe_id(data.get("run_id"), "context_package.run_id"),
+            step_id=_safe_id(data.get("step_id"), "context_package.step_id"),
+            call_id=require_non_empty_str(data.get("call_id"), "context_package.call_id"),
+            contract_ref=validate_ref(data.get("contract_ref"), "context_package.contract_ref"),
+            contract_hash=_hash(data.get("contract_hash"), "context_package.contract_hash"),
+            permission_manifest_ref=validate_ref(
+                data.get("permission_manifest_ref"),
+                "context_package.permission_manifest_ref",
+            ),
+            permission_manifest_hash=_hash(
+                data.get("permission_manifest_hash"),
+                "context_package.permission_manifest_hash",
+            ),
+            context_view_ref=validate_ref(data.get("context_view_ref"), "context_package.context_view_ref"),
+            context_hash=_hash(data.get("context_hash"), "context_package.context_hash"),
+            policy_ref=validate_ref(data.get("policy_ref"), "context_package.policy_ref"),
+            policy_hash=_hash(data.get("policy_hash"), "context_package.policy_hash"),
+            compile_request_ref=validate_ref(
+                data.get("compile_request_ref"),
+                "context_package.compile_request_ref",
+            ),
+            compile_result_ref=validate_ref(
+                data.get("compile_result_ref"),
+                "context_package.compile_result_ref",
+            ),
+            source_snapshot_ref=validate_ref(
+                data.get("source_snapshot_ref"),
+                "context_package.source_snapshot_ref",
+            ),
+            epoch_ref=validate_ref(data.get("epoch_ref"), "context_package.epoch_ref"),
+            baseline_ref=validate_ref(data.get("baseline_ref"), "context_package.baseline_ref"),
+            cache_layout_ref=validate_ref(data.get("cache_layout_ref"), "context_package.cache_layout_ref"),
+            pressure_ref=validate_ref(data.get("pressure_ref"), "context_package.pressure_ref"),
+            turn_safe_point_ref=validate_ref(
+                data.get("turn_safe_point_ref"),
+                "context_package.turn_safe_point_ref",
+            ),
+            turn_boundary_ref=validate_ref(data.get("turn_boundary_ref"), "context_package.turn_boundary_ref"),
+            step_spec_ref=_optional_ref(data.get("step_spec_ref"), "context_package.step_spec_ref"),
+            step_spec_hash=_optional_hash(data.get("step_spec_hash"), "context_package.step_spec_hash"),
+            tool_schema_hash=_optional_hash(data.get("tool_schema_hash"), "context_package.tool_schema_hash"),
+            checkpoint_ref=_optional_ref(data.get("checkpoint_ref"), "context_package.checkpoint_ref"),
+            working_set_ref=_optional_ref(data.get("working_set_ref"), "context_package.working_set_ref"),
+            visible_refs=_unique_refs(data.get("visible_refs", []), "context_package.visible_refs"),
+            visible_ref_hashes=_hash_mapping(
+                data.get("visible_ref_hashes", {}),
+                "context_package.visible_ref_hashes",
+            ),
+            context_record_refs=_unique_refs(
+                data.get("context_record_refs", []),
+                "context_package.context_record_refs",
+            ),
+            context_record_hashes=_hash_mapping(
+                data.get("context_record_hashes", {}),
+                "context_package.context_record_hashes",
+            ),
+            context_feed_refs=_unique_refs(data.get("context_feed_refs", []), "context_package.context_feed_refs"),
+            diagnostics_refs=_unique_refs(data.get("diagnostics_refs", []), "context_package.diagnostics_refs"),
+            context_compiler_version=require_non_empty_str(
+                data.get("context_compiler_version", "missionforge.context_runtime.v1"),
+                "context_package.context_compiler_version",
+            ),
+            metadata=_metadata(data.get("metadata", {}), "context_package.metadata"),
+            created_at=require_non_empty_str(data.get("created_at"), "context_package.created_at"),
+            schema_version=require_non_empty_str(
+                data.get("schema_version", CONTEXT_PACKAGE_SCHEMA_VERSION),
+                "context_package.schema_version",
+            ),
+        )
+        package.validate()
+        if (
+            "context_package_hash" in data
+            and require_non_empty_str(data["context_package_hash"], "context_package.context_package_hash")
+            != package.context_package_hash
+        ):
+            raise ContractValidationError("context_package.context_package_hash does not match content")
+        return package
+
+    @property
+    def context_package_hash(self) -> str:
+        return stable_json_hash(self._content_dict(include_hash=False))
+
+    def validate(self) -> None:
+        _require_schema(self.schema_version, CONTEXT_PACKAGE_SCHEMA_VERSION, "context_package.schema_version")
+        _safe_id(self.package_id, "context_package.package_id")
+        require_non_empty_str(self.role, "context_package.role")
+        _safe_id(self.run_id, "context_package.run_id")
+        _safe_id(self.step_id, "context_package.step_id")
+        require_non_empty_str(self.call_id, "context_package.call_id")
+        validate_ref(self.contract_ref, "context_package.contract_ref")
+        _hash(self.contract_hash, "context_package.contract_hash")
+        validate_ref(self.permission_manifest_ref, "context_package.permission_manifest_ref")
+        _hash(self.permission_manifest_hash, "context_package.permission_manifest_hash")
+        validate_ref(self.context_view_ref, "context_package.context_view_ref")
+        _hash(self.context_hash, "context_package.context_hash")
+        validate_ref(self.policy_ref, "context_package.policy_ref")
+        _hash(self.policy_hash, "context_package.policy_hash")
+        validate_ref(self.compile_request_ref, "context_package.compile_request_ref")
+        validate_ref(self.compile_result_ref, "context_package.compile_result_ref")
+        validate_ref(self.source_snapshot_ref, "context_package.source_snapshot_ref")
+        validate_ref(self.epoch_ref, "context_package.epoch_ref")
+        validate_ref(self.baseline_ref, "context_package.baseline_ref")
+        validate_ref(self.cache_layout_ref, "context_package.cache_layout_ref")
+        validate_ref(self.pressure_ref, "context_package.pressure_ref")
+        validate_ref(self.turn_safe_point_ref, "context_package.turn_safe_point_ref")
+        validate_ref(self.turn_boundary_ref, "context_package.turn_boundary_ref")
+        _optional_ref(self.step_spec_ref, "context_package.step_spec_ref")
+        _optional_hash(self.step_spec_hash, "context_package.step_spec_hash")
+        _optional_hash(self.tool_schema_hash, "context_package.tool_schema_hash")
+        _optional_ref(self.checkpoint_ref, "context_package.checkpoint_ref")
+        _optional_ref(self.working_set_ref, "context_package.working_set_ref")
+        visible_refs = _unique_refs(self.visible_refs, "context_package.visible_refs")
+        visible_hashes = _hash_mapping(self.visible_ref_hashes, "context_package.visible_ref_hashes")
+        for ref in visible_hashes:
+            if ref not in visible_refs:
+                raise ContractValidationError("context_package.visible_ref_hashes keys must appear in visible_refs")
+        record_refs = _unique_refs(self.context_record_refs, "context_package.context_record_refs")
+        record_hashes = _hash_mapping(self.context_record_hashes, "context_package.context_record_hashes")
+        required_record_refs = {
+            self.context_view_ref,
+            self.policy_ref,
+            self.compile_request_ref,
+            self.compile_result_ref,
+            self.source_snapshot_ref,
+            self.epoch_ref,
+            self.baseline_ref,
+            self.cache_layout_ref,
+            self.pressure_ref,
+            self.turn_safe_point_ref,
+            self.turn_boundary_ref,
+        }
+        if self.checkpoint_ref:
+            required_record_refs.add(self.checkpoint_ref)
+        if not required_record_refs.issubset(set(record_refs)):
+            raise ContractValidationError("context_package.context_record_refs must include core ContextEngine refs")
+        for ref in record_hashes:
+            if ref not in record_refs:
+                raise ContractValidationError("context_package.context_record_hashes keys must appear in context_record_refs")
+        _unique_refs(self.context_feed_refs, "context_package.context_feed_refs")
+        _unique_refs(self.diagnostics_refs, "context_package.diagnostics_refs")
+        require_non_empty_str(self.context_compiler_version, "context_package.context_compiler_version")
+        _metadata(self.metadata, "context_package.metadata")
+        require_non_empty_str(self.created_at, "context_package.created_at")
+
+    def to_dict(self) -> dict[str, Any]:
+        self.validate()
+        return self._content_dict(include_hash=True)
+
+    def _content_dict(self, *, include_hash: bool) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "package_id": self.package_id,
+            "role": self.role,
+            "run_id": self.run_id,
+            "step_id": self.step_id,
+            "call_id": self.call_id,
+            "contract_ref": self.contract_ref,
+            "contract_hash": self.contract_hash,
+            "permission_manifest_ref": self.permission_manifest_ref,
+            "permission_manifest_hash": self.permission_manifest_hash,
+            "context_view_ref": self.context_view_ref,
+            "context_hash": self.context_hash,
+            "policy_ref": self.policy_ref,
+            "policy_hash": self.policy_hash,
+            "compile_request_ref": self.compile_request_ref,
+            "compile_result_ref": self.compile_result_ref,
+            "source_snapshot_ref": self.source_snapshot_ref,
+            "epoch_ref": self.epoch_ref,
+            "baseline_ref": self.baseline_ref,
+            "cache_layout_ref": self.cache_layout_ref,
+            "pressure_ref": self.pressure_ref,
+            "turn_safe_point_ref": self.turn_safe_point_ref,
+            "turn_boundary_ref": self.turn_boundary_ref,
+            "step_spec_ref": self.step_spec_ref,
+            "step_spec_hash": self.step_spec_hash,
+            "tool_schema_hash": self.tool_schema_hash,
+            "checkpoint_ref": self.checkpoint_ref,
+            "working_set_ref": self.working_set_ref,
+            "visible_refs": list(self.visible_refs),
+            "visible_ref_hashes": dict(self.visible_ref_hashes),
+            "context_record_refs": list(self.context_record_refs),
+            "context_record_hashes": dict(self.context_record_hashes),
+            "context_feed_refs": list(self.context_feed_refs),
+            "diagnostics_refs": list(self.diagnostics_refs),
+            "context_compiler_version": self.context_compiler_version,
+            "metadata": dict(self.metadata),
+            "created_at": self.created_at,
+        }
+        if include_hash:
+            payload["context_package_hash"] = self.context_package_hash
         return payload
 
 
@@ -2384,6 +2677,12 @@ def _optional_safe_label(value: Any, field_name: str) -> str:
 def _require_schema(value: str, expected: str, field_name: str) -> None:
     if require_non_empty_str(value, field_name) != expected:
         raise ContractValidationError(f"{field_name} must be {expected}")
+
+
+def _reject_unknown_fields(data: Mapping[str, Any], allowed_fields: set[str], field_name: str) -> None:
+    unknown = sorted(set(data) - allowed_fields)
+    if unknown:
+        raise ContractValidationError(f"{field_name} contains unknown fields: {unknown}")
 
 
 def _utc_now() -> str:

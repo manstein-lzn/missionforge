@@ -15,6 +15,7 @@ from ..context_engine import (
     ContextCompileAction,
     ContextEpoch,
     ContextCompileRequest,
+    ContextPackage,
     ContextReductionReason,
     ContextReductionStatus,
     ContextSource,
@@ -495,6 +496,7 @@ def _context_engine_metadata_refs(metadata: Mapping[str, Any]) -> list[str]:
         "context_turn_safe_point_ref",
         "context_turn_boundary_ref",
         "context_compile_result_ref",
+        "context_package_ref",
         "context_reduction_request_ref",
         "context_reducer_permission_manifest_ref",
         "context_reducer_call_ref",
@@ -790,6 +792,7 @@ def _write_context_engine_records(
     context_turn_boundary_ref = f"{context_root_ref}/turn_boundary.json"
     context_checkpoint_ref = f"{context_root_ref}/checkpoint.json"
     context_compile_result_ref = f"{context_root_ref}/compile_result.json"
+    context_package_ref = f"{context_root_ref}/package.json"
     call_id = compiled.piworker_call.call_id
     role = compiled.piworker_call.role.value
     context_view = compiled_context.view
@@ -907,6 +910,28 @@ def _write_context_engine_records(
         },
     )
     write_json_ref(workspace, context_compile_result_ref, compile_result.to_dict())
+    context_package = _build_context_package(
+        workspace=workspace,
+        compiled=compiled,
+        context=context,
+        context_policy_ref=context_policy_ref,
+        context_policy_hash=context_policy.policy_hash,
+        context_compile_request_ref=context_compile_request_ref,
+        context_projection_ref=context_projection_ref,
+        context_baseline_ref=context_baseline_ref,
+        source_snapshot_ref=source_snapshot_ref,
+        context_epoch_ref=context_epoch_ref,
+        context_cache_layout_ref=context_cache_layout_ref,
+        context_pressure_ref=context_pressure_ref,
+        context_checkpoint_ref=checkpoint_ref,
+        context_turn_safe_point_ref=context_turn_safe_point_ref,
+        context_turn_boundary_ref=context_turn_boundary_ref,
+        context_compile_result_ref=context_compile_result_ref,
+        context_view=context_view,
+        compiled_context=compiled_context,
+        compile_result=compile_result,
+    )
+    write_json_ref(workspace, context_package_ref, context_package.to_dict())
 
     return {
         "context_policy_ref": context_policy_ref,
@@ -922,8 +947,105 @@ def _write_context_engine_records(
         "context_turn_safe_point_ref": context_turn_safe_point_ref,
         "context_turn_boundary_ref": context_turn_boundary_ref,
         "context_compile_result_ref": context_compile_result_ref,
+        "context_package_ref": context_package_ref,
+        "context_package_hash": context_package.context_package_hash,
         "context_compile_action": compile_result.action.value,
     }
+
+
+def _build_context_package(
+    *,
+    workspace: Any,
+    compiled: CompiledStep,
+    context: StepCompileContext,
+    context_policy_ref: str,
+    context_policy_hash: str,
+    context_compile_request_ref: str,
+    context_projection_ref: str,
+    context_baseline_ref: str,
+    source_snapshot_ref: str,
+    context_epoch_ref: str,
+    context_cache_layout_ref: str,
+    context_pressure_ref: str,
+    context_checkpoint_ref: str,
+    context_turn_safe_point_ref: str,
+    context_turn_boundary_ref: str,
+    context_compile_result_ref: str,
+    context_view: ContextView,
+    compiled_context: CompiledContext,
+    compile_result: Any,
+) -> ContextPackage:
+    context_record_refs = _dedupe_refs(
+        [
+            context_policy_ref,
+            context_compile_request_ref,
+            context_projection_ref,
+            context_baseline_ref,
+            source_snapshot_ref,
+            context_epoch_ref,
+            context_cache_layout_ref,
+            context_pressure_ref,
+            *([context_checkpoint_ref] if context_checkpoint_ref else []),
+            context_turn_safe_point_ref,
+            context_turn_boundary_ref,
+            context_compile_result_ref,
+        ]
+    )
+    step_spec_ref = compiled.piworker_call.metadata.get("kernel_step_spec_ref")
+    safe_step_spec_ref = (
+        validate_ref(step_spec_ref, "context_package.step_spec_ref")
+        if isinstance(step_spec_ref, str) and step_spec_ref
+        else None
+    )
+    return ContextPackage(
+        package_id=f"{compiled.piworker_call.call_id}-context-package",
+        role=compiled.piworker_call.role.value,
+        run_id=context.flow_id,
+        step_id=compiled.step.id,
+        call_id=compiled.piworker_call.call_id,
+        contract_ref=compiled.piworker_call.contract_ref,
+        contract_hash=compiled.piworker_call.contract_hash,
+        permission_manifest_ref=compiled.permission_manifest_ref,
+        permission_manifest_hash=stable_json_hash(compiled.permission_manifest.to_dict()),
+        context_view_ref=context_projection_ref,
+        context_hash=context_view.context_hash,
+        policy_ref=context_policy_ref,
+        policy_hash=context_policy_hash,
+        compile_request_ref=context_compile_request_ref,
+        compile_result_ref=context_compile_result_ref,
+        source_snapshot_ref=source_snapshot_ref,
+        epoch_ref=context_epoch_ref,
+        baseline_ref=context_baseline_ref,
+        cache_layout_ref=context_cache_layout_ref,
+        pressure_ref=context_pressure_ref,
+        turn_safe_point_ref=context_turn_safe_point_ref,
+        turn_boundary_ref=context_turn_boundary_ref,
+        step_spec_ref=safe_step_spec_ref,
+        step_spec_hash=compiled.step.spec_hash if safe_step_spec_ref else None,
+        tool_schema_hash=stable_json_hash({"allowed_tools": list(compiled.permission_manifest.allowed_tools)}),
+        checkpoint_ref=context_checkpoint_ref or None,
+        working_set_ref=compiled_context.request.working_set_ref,
+        visible_refs=list(compiled.piworker_call.visible_refs),
+        visible_ref_hashes=_hash_existing_refs(workspace, list(compiled.piworker_call.visible_refs)),
+        context_record_refs=context_record_refs,
+        context_record_hashes=_hash_existing_refs(workspace, context_record_refs),
+        context_feed_refs=list(context.context_feed_refs or []),
+        diagnostics_refs=list(compile_result.diagnostics_refs),
+        metadata={
+            "context_compile_action": compile_result.action.value,
+            "pressure_action": compiled_context.pressure.recommended_action.value,
+            "context_record_ref_count": len(context_record_refs),
+        },
+        created_at=_utc_now(),
+    )
+
+
+def _hash_existing_refs(workspace: Any, refs: list[str]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for ref in _dedupe_refs(refs):
+        if ref_exists(workspace, ref):
+            hashes[ref] = hash_ref(workspace, ref)
+    return hashes
 
 
 def _context_source_snapshot_payload(

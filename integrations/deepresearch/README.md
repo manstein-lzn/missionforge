@@ -42,6 +42,10 @@ FrontDesk is conversation-first: for vague input it should reply directly to
 the user, challenge the scope, and ask focused follow-up questions before it
 offers an approval-ready requirements document. The persisted requirements file
 is a durable snapshot, not the primary interaction surface.
+When a question has clear alternatives, FrontDesk may provide candidate choices
+that the TUI can render as selectable options; the final option should allow
+the user to supply a custom idea. Seed papers, uploaded PDFs, OpenAlex keys, and
+other provider credentials are optional accelerators, not required inputs.
 The FrontDesk workspace keeps three separate planes:
 
 - `frontdesk/assistant_turn.json`: the next user-facing conversational turn.
@@ -178,7 +182,11 @@ The CLI prints absolute paths for files that exist:
 - `frontdesk_control`
 - `frontdesk_research_request`
 - `final_report`
+- `citation_projected_report`
 - `source_packet`
+- `source_graph`
+- `canonical_sources`
+- `citation_registry`
 - `result_package`
 - `judge_report`
 - `usage_summary`
@@ -195,6 +203,12 @@ The final markdown report normally lives at:
 
 ```text
 runs/{request_id}/reports/final_report.md
+```
+
+The citation-projected markdown report normally lives at:
+
+```text
+runs/{request_id}/reports/final_report.citation_projected.md
 ```
 
 The product-level token summary lives at:

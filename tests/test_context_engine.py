@@ -12,6 +12,7 @@ from missionforge import (
     ContextCompileRequest,
     ContextCompileResult,
     ContextEpoch,
+    ContextPackage,
     ContextInlinePolicy,
     ContextReadObservation,
     ContextReductionReason,
@@ -48,6 +49,79 @@ HASH3 = "sha256:" + "3" * 64
 
 
 class ContextEngineTests(unittest.TestCase):
+    def test_context_package_is_refs_only_and_hash_checked(self) -> None:
+        package = ContextPackage(
+            package_id="call1-context-package",
+            role="executor_piworker",
+            run_id="flow1",
+            step_id="researcher",
+            call_id="call1",
+            contract_ref="contract/task_contract.json",
+            contract_hash=HASH1,
+            permission_manifest_ref="kernel/flow1/steps/researcher/permission_manifest.json",
+            permission_manifest_hash=HASH2,
+            context_view_ref="kernel/flow1/steps/researcher/context_projection.json",
+            context_hash=HASH3,
+            policy_ref="kernel/flow1/steps/researcher/context/policy.json",
+            policy_hash=HASH1,
+            compile_request_ref="kernel/flow1/steps/researcher/context/compile_request.json",
+            compile_result_ref="kernel/flow1/steps/researcher/context/compile_result.json",
+            source_snapshot_ref="kernel/flow1/steps/researcher/context/source_snapshot.json",
+            epoch_ref="kernel/flow1/steps/researcher/context/epoch.json",
+            baseline_ref="kernel/flow1/steps/researcher/context/baseline.json",
+            cache_layout_ref="kernel/flow1/steps/researcher/context/cache_layout.json",
+            pressure_ref="kernel/flow1/steps/researcher/context/pressure.json",
+            turn_safe_point_ref="kernel/flow1/steps/researcher/context/turn_safe_point.json",
+            turn_boundary_ref="kernel/flow1/steps/researcher/context/turn_boundary.json",
+            step_spec_ref="kernel/flow1/steps/researcher/step_spec.json",
+            step_spec_hash=HASH1,
+            tool_schema_hash=HASH2,
+            visible_refs=["contract/task_contract.json"],
+            visible_ref_hashes={"contract/task_contract.json": HASH1},
+            context_record_refs=[
+                "kernel/flow1/steps/researcher/context/policy.json",
+                "kernel/flow1/steps/researcher/context/compile_request.json",
+                "kernel/flow1/steps/researcher/context_projection.json",
+                "kernel/flow1/steps/researcher/context/baseline.json",
+                "kernel/flow1/steps/researcher/context/source_snapshot.json",
+                "kernel/flow1/steps/researcher/context/epoch.json",
+                "kernel/flow1/steps/researcher/context/cache_layout.json",
+                "kernel/flow1/steps/researcher/context/pressure.json",
+                "kernel/flow1/steps/researcher/context/turn_safe_point.json",
+                "kernel/flow1/steps/researcher/context/turn_boundary.json",
+                "kernel/flow1/steps/researcher/context/compile_result.json",
+            ],
+            context_record_hashes={
+                "kernel/flow1/steps/researcher/context/policy.json": HASH1,
+                "kernel/flow1/steps/researcher/context/compile_result.json": HASH2,
+            },
+            metadata={"context_compile_action": "continue"},
+            created_at="2026-07-01T00:00:00Z",
+        )
+
+        payload = package.to_dict()
+        round_trip = ContextPackage.from_dict(payload)
+
+        self.assertEqual(round_trip.to_dict(), payload)
+        self.assertEqual(round_trip.context_package_hash, payload["context_package_hash"])
+        self.assertNotIn("provider_message", str(payload).lower())
+        self.assertNotIn("raw_transcript", str(payload).lower())
+
+        corrupted = dict(payload)
+        corrupted["context_package_hash"] = HASH1
+        with self.assertRaisesRegex(ContractValidationError, "context_package_hash"):
+            ContextPackage.from_dict(corrupted)
+
+        unknown = dict(payload)
+        unknown["surprise"] = "value"
+        with self.assertRaisesRegex(ContractValidationError, "unknown fields"):
+            ContextPackage.from_dict(unknown)
+
+        forbidden = dict(payload)
+        forbidden["provider_messages"] = ["must not persist"]
+        with self.assertRaises(ContractValidationError):
+            ContextPackage.from_dict(forbidden)
+
     def test_context_source_and_snapshot_are_refs_only(self) -> None:
         source = ContextSource(
             source_key="authority/contract",

@@ -357,8 +357,11 @@ def _print_research_result(output_stream: TextIO, config: FrontDeskTuiConfig, re
         table.add_column("path", overflow="fold")
         for label, ref in [
             ("final_report", result.final_report_ref),
+            ("citation_projected_report", result.citation_projected_report_ref),
             ("report_html", result.report_html_ref),
             ("source_packet", result.source_packet_ref),
+            ("source_graph", result.source_graph_ref),
+            ("citation_registry", result.citation_registry_ref),
             ("result_package", result.result_ref),
             ("judge_report", result.judge_report_ref),
             ("usage_summary", result.usage_summary_ref),
@@ -371,8 +374,11 @@ def _print_research_result(output_stream: TextIO, config: FrontDeskTuiConfig, re
         return
     for label, ref in [
         ("final_report", result.final_report_ref),
+        ("citation_projected_report", result.citation_projected_report_ref),
         ("report_html", result.report_html_ref),
         ("source_packet", result.source_packet_ref),
+        ("source_graph", result.source_graph_ref),
+        ("citation_registry", result.citation_registry_ref),
         ("result_package", result.result_ref),
         ("judge_report", result.judge_report_ref),
         ("usage_summary", result.usage_summary_ref),
@@ -1211,8 +1217,33 @@ def _question_text(question: Any) -> str:
             parts.append(f"为什么问：{why}")
         if hint:
             parts.append(f"回答示例：{hint}")
+        choices = _choice_texts(question.get("choices"))
+        if choices:
+            parts.append("候选：" + "；".join(choices))
         return " ".join(parts)
     return str(question).strip()
+
+
+def _choice_texts(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    choices: list[str] = []
+    for index, choice in enumerate(value, start=1):
+        if not isinstance(choice, dict):
+            continue
+        label = str(choice.get("label") or "").strip()
+        description = str(choice.get("description") or "").strip()
+        if not label:
+            continue
+        suffixes = []
+        if choice.get("recommended") is True:
+            suffixes.append("推荐")
+        if choice.get("freeform") is True:
+            suffixes.append("自定义")
+        marker = f" ({', '.join(suffixes)})" if suffixes else ""
+        detail = f": {description}" if description else ""
+        choices.append(f"{index}. {label}{marker}{detail}")
+    return choices
 
 
 def _run_root(config: FrontDeskTuiConfig) -> Path:

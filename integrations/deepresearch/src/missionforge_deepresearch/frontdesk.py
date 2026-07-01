@@ -411,7 +411,7 @@ def _frontdesk_academic_toolset() -> mf.Toolset:
     return mf.Toolset(
         id="academic",
         package="local:extensions/pi-academic-sources",
-        tools=["academic_search", "academic_fetch", "citation_lookup", "repo_search"],
+        tools=["academic_provider_capabilities", "academic_search", "academic_fetch", "citation_lookup", "repo_search"],
         capability=mf.ExtensionCapability.WEB,
         network=True,
     )
@@ -434,6 +434,12 @@ Responsibilities:
 - Challenge vague or over-broad requests. Suggest narrower research boundaries.
 - If useful, state hypotheses and assumptions explicitly for the user to accept
   or correct.
+- When useful, offer 2-4 candidate choices that a TUI can render as a
+  keyboard-selectable menu. Put the most defensible recommendation first and
+  reserve the final option for the user's own custom idea.
+- Treat seed papers, PDFs, OpenAlex keys, and other provider credentials as
+  optional accelerators. Do not block a valid research run just because they are
+  unavailable.
 - When live tools are available, use them sparingly to validate the shape of the
   problem, identify representative terminology/sources/repos, and correct false
   assumptions before asking the user to approve the research direction.
@@ -458,6 +464,10 @@ Assistant turn requirements:
   current understanding and what you need next.
 - Include `questions`: an array of 2-5 objects when more input is needed. Each
   object should have `question`, `why`, and optional `answer_hint`.
+- A question may include `choices`: an array of objects with `label`,
+  `description`, and optional `recommended` or `freeform`. Use choices when the
+  user is choosing among distinct research directions, evidence standards,
+  source-depth budgets, or report shapes.
 - Include optional `current_hypothesis` and `user_unlock`: what the user's next
   answer will decide or unlock.
 - When `needs_user_answer`, include 2-5 high-value questions in `questions`.
@@ -488,6 +498,8 @@ When `ready_for_approval`, ensure the requirements document contains:
 - target audience;
 - preferred language;
 - evidence expectations;
+- optional accelerators such as seed papers/PDFs/provider keys if available,
+  with explicit note that they are not required;
 - expected report structure;
 - constraints and assumptions;
 - validation notes with any inspected refs/tool findings when live tools were used;
@@ -632,11 +644,47 @@ def _fixture_assistant_turn(decision: str) -> dict[str, Any]:
                 "question": "你希望综述服务于工程选型、论文综述、还是系统设计？",
                 "why": "这决定报告重点是可落地工具链、学术脉络，还是架构方案。",
                 "answer_hint": "例如：工程选型，需要能指导我们是否投入实现。",
+                "choices": [
+                    {
+                        "label": "工程选型",
+                        "description": "强调工具链、可落地方案、风险和投入判断。",
+                        "recommended": True,
+                    },
+                    {
+                        "label": "论文综述",
+                        "description": "强调研究脉络、方法分类、代表论文和开放问题。",
+                    },
+                    {
+                        "label": "系统设计",
+                        "description": "强调目标架构、模块边界、集成路径和实现约束。",
+                    },
+                    {
+                        "label": "自定义想法",
+                        "description": "用户输入自己的方向、约束或混合方案。",
+                        "freeform": True,
+                    },
+                ],
             },
             {
                 "question": "是否需要覆盖开源代码和工具链集成细节？",
                 "why": "这决定是否使用 intensive 模式做 repo/code audit。",
                 "answer_hint": "例如：需要覆盖 MLIR/HLS/Vitis 相关仓库和接口边界。",
+                "choices": [
+                    {
+                        "label": "需要",
+                        "description": "检索论文同时检查相关仓库、文档和接口边界。",
+                        "recommended": True,
+                    },
+                    {
+                        "label": "不需要",
+                        "description": "聚焦论文和元数据，减少代码审计成本。",
+                    },
+                    {
+                        "label": "自定义范围",
+                        "description": "用户指定只看部分仓库、框架或工程证据。",
+                        "freeform": True,
+                    },
+                ],
             },
         ],
     }
