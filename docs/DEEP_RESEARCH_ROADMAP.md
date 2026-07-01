@@ -19,7 +19,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   `inputs/seed_pdf_index.json`, `sources/seed_source_packet.json`,
   `reports/seed_gaps.md`, and `state/seed_control.json`.
 - Active PDF boundary: `pi-pdf-sources` delegates scholarly PDF parsing to
-  GROBID when configured and records diagnostics when unavailable.
+  GROBID when configured, writes parser outputs under `sources/seed_pdfs/`, and
+  records diagnostics when unavailable.
 - Active academic acquisition scale: standard runs use a 50-source reference
   budget, intensive runs use 100, and request-level `target_source_count` can
   override either budget.

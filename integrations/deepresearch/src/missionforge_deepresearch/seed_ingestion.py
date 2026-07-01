@@ -48,8 +48,9 @@ def seed_pdf_index_payload(request: Any, *, root: Path, run_root: Path) -> dict[
     for index, ref in enumerate(getattr(request, "seed_pdf_refs", []), start=1):
         original_ref = mf.validate_ref(ref, "seed_pdf_refs[]")
         source_path = _resolve_workspace_ref(root, original_ref)
-        output_prefix_ref = _seed_pdf_output_prefix(index, original_ref)
-        staged_pdf_ref = f"{output_prefix_ref}/source.pdf"
+        staging_prefix_ref = _seed_pdf_staging_prefix(index, original_ref)
+        parser_output_prefix_ref = _seed_pdf_parser_output_prefix(index, original_ref)
+        staged_pdf_ref = f"{staging_prefix_ref}/source.pdf"
         staged_path = _resolve_workspace_ref(run_root, staged_pdf_ref)
         diagnostics: list[str] = []
         available = False
@@ -77,7 +78,7 @@ def seed_pdf_index_payload(request: Any, *, root: Path, run_root: Path) -> dict[
                 "seed_pdf_id": f"PDF{index}",
                 "original_ref": original_ref,
                 "staged_pdf_ref": staged_pdf_ref,
-                "parser_output_prefix_ref": output_prefix_ref,
+                "parser_output_prefix_ref": parser_output_prefix_ref,
                 "available": available,
                 "sha256": digest,
                 "byte_length": byte_length,
@@ -127,6 +128,8 @@ def fixture_seed_source_packet(request_payload: Mapping[str, Any], seed_pdf_inde
     for index, entry in enumerate(seed_pdf_index.get("entries", []), start=1):
         if not isinstance(entry, Mapping):
             continue
+        if entry.get("available") is not True:
+            continue
         records.append(
             {
                 "source_id": f"SEED{pdf_offset + index}",
@@ -141,6 +144,16 @@ def fixture_seed_source_packet(request_payload: Mapping[str, Any], seed_pdf_inde
         "schema_version": SEED_SOURCE_PACKET_SCHEMA_VERSION,
         "request_id": str(request_payload.get("request_id") or ""),
         "source_records": records,
+    }
+
+
+def no_seed_source_packet(request: Any) -> dict[str, Any]:
+    """Return an explicit empty seed packet for requests without seed inputs."""
+
+    return {
+        "schema_version": SEED_SOURCE_PACKET_SCHEMA_VERSION,
+        "request_id": str(getattr(request, "request_id", "")),
+        "source_records": [],
     }
 
 
@@ -161,12 +174,29 @@ def fixture_seed_gaps(seed_pdf_index: Mapping[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def no_seed_gaps() -> str:
+    """Return a compact no-seed gap report."""
+
+    return "# Seed Input Gaps\n\nNo seed inputs were provided.\n"
+
+
 def fixture_seed_control() -> dict[str, Any]:
     """Return a seed-normalizer handoff decision."""
 
     return {
         "schema_version": SEED_CONTROL_SCHEMA_VERSION,
         "decision": "ready_for_source_mapping",
+        "seed_source_packet_ref": KERNEL_V2_SEED_SOURCE_PACKET_REF,
+        "seed_gaps_ref": KERNEL_V2_SEED_GAPS_REF,
+    }
+
+
+def no_seed_control() -> dict[str, Any]:
+    """Return an explicit no-op seed control artifact for requests without seeds."""
+
+    return {
+        "schema_version": SEED_CONTROL_SCHEMA_VERSION,
+        "decision": "not_applicable",
         "seed_source_packet_ref": KERNEL_V2_SEED_SOURCE_PACKET_REF,
         "seed_gaps_ref": KERNEL_V2_SEED_GAPS_REF,
     }
@@ -186,7 +216,13 @@ def _seed_paper_dict(item: Any) -> dict[str, str]:
     return {"kind": "", "value": str(item), "note": ""}
 
 
-def _seed_pdf_output_prefix(index: int, ref: str) -> str:
+def _seed_pdf_staging_prefix(index: int, ref: str) -> str:
     name = Path(ref).name or f"seed-{index}.pdf"
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name).stem).strip(".-") or f"seed-{index}"
     return f"inputs/seed_pdfs/{index:03d}-{stem}"
+
+
+def _seed_pdf_parser_output_prefix(index: int, ref: str) -> str:
+    name = Path(ref).name or f"seed-{index}.pdf"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(name).stem).strip(".-") or f"seed-{index}"
+    return f"sources/seed_pdfs/{index:03d}-{stem}"

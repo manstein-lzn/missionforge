@@ -729,14 +729,17 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn(kernel_v2_module.KERNEL_V2_SEED_PAPERS_REF, seed_call["visible_refs"])
         self.assertIn(kernel_v2_module.KERNEL_V2_SEED_PDF_INDEX_REF, seed_call["visible_refs"])
         self.assertIn("inputs/seeds/paper.pdf", seed_call["visible_refs"])
+        self.assertNotIn("inputs", seed_call["writable_refs"])
         self.assertNotIn("inputs/sample_report.md", seed_call["visible_refs"])
         self.assertNotIn(kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF, seed_call["visible_refs"])
         self.assertIn(kernel_v2_module.KERNEL_V2_SEED_SOURCE_PACKET_REF, source_mapper_call["visible_refs"])
         self.assertIn(kernel_v2_module.KERNEL_V2_SEED_GAPS_REF, source_mapper_call["visible_refs"])
+        self.assertNotIn("inputs/seeds/paper.pdf", source_mapper_call["visible_refs"])
         self.assertIn("inputs/sample_report.md", source_mapper_call["visible_refs"])
         self.assertIn(kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF, source_mapper_call["visible_refs"])
         self.assertIn("inputs", source_mapper_manifest["readable_refs"])
         self.assertTrue(seed_pdf_index["entries"][0]["available"])
+        self.assertEqual(seed_pdf_index["entries"][0]["parser_output_prefix_ref"], "sources/seed_pdfs/001-paper")
         self.assertTrue(staged_seed_pdf_exists)
         self.assertEqual(seed_source_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
         self.assertEqual(len(seed_source_packet["source_records"]), 2)
@@ -747,6 +750,70 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             "runs/previous/packages/deepresearch_kernel_v2_result.json",
         )
         self.assertTrue(staged_previous_run_exists)
+
+    def test_kernel_v2_no_seed_rerun_does_not_reuse_stale_seed_sources(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            seed_pdf = root / "inputs/seeds/paper.pdf"
+            seed_pdf.parent.mkdir(parents=True, exist_ok=True)
+            seed_pdf.write_bytes(b"%PDF-1.4\nfixture seed\n")
+            run_deepresearch_kernel_v2(
+                AcademicResearchRequest(
+                    request_id="kernel-v2-stale-seed",
+                    topic="compiler autotuning",
+                    seed_papers=[{"kind": "doi", "value": "10.1145/1234567.1234568"}],
+                    seed_pdf_refs=["inputs/seeds/paper.pdf"],
+                ),
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            result = run_deepresearch_kernel_v2(
+                AcademicResearchRequest(
+                    request_id="kernel-v2-stale-seed",
+                    topic="compiler autotuning without seeds",
+                ),
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            flow_result = _read_json(root, result.flow_result_ref)
+            source_packet = _read_json(root, result.source_packet_ref)
+            seed_control = _read_json(root, result.seed_control_ref)
+
+        self.assertEqual(result.status, "accepted")
+        self.assertEqual(flow_result["decision_refs"], [
+            "state/source_control.json",
+            "state/researcher_control.json",
+            "reviews/reviewer_observation.json",
+            "judge/judge_report.json",
+        ])
+        self.assertFalse(
+            any(str(record.get("source_id", "")).startswith("SEED") for record in source_packet["source_records"])
+        )
+        self.assertEqual(seed_control["decision"], "not_applicable")
+        self.assertNotIn(result.seed_source_packet_ref, result.evidence_refs)
+
+    def test_kernel_v2_missing_seed_pdf_is_gap_not_source_evidence(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-missing-seed-pdf",
+            topic="compiler autotuning",
+            seed_pdf_refs=["inputs/seeds/missing.pdf"],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            seed_pdf_index = _read_json(root, result.seed_pdf_index_ref)
+            seed_packet = _read_json(root, result.seed_source_packet_ref)
+            seed_gaps = _read_text(root, result.seed_gaps_ref)
+
+        self.assertFalse(seed_pdf_index["entries"][0]["available"])
+        self.assertEqual(seed_pdf_index["entries"][0]["diagnostics"], ["seed_pdf_missing"])
+        self.assertEqual(seed_packet["source_records"], [])
+        self.assertIn("inputs/seeds/missing.pdf", seed_gaps)
 
     def test_seed_pdf_index_rejects_unsafe_refs_even_when_called_directly(self) -> None:
         class UnsafeRequest:

@@ -208,7 +208,8 @@ backbone:
   provider-hit logs, and coverage reports are persisted as source artifacts.
 - Optional seed papers and seed PDFs are staged into explicit input artifacts.
   PDF parsing is GROBID-first through `pi-pdf-sources`; raw TEI and diagnostics
-  are extension outputs, not hand-written Python PDF parsing.
+  are extension outputs under `sources/seed_pdfs/`, not hand-written Python PDF
+  parsing.
 - Standard academic runs now target a 50-source reference budget by default;
   intensive runs target 100, while `target_source_count` may override the
   budget and coverage sufficiency remains a PiWorker/Judge decision.
@@ -289,19 +290,22 @@ Design rule:
 Current state:
 
 - `AcademicResearchRequest` accepts optional `seed_papers`, `seed_pdf_refs`, and
-  `sample_report_ref`; these fields are frozen into the task contract and input
-  refs are visible to worker steps under the `inputs` permission root.
+  `sample_report_ref`; these fields are frozen into the task contract. Raw seed
+  PDF refs are visible only to `seed_normalizer`; later steps consume seed
+  packets and gaps instead of raw PDFs.
 - `previous_run_refs` are staged into current-run input refs instead of exposing
   outer workspace paths directly.
 - `inputs/seed_papers.json` and `inputs/seed_pdf_index.json` are written for
   each run. Available seed PDFs are staged under `inputs/seed_pdfs/` with hash,
-  byte length, availability, and diagnostics.
+  byte length, availability, diagnostics, and a parser output prefix under
+  `sources/seed_pdfs/`.
 - A conditional `seed_normalizer` PiWorker step writes
   `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and
   `state/seed_control.json` before source mapping when seeds exist.
 - `pi-pdf-sources` provides `pdf_provider_capabilities` and
   `grobid_parse_pdf`. It delegates to a configured GROBID service and writes
-  raw TEI plus diagnostics; it rejects absolute paths and unsafe refs.
+  raw TEI plus diagnostics under `sources/seed_pdfs/`; it rejects absolute
+  paths and unsafe refs.
 - There is not yet a Web PDF upload UI or TEI-to-section/reference projection.
 
 Target:
@@ -783,8 +787,8 @@ Tools:
 Outputs:
 
 - raw PDF manifest
-- raw GROBID TEI ref
-- parse diagnostics ref
+- raw GROBID TEI ref under `sources/seed_pdfs/`
+- parse diagnostics ref under `sources/seed_pdfs/`
 - later TEI-derived metadata/sections/references refs
 
 Rules:
@@ -1184,6 +1188,8 @@ Exit criteria:
 
 - User-provided seed papers/PDFs become seed source packet entries or explicit
   parse/missing-provider diagnostics.
+- Missing PDFs are recorded in `reports/seed_gaps.md` and must not become source
+  evidence.
 
 Implemented notes:
 

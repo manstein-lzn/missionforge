@@ -35,14 +35,14 @@ export default function pdfSourcesExtension(pi) {
       "Use grobid_parse_pdf for academic seed PDFs when GROBID is configured. Pass only workspace refs under inputs/.",
     promptGuidelines: [
       "Use workspace refs, not absolute paths.",
-      "Write outputs under an inputs/seed_pdfs/... prefix.",
+      "Write parser outputs under a sources/seed_pdfs/... prefix.",
       "Treat raw TEI as the authoritative parsed artifact; Markdown summaries are derived views only.",
       "If parsing is unavailable or degraded, record diagnostics and continue with public metadata search.",
     ],
     parameters: Type.Object({
       pdf_ref: Type.String({ description: "Workspace PDF ref under inputs/, for example inputs/seed_pdfs/001-paper.pdf." }),
       output_prefix_ref: Type.String({
-        description: "Workspace output prefix under inputs/seed_pdfs/, for example inputs/seed_pdfs/001-paper.",
+        description: "Workspace output prefix under sources/seed_pdfs/, for example sources/seed_pdfs/001-paper.",
       }),
       include_coordinates: Type.Optional(Type.Boolean({ description: "Request TEI coordinates when supported by GROBID." })),
     }),

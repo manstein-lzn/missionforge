@@ -174,8 +174,8 @@ function requireInputPdfRef(value) {
 
 function requireOutputPrefixRef(value) {
   const ref = requireWorkspaceRef(value, "grobid_parse_pdf.output_prefix_ref");
-  if (!ref.startsWith("inputs/seed_pdfs/")) {
-    throw new Error("grobid_parse_pdf.output_prefix_ref must be under inputs/seed_pdfs/");
+  if (!ref.startsWith("sources/seed_pdfs/")) {
+    throw new Error("grobid_parse_pdf.output_prefix_ref must be under sources/seed_pdfs/");
   }
   return ref.replace(/\/+$/, "");
 }

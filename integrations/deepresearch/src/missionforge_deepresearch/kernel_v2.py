@@ -36,6 +36,9 @@ from .seed_ingestion import (
     fixture_seed_gaps,
     fixture_seed_source_packet,
     has_seed_inputs,
+    no_seed_control,
+    no_seed_gaps,
+    no_seed_source_packet,
     seed_papers_payload,
     seed_pdf_index_payload,
 )
@@ -352,7 +355,7 @@ def build_deepresearch_kernel_v2_flow(
             KERNEL_V2_SEED_CONTROL_REF,
         ],
         read=["contract", "product_contract", "manuals", "inputs", "sources", "reports", "state"],
-        write=["sources", "reports", "state", "inputs"],
+        write=["sources", "reports", "state"],
         tools=seed_tools,
         route_on=KERNEL_V2_SEED_CONTROL_REF,
         route_fields=["decision"],
@@ -612,7 +615,7 @@ class KernelV2FixtureAdapter:
         request = read_json_ref(workspace, KERNEL_V2_REQUEST_REF, "kernel_v2_request")
         profile = research_intensity_profile(request["research_intensity"])
         source_packet = _fixture_source_packet(request)
-        if (workspace / KERNEL_V2_SEED_SOURCE_PACKET_REF).is_file():
+        if _request_payload_has_seed_inputs(request) and (workspace / KERNEL_V2_SEED_SOURCE_PACKET_REF).is_file():
             seed_packet = read_json_ref(workspace, KERNEL_V2_SEED_SOURCE_PACKET_REF, "kernel_v2_seed_source_packet")
             seed_records = seed_packet.get("source_records", [])
             if isinstance(seed_records, list):
@@ -725,6 +728,10 @@ def _write_kernel_v2_workspace(
     _write_previous_run_inputs(request, root=root, run_root=run_root)
     write_json_ref(run_root, KERNEL_V2_SEED_PAPERS_REF, seed_papers_payload(request))
     write_json_ref(run_root, KERNEL_V2_SEED_PDF_INDEX_REF, seed_pdf_index_payload(request, root=root, run_root=run_root))
+    if not has_seed_inputs(request):
+        write_json_ref(run_root, KERNEL_V2_SEED_SOURCE_PACKET_REF, no_seed_source_packet(request))
+        write_text_ref(run_root, KERNEL_V2_SEED_GAPS_REF, no_seed_gaps())
+        write_json_ref(run_root, KERNEL_V2_SEED_CONTROL_REF, no_seed_control())
     write_json_ref(run_root, KERNEL_V2_WORKSPACE_POLICY_REF, {"policy_id": "deepresearch-kernel-v2", "root_ref": "."})
     write_json_ref(run_root, KERNEL_V2_OUTPUT_CONTRACT_REF, _output_contract(request))
     write_json_ref(run_root, KERNEL_V2_INITIAL_SOURCE_PACKET_REF, _empty_source_packet(request))
@@ -792,7 +799,6 @@ def _request_input_refs(request: AcademicResearchRequest, *, include_seed_indexe
     refs = []
     if include_seed_indexes and has_seed_inputs(request):
         refs.extend([KERNEL_V2_SEED_PAPERS_REF, KERNEL_V2_SEED_PDF_INDEX_REF])
-    refs.extend(request.seed_pdf_refs)
     if request.sample_report_ref:
         refs.append(request.sample_report_ref)
     if request.previous_run_refs:
@@ -812,6 +818,10 @@ def _seed_output_input_refs(request: AcademicResearchRequest) -> list[str]:
         KERNEL_V2_SEED_GAPS_REF,
         KERNEL_V2_SEED_CONTROL_REF,
     ]
+
+
+def _request_payload_has_seed_inputs(request_payload: Mapping[str, Any]) -> bool:
+    return bool(request_payload.get("seed_papers") or request_payload.get("seed_pdf_refs"))
 
 
 def _source_budget_guidance(request: AcademicResearchRequest, profile: ResearchIntensityProfile) -> str:
@@ -889,7 +899,7 @@ def _seed_normalizer_brief(request: AcademicResearchRequest) -> str:
             "Required outputs: `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and `state/seed_control.json`.",
             "For DOI/arXiv/title/URL seed papers, use academic tools when available to resolve metadata candidates. Keep uncertainty and multiple candidates explicit.",
             "For PDF seeds, do not manually parse binary PDF content and do not paste full extracted text into context.",
-            "Use `pdf_provider_capabilities` first when PDF tools are available. Use `grobid_parse_pdf` only for available staged PDF refs from `inputs/seed_pdf_index.json`.",
+            "Use `pdf_provider_capabilities` first when PDF tools are available. Use `grobid_parse_pdf` only for available staged PDF refs from `inputs/seed_pdf_index.json`, and write parser outputs to each entry's `parser_output_prefix_ref`.",
             "Treat raw GROBID TEI as the authoritative parsed artifact. Any Markdown/text summary is a derived view and must cite the TEI/ref diagnostics.",
             "If GROBID is unavailable, the PDF is missing, scanned, degraded, or parsing fails, record it in `reports/seed_gaps.md`; do not block the run unless no usable topic or source mapping can proceed.",
             "`sources/seed_source_packet.json` should use schema_version `missionforge_deepresearch.seed_source_packet.v1` and include source_records for resolved seed papers and seed PDFs with stable ids like `SEED1`.",
@@ -1782,7 +1792,11 @@ def _kernel_v2_result(
         ],
         evidence_refs=[
             _outer_ref(run_ref, ref)
-            for ref in _kernel_v2_product_evidence_refs(flow_result, run_root=run_root)
+            for ref in _kernel_v2_product_evidence_refs(
+                flow_result,
+                run_root=run_root,
+                include_seed_outputs=has_seed_inputs(request),
+            )
         ],
         metric_refs=[_outer_ref(run_ref, usage_summary_ref)],
         contract_hash=contract_hash,
@@ -1920,13 +1934,15 @@ def _non_negative_float(value: Any) -> float:
     return 0.0
 
 
-def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root: Path) -> list[str]:
+def _kernel_v2_product_evidence_refs(
+    flow_result: mf.FlowRunResult,
+    *,
+    run_root: Path,
+    include_seed_outputs: bool,
+) -> list[str]:
     refs: list[str] = [
         KERNEL_V2_SEED_PAPERS_REF,
         KERNEL_V2_SEED_PDF_INDEX_REF,
-        KERNEL_V2_SEED_SOURCE_PACKET_REF,
-        KERNEL_V2_SEED_GAPS_REF,
-        KERNEL_V2_SEED_CONTROL_REF,
         KERNEL_V2_PROVIDER_CAPABILITIES_REF,
         KERNEL_V2_SEARCH_PLAN_REF,
         KERNEL_V2_PROVIDER_HITS_REF,
@@ -1947,6 +1963,14 @@ def _kernel_v2_product_evidence_refs(flow_result: mf.FlowRunResult, *, run_root:
         KERNEL_V2_SOURCE_CONTROL_REF,
         KERNEL_V2_RUN_STATUS_REF,
     ]
+    if include_seed_outputs:
+        refs.extend(
+            [
+                KERNEL_V2_SEED_SOURCE_PACKET_REF,
+                KERNEL_V2_SEED_GAPS_REF,
+                KERNEL_V2_SEED_CONTROL_REF,
+            ]
+        )
     for ref in flow_result.flow_result.decision_refs:
         if ref in {
             KERNEL_V2_SEED_CONTROL_REF,

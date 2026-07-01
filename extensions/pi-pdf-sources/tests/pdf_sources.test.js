@@ -34,7 +34,7 @@ test("grobid_parse_pdf writes unavailable diagnostics when GROBID is not configu
   try {
     const result = await grobidParsePdf({
       pdf_ref: "inputs/seed_pdfs/001-paper.pdf",
-      output_prefix_ref: "inputs/seed_pdfs/001-paper",
+      output_prefix_ref: "sources/seed_pdfs/001-paper",
     });
     const diagnostics = JSON.parse(await readFile(join(workspace, result.diagnostics_ref), "utf-8"));
     const manifest = JSON.parse(await readFile(join(workspace, result.manifest_ref), "utf-8"));
@@ -67,7 +67,7 @@ test("grobid_parse_pdf posts PDF to GROBID and writes TEI", async () => {
   try {
     const result = await grobidParsePdf({
       pdf_ref: "inputs/seed_pdfs/001-paper.pdf",
-      output_prefix_ref: "inputs/seed_pdfs/001-paper",
+      output_prefix_ref: "sources/seed_pdfs/001-paper",
     });
     const tei = await readFile(join(workspace, result.tei_ref), "utf-8");
     const diagnostics = JSON.parse(await readFile(join(workspace, result.diagnostics_ref), "utf-8"));
@@ -75,7 +75,7 @@ test("grobid_parse_pdf posts PDF to GROBID and writes TEI", async () => {
     assert.ok(seenUrls.includes("http://grobid.test/api/processFulltextDocument"));
     assert.equal(tei, "<TEI><text>parsed</text></TEI>");
     assert.equal(diagnostics.status, "completed");
-    assert.equal(diagnostics.tei_ref, "inputs/seed_pdfs/001-paper/grobid.tei.xml");
+    assert.equal(diagnostics.tei_ref, "sources/seed_pdfs/001-paper/grobid.tei.xml");
   } finally {
     process.chdir(previousCwd);
     globalThis.fetch = previousFetch;
@@ -94,7 +94,7 @@ test("grobid_parse_pdf rejects unsafe refs", async () => {
   );
   await assert.rejects(
     () => grobidParsePdf({ pdf_ref: "inputs/a.pdf", output_prefix_ref: "reports/bad" }),
-    /under inputs\/seed_pdfs/,
+    /under sources\/seed_pdfs/,
   );
 });
 
