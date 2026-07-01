@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m5b_tei_projection_and_pdf_provenance`; next priority is `web_upload_and_ocr_fallback`
+Status: `m5c_parsed_pdf_evidence_consumption`; next priority is `citation_support_against_parsed_evidence`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -210,6 +210,9 @@ backbone:
   PDF parsing is GROBID-first through `pi-pdf-sources`; raw TEI and diagnostics
   plus metadata, sections, references, and provenance projections are extension
   outputs under `sources/seed_pdfs/`, not hand-written Python PDF parsing.
+- Parsed seed PDF refs are carried through source records, canonical sources,
+  evidence indexes, and claim indexes as explicit `parsed_pdf_refs`,
+  `evidence_refs`, and `supporting_evidence_refs`.
 - Standard academic runs now target a 50-source reference budget by default;
   intensive runs target 100, while `target_source_count` may override the
   budget and coverage sufficiency remains a PiWorker/Judge decision.
@@ -1198,11 +1201,12 @@ Implemented notes:
   GROBID-first extension boundary.
 - M5B is complete for deterministic TEI metadata/sections/references/provenance
   projection refs and seed packet `parse_refs`.
+- M5C is complete for carrying parsed PDF evidence refs into source packets,
+  canonical sources, evidence indexes, and claim indexes.
 - DeepResearch does not hand-parse PDF binaries or dump extracted full text
   into context.
-- Remaining M5 work: Web upload UI, OCR fallback, richer page/span provenance
-  when GROBID coordinates are available, and citation support against parsed PDF
-  spans.
+- Remaining M5 work: Web upload UI, OCR fallback, and richer page/span
+  provenance when GROBID coordinates are available.
 
 ### M6: Citation Support Judge
 
@@ -1219,7 +1223,7 @@ Exit criteria:
 - Fixture tests simulate unsupported claims and require repair/rejection.
 - Judge cannot accept reports with mechanically invalid citations.
 - Remaining M6 work: semantic claim-source support judgment and repair loop
-  against fetched/full-text evidence.
+  against fetched/full-text evidence, including parsed PDF spans.
 
 ### M7: Optional Scholar/Commercial Browser Fallback
 

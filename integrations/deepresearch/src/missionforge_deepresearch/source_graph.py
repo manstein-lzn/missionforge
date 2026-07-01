@@ -34,6 +34,8 @@ class CanonicalSource:
     provider_provenance: list[str] = field(default_factory=list)
     abstract_ref: str = ""
     fulltext_ref: str = ""
+    parsed_pdf_refs: dict[str, str] = field(default_factory=dict)
+    evidence_refs: list[str] = field(default_factory=list)
     evidence_strength: str = "metadata"
     inclusion_status: str = "candidate"
     inclusion_reason: str = ""
@@ -53,6 +55,8 @@ class CanonicalSource:
             "provider_provenance": list(self.provider_provenance),
             "abstract_ref": self.abstract_ref,
             "fulltext_ref": self.fulltext_ref,
+            "parsed_pdf_refs": dict(self.parsed_pdf_refs),
+            "evidence_refs": list(self.evidence_refs),
             "evidence_strength": self.evidence_strength,
             "inclusion_status": self.inclusion_status,
             "inclusion_reason": self.inclusion_reason,
@@ -138,6 +142,8 @@ def _normalize_source_record(record: Mapping[str, Any], index: int) -> dict[str,
         "identifiers": identifiers,
         "locators": locators,
         "provider": provider,
+        "parsed_pdf_refs": _str_mapping(record.get("parsed_pdf_refs")) or _str_mapping(record.get("parse_refs")),
+        "evidence_refs": _evidence_refs(record),
         "evidence_strength": _clean(record.get("evidence_strength")) or "metadata",
         "inclusion_reason": _clean(record.get("evidence_note")),
     }
@@ -153,6 +159,8 @@ def _new_bucket(canonical_key: str) -> dict[str, Any]:
         "identifiers": {},
         "locators": [],
         "provider_provenance": [],
+        "parsed_pdf_refs": {},
+        "evidence_refs": [],
         "evidence_strengths": [],
         "inclusion_reasons": [],
         "source_record_ids": [],
@@ -173,6 +181,11 @@ def _merge_bucket(bucket: dict[str, Any], normalized: Mapping[str, Any]) -> None
     for locator in normalized["locators"]:
         if locator not in bucket["locators"]:
             bucket["locators"].append(locator)
+    for key, value in normalized["parsed_pdf_refs"].items():
+        if value and not bucket["parsed_pdf_refs"].get(key):
+            bucket["parsed_pdf_refs"][key] = value
+    for ref in normalized["evidence_refs"]:
+        _append_unique(bucket["evidence_refs"], ref)
     _append_unique(bucket["provider_provenance"], normalized["provider"])
     _append_unique(bucket["evidence_strengths"], normalized["evidence_strength"])
     _append_unique(bucket["inclusion_reasons"], normalized["inclusion_reason"])
@@ -193,6 +206,8 @@ def _bucket_to_source(source_id: str, bucket: Mapping[str, Any]) -> CanonicalSou
         identifiers=dict(bucket["identifiers"]),
         locators=list(locators),
         provider_provenance=list(bucket["provider_provenance"]),
+        parsed_pdf_refs=dict(bucket["parsed_pdf_refs"]),
+        evidence_refs=list(bucket["evidence_refs"]),
         evidence_strength=evidence_strength,
         inclusion_status="candidate",
         inclusion_reason="; ".join([item for item in bucket["inclusion_reasons"] if item]),
@@ -254,6 +269,39 @@ def _locators(record: Mapping[str, Any], fallback: str) -> list[dict[str, str]]:
     return locators
 
 
+def _evidence_refs(record: Mapping[str, Any]) -> list[str]:
+    refs = []
+    value = record.get("evidence_refs")
+    if isinstance(value, list):
+        refs.extend(_clean(item) for item in value if _clean(item))
+    for mapping_name in ("parsed_pdf_refs", "parse_refs"):
+        refs.extend(_str_mapping(record.get(mapping_name)).values())
+    return _dedupe_refs([ref for ref in refs if ref])
+
+
+def _str_mapping(value: Any) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        clean_key = _clean(key)
+        clean_value = _clean(item)
+        if clean_key and clean_value:
+            result[clean_key] = clean_value
+    return result
+
+
+def _dedupe_refs(values: list[str]) -> list[str]:
+    result = []
+    seen = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
 def _canonical_key(title: str, identifiers: Mapping[str, str], source_id: str) -> tuple[str, str]:
     for key in ("doi", "arxiv", "semantic_scholar", "openalex"):
         value = identifiers.get(key)
@@ -308,7 +356,7 @@ def _append_unique(values: list[Any], value: Any) -> None:
 
 
 def _strongest_evidence(values: list[str]) -> str:
-    order = ["metadata", "abstract", "full_text", "pdf_text", "repo_docs", "fixture"]
+    order = ["metadata", "abstract", "full_text", "pdf_seed", "pdf_text", "repo_docs", "fixture"]
     ranked = {name: index for index, name in enumerate(order)}
     best = "metadata"
     for value in values:

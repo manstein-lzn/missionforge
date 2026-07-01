@@ -936,6 +936,7 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "Use academic/repo tools when available. Start live academic runs with `academic_provider_capabilities` and record provider availability, missing optional keys, and disabled enhancements before broad search.",
             "Default academic acquisition is no-key. Do not assume OpenAlex is available unless provider capabilities report it as enabled; missing OpenAlex is a source-gap diagnostic, not a task failure.",
             "If `sources/seed_source_packet.json` is visible, use it as seed evidence and expansion guidance. Do not parse PDFs in this step; seed PDF parsing belongs to the seed normalizer.",
+            "When seed PDF records include `parse_refs` or `parsed_pdf_refs`, carry those refs into `sources/source_packet.json` as `parsed_pdf_refs` and `evidence_refs`; use metadata/sections/references/provenance refs as evidence inputs and expansion cues, not raw PDF text.",
             "Before broad search, write `sources/search_plan.json` with query families, provider plan, seed expansion plan when seeds exist, inclusion criteria, stopping criteria, expected evidence classes, and source-count budget.",
             "Use schema_version `missionforge_deepresearch.search_plan.v1` for `sources/search_plan.json`.",
             "Batch independent searches from the search plan through `academic_search.queries` when live tools support it; providers inside each query and queries inside the batch may run concurrently.",
@@ -1036,6 +1037,7 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "In the trends/future directions section, distinguish evidence-supported trends from practical implications and hypotheses.",
             "If evidence is mostly metadata, abstract-only, or README-level, downgrade conclusion strength and use attribution language rather than strong causal claims.",
             "Treat `claims/claim_index.json` as the claim-to-evidence audit artifact. Use schema_version `missionforge_deepresearch.kernel_v2.claim_index.v1` and a `claims` array. Each claim should include `claim_id`, `claim`, `supporting_source_ids`, `evidence_strength`, `verification_status`, and `confidence_note`.",
+            "When a claim uses parsed seed PDF content, include `supporting_evidence_refs` pointing to the relevant metadata/sections/references/provenance refs from the source record. Do not cite a seed PDF filename as evidence for a content claim.",
             "Use citations like [S1] for material claims.",
             "Do not hand-author numbered citation anchors; the product citation projector will convert source-id citations to `[cite: N](#ref-N)` and write `citations/citation_registry.json`.",
             "The final report must include all required sections from `product_contract/output_contract.json`, including a References/参考文献 section inside `reports/final_report.md` itself.",
@@ -1104,6 +1106,7 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "Proportion check: source strategy, audit coverage, evidence limitations, and confidence caveats should be explicit but should not dominate the reader-facing report.",
             "Audit placement check: detailed repo/code-audit maps should live in evidence artifacts or source gaps by default; the final report should include only a concise method/confidence summary unless the user requested an audit appendix.",
             "Evidence-conclusion calibration check: when evidence is metadata, abstract-only, README-level, or explicitly weak, require downgraded claim language and visible limits.",
+            "Parsed PDF check: if a report or claim relies on seed PDF content, verify that `claims/claim_index.json.supporting_evidence_refs` points to parsed metadata/sections/references/provenance refs, not only the raw PDF filename.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_reviewer_intensity_guidance(profile.intensity),
             f"Topic: {request.topic}",
@@ -1146,6 +1149,7 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "The main body should explain the field clearly; method, audit coverage, and source limitations should remain explicit and proportionate.",
             "Do not accept a reader-facing literature review that exposes a full repo/code-audit map as a default body section unless the user explicitly requested an audit appendix.",
             "Do not accept evidence-conclusion mismatch: strong implementation, causal, benchmark, or trend claims need correspondingly strong source, paper, or repo-file evidence; otherwise require repair or revision.",
+            "Do not accept parsed seed PDF content claims unless the claim index cites parsed metadata/sections/references/provenance refs through `supporting_evidence_refs`; raw PDF filenames alone are not content evidence.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
             *_judge_intensity_guidance(profile.intensity),
             f"Audience: {request.audience}",
@@ -1242,6 +1246,12 @@ def _reference_lines(source_packet: Mapping[str, Any]) -> str:
     lines = []
     for record in source_packet.get("source_records", []):
         lines.append(f"- [{record['source_id']}] {record['title']} ({record.get('locator', '')})")
+        parsed_refs = record.get("parsed_pdf_refs") or record.get("parse_refs")
+        if isinstance(parsed_refs, Mapping):
+            for key in ("metadata_ref", "sections_ref", "references_ref", "provenance_ref"):
+                ref = parsed_refs.get(key)
+                if isinstance(ref, str) and ref:
+                    lines.append(f"  - {key}: {ref}")
     return "\n".join(lines) + "\n"
 
 
@@ -1342,11 +1352,13 @@ def _fixture_insight_map(source_packet: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fixture_claim_index(source_packet: Mapping[str, Any]) -> dict[str, Any]:
-    source_ids = [
-        str(record.get("source_id"))
-        for record in source_packet.get("source_records", [])
-        if isinstance(record, Mapping) and record.get("source_id")
-    ]
+    source_records = [record for record in source_packet.get("source_records", []) if isinstance(record, Mapping)]
+    source_ids = [str(record.get("source_id")) for record in source_records if record.get("source_id")]
+    evidence_refs = []
+    for record in source_records:
+        refs = record.get("evidence_refs")
+        if isinstance(refs, list):
+            evidence_refs.extend(str(ref) for ref in refs if isinstance(ref, str) and ref)
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2.claim_index.v1",
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
@@ -1356,6 +1368,7 @@ def _fixture_claim_index(source_packet: Mapping[str, Any]) -> dict[str, Any]:
                 "claim_id": "C1",
                 "claim": "Fixture mode validates that Kernel v2 records claim-to-source evidence as a separate artifact.",
                 "supporting_source_ids": source_ids[:1],
+                "supporting_evidence_refs": evidence_refs,
                 "evidence_strength": "fixture",
                 "verification_status": "fixture_only",
                 "confidence_note": "Fixture evidence is structural and does not imply live research quality.",
@@ -1423,11 +1436,14 @@ def _write_kernel_v2_claim_index_validation(run_root: Path) -> str:
 def _kernel_v2_claim_index_validation(run_root: Path) -> dict[str, Any]:
     failures: list[str] = []
     source_ids: set[str] = set()
+    source_evidence_refs: set[str] = set()
     try:
         source_packet = json.loads((run_root / KERNEL_V2_SOURCE_PACKET_REF).read_text(encoding="utf-8"))
         for record in source_packet.get("source_records", []):
             if isinstance(record, Mapping) and isinstance(record.get("source_id"), str):
                 source_ids.add(record["source_id"])
+                for ref in _source_record_evidence_refs(record):
+                    source_evidence_refs.add(ref)
     except (OSError, json.JSONDecodeError, AttributeError):
         failures.append("source_packet_unreadable")
     try:
@@ -1462,6 +1478,23 @@ def _kernel_v2_claim_index_validation(run_root: Path) -> dict[str, Any]:
         for source_id in supporting_source_ids:
             if not isinstance(source_id, str) or source_id not in source_ids:
                 failures.append(f"claim_{claim_id or index}_unknown_source_id")
+        supporting_evidence_refs = claim.get("supporting_evidence_refs", [])
+        if supporting_evidence_refs is None:
+            supporting_evidence_refs = []
+        if not isinstance(supporting_evidence_refs, list):
+            failures.append(f"claim_{claim_id or index}_supporting_evidence_refs_not_list")
+            continue
+        for ref in supporting_evidence_refs:
+            if not isinstance(ref, str):
+                failures.append(f"claim_{claim_id or index}_invalid_evidence_ref")
+                continue
+            try:
+                mf.validate_ref(ref, f"claim_{claim_id or index}.supporting_evidence_refs[]")
+            except mf.ContractValidationError:
+                failures.append(f"claim_{claim_id or index}_invalid_evidence_ref")
+                continue
+            if source_evidence_refs and ref not in source_evidence_refs:
+                failures.append(f"claim_{claim_id or index}_unknown_evidence_ref")
     return {
         "schema_version": "missionforge_deepresearch.kernel_v2.claim_index_validation.v1",
         "status": "passed" if not failures else "failed",
@@ -1469,6 +1502,19 @@ def _kernel_v2_claim_index_validation(run_root: Path) -> dict[str, Any]:
         "source_packet_ref": KERNEL_V2_SOURCE_PACKET_REF,
         "failure_codes": failures,
     }
+
+
+def _source_record_evidence_refs(record: Mapping[str, Any]) -> list[str]:
+    refs: list[str] = []
+    value = record.get("evidence_refs")
+    if isinstance(value, list):
+        refs.extend(str(item) for item in value if isinstance(item, str) and item)
+    for key in ("parse_refs", "parsed_pdf_refs"):
+        mapping = record.get(key)
+        if not isinstance(mapping, Mapping):
+            continue
+        refs.extend(str(item) for item in mapping.values() if isinstance(item, str) and item)
+    return _dedupe_refs(refs)
 
 
 def _render_report_html(markdown: str) -> str:

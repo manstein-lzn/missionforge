@@ -74,6 +74,34 @@ class SourceGraphTests(unittest.TestCase):
         self.assertEqual(len(projection["canonical_sources"]["sources"]), 2)
         self.assertEqual(projection["dedupe_map"]["entries"][0]["dedupe_reason"], "unknown_record")
 
+    def test_project_source_graph_preserves_parsed_pdf_evidence_refs(self) -> None:
+        source_packet = {
+            "schema_version": "missionforge_deepresearch.source_packet.v1",
+            "request_id": "source-graph-pdf",
+            "source_records": [
+                {
+                    "source_id": "S1",
+                    "title": "Seed PDF",
+                    "source_type": "seed_pdf",
+                    "locator": "inputs/seed_pdfs/001-paper/source.pdf",
+                    "parse_refs": {
+                        "metadata_ref": "sources/seed_pdfs/001-paper/metadata.json",
+                        "sections_ref": "sources/seed_pdfs/001-paper/sections.json",
+                        "references_ref": "sources/seed_pdfs/001-paper/references.json",
+                        "provenance_ref": "sources/seed_pdfs/001-paper/provenance.json",
+                    },
+                    "evidence_strength": "pdf_seed",
+                }
+            ],
+        }
+
+        projection = project_source_graph(source_packet)
+        source = projection["canonical_sources"]["sources"][0]
+
+        self.assertEqual(source["parsed_pdf_refs"]["metadata_ref"], "sources/seed_pdfs/001-paper/metadata.json")
+        self.assertIn("sources/seed_pdfs/001-paper/provenance.json", source["evidence_refs"])
+        self.assertEqual(source["evidence_strength"], "pdf_seed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -138,6 +138,7 @@ def fixture_seed_source_packet(request_payload: Mapping[str, Any], seed_pdf_inde
             continue
         if entry.get("available") is not True:
             continue
+        parse_refs = _seed_pdf_parse_refs(entry)
         records.append(
             {
                 "source_id": f"SEED{pdf_offset + index}",
@@ -146,7 +147,9 @@ def fixture_seed_source_packet(request_payload: Mapping[str, Any], seed_pdf_inde
                 "locator": str(entry.get("staged_pdf_ref") or entry.get("original_ref") or ""),
                 "evidence_note": "User-provided seed PDF; parse diagnostics are tracked separately.",
                 "evidence_strength": "pdf_seed",
-                "parse_refs": _seed_pdf_parse_refs(entry),
+                "parse_refs": parse_refs,
+                "parsed_pdf_refs": parse_refs,
+                "evidence_refs": [ref for ref in parse_refs.values() if ref],
             }
         )
     return {

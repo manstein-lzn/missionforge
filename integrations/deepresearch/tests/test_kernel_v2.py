@@ -716,6 +716,13 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             staged_seed_pdf_exists = (run_root / seed_pdf_index["entries"][0]["staged_pdf_ref"]).is_file()
             seed_source_packet = _read_json(root, result.seed_source_packet_ref)
             seed_gaps = _read_text(root, result.seed_gaps_ref)
+            canonical_sources = _read_json(root, result.canonical_sources_ref)
+            evidence_index = _read_text(root, f"{result.run_workspace_ref}/{kernel_v2_module.KERNEL_V2_EVIDENCE_INDEX_REF}")
+            claim_index = _read_json(root, result.claim_index_ref)
+            claim_validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/{kernel_v2_module.KERNEL_V2_CLAIM_INDEX_VALIDATION_REF}",
+            )
             previous_run_index = _read_json(run_root, kernel_v2_module.KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
             staged_previous_run_exists = (run_root / previous_run_index["entries"][0]["staged_ref"]).is_file()
             run_status = _read_json(root, result.run_status_ref)
@@ -756,6 +763,12 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             seed_source_packet["source_records"][1]["parse_refs"]["provenance_ref"],
             "sources/seed_pdfs/001-paper/provenance.json",
         )
+        seed_pdf_canonical = next(item for item in canonical_sources["sources"] if "SEED2" in item["source_record_ids"])
+        self.assertEqual(seed_pdf_canonical["parsed_pdf_refs"]["sections_ref"], "sources/seed_pdfs/001-paper/sections.json")
+        self.assertIn("sources/seed_pdfs/001-paper/provenance.json", seed_pdf_canonical["evidence_refs"])
+        self.assertIn("metadata_ref: sources/seed_pdfs/001-paper/metadata.json", evidence_index)
+        self.assertIn("sources/seed_pdfs/001-paper/provenance.json", claim_index["claims"][0]["supporting_evidence_refs"])
+        self.assertEqual(claim_validation["status"], "passed")
         self.assertIn("No fixture seed input gaps.", seed_gaps)
         self.assertEqual(run_status["seed_control_ref"], kernel_v2_module.KERNEL_V2_SEED_CONTROL_REF)
         self.assertEqual(
@@ -897,6 +910,33 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(run_status["status"], "failed")
         self.assertEqual(run_status["claim_index_validation_status"], "failed")
         self.assertIn("claim_C1_unknown_source_id", validation["failure_codes"])
+
+    def test_kernel_v2_marks_unknown_claim_evidence_ref_as_failed(self) -> None:
+        request = AcademicResearchRequest(
+            request_id="kernel-v2-bad-claim-evidence",
+            topic="compiler autotuning",
+            seed_pdf_refs=["inputs/seeds/paper.pdf"],
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            seed_pdf = root / "inputs/seeds/paper.pdf"
+            seed_pdf.parent.mkdir(parents=True, exist_ok=True)
+            seed_pdf.write_bytes(b"%PDF-1.4\nfixture seed\n")
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=BadClaimEvidenceKernelV2FixtureAdapter(),
+            )
+            run_status = _read_json(root, result.run_status_ref)
+            validation = _read_json(
+                root,
+                f"{result.run_workspace_ref}/state/claim_index_validation.json",
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(run_status["claim_index_validation_status"], "failed")
+        self.assertIn("claim_C1_unknown_evidence_ref", validation["failure_codes"])
 
     def test_kernel_v2_intensity_briefs_distinguish_standard_and_intensive(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -1136,6 +1176,14 @@ class BadClaimKernelV2FixtureAdapter(KernelV2FixtureAdapter):
         super()._write_researcher_outputs(workspace, call)
         claim_index = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF)
         claim_index["claims"][0]["supporting_source_ids"] = ["S999"]
+        kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF, claim_index)
+
+
+class BadClaimEvidenceKernelV2FixtureAdapter(KernelV2FixtureAdapter):
+    def _write_researcher_outputs(self, workspace: Path, call) -> None:
+        super()._write_researcher_outputs(workspace, call)
+        claim_index = _read_json(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF)
+        claim_index["claims"][0]["supporting_evidence_refs"] = ["sources/seed_pdfs/missing/provenance.json"]
         kernel_v2_module.write_json_ref(workspace, kernel_v2_module.KERNEL_V2_CLAIM_INDEX_REF, claim_index)
 
 

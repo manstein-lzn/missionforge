@@ -22,6 +22,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   GROBID when configured, writes raw TEI plus metadata/sections/references/
   provenance projections under `sources/seed_pdfs/`, and records diagnostics
   when unavailable.
+- Active parsed-PDF evidence path: seed PDF `parse_refs` are preserved through
+  source records, canonical sources, evidence indexes, and claim indexes as
+  explicit evidence refs.
 - Active academic acquisition scale: standard runs use a 50-source reference
   budget, intensive runs use 100, and request-level `target_source_count` can
   override either budget.
@@ -61,8 +64,11 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
-- Continue seed/PDF ingestion: add Web upload UI, OCR fallback, and richer
-  page/span citation support against parsed PDF provenance refs.
+- Strengthen citation and claim support against parsed PDF provenance refs,
+  fetched/full-text refs, and source records without making Python a semantic
+  judge.
+- Continue seed/PDF ingestion later with Web upload UI, OCR fallback, and
+  richer page/span citation support.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into
