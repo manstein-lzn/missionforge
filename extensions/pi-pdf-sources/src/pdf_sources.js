@@ -3,16 +3,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 
 const GROBID_BASE_URL_ENV = "GROBID_BASE_URL";
+const PDF_OCR_BASE_URL_ENV = "PDF_OCR_BASE_URL";
 const PDF_CAPABILITIES_SCHEMA_VERSION = "missionforge.pi_pdf_sources.provider_capabilities.v1";
 const GROBID_PARSE_RESULT_SCHEMA_VERSION = "missionforge.pi_pdf_sources.grobid_parse_result.v1";
+const OCR_PARSE_RESULT_SCHEMA_VERSION = "missionforge.pi_pdf_sources.ocr_parse_result.v1";
 const GROBID_DIAGNOSTICS_SCHEMA_VERSION = "missionforge.pi_pdf_sources.grobid_diagnostics.v1";
+const OCR_DIAGNOSTICS_SCHEMA_VERSION = "missionforge.pi_pdf_sources.ocr_diagnostics.v1";
 const TEI_METADATA_SCHEMA_VERSION = "missionforge.pi_pdf_sources.tei_metadata.v1";
 const TEI_SECTIONS_SCHEMA_VERSION = "missionforge.pi_pdf_sources.tei_sections.v1";
 const TEI_REFERENCES_SCHEMA_VERSION = "missionforge.pi_pdf_sources.tei_references.v1";
 const TEI_PROVENANCE_SCHEMA_VERSION = "missionforge.pi_pdf_sources.tei_provenance.v1";
+const PAGE_SPANS_SCHEMA_VERSION = "missionforge.pi_pdf_sources.page_spans.v1";
 
 export async function pdfProviderCapabilities(params = {}, signal) {
   const baseUrl = normalizeBaseUrl(process.env[GROBID_BASE_URL_ENV]);
+  const ocrBaseUrl = normalizeBaseUrl(process.env[PDF_OCR_BASE_URL_ENV]);
   const providers = [
     {
       provider: "grobid",
@@ -21,11 +26,24 @@ export async function pdfProviderCapabilities(params = {}, signal) {
       required_env: GROBID_BASE_URL_ENV,
       role: "scholarly_pdf_parser",
     },
+    {
+      provider: "ocr",
+      status: ocrBaseUrl ? "configured" : "disabled",
+      missing_config: !ocrBaseUrl,
+      required_env: PDF_OCR_BASE_URL_ENV,
+      role: "scanned_pdf_fallback",
+    },
   ];
   if (baseUrl && params.check_service === true) {
     providers[0] = {
       ...providers[0],
       service_status: await checkGrobidService(baseUrl, signal),
+    };
+  }
+  if (ocrBaseUrl && params.check_service === true) {
+    providers[1] = {
+      ...providers[1],
+      service_status: await checkOcrService(ocrBaseUrl, signal),
     };
   }
   return {
@@ -111,6 +129,7 @@ export async function grobidParsePdf(params = {}, signal) {
     await writeJsonRef(workspaceRoot, projectionRefs.metadata_ref, projections.metadata);
     await writeJsonRef(workspaceRoot, projectionRefs.sections_ref, projections.sections);
     await writeJsonRef(workspaceRoot, projectionRefs.references_ref, projections.references);
+    await writeJsonRef(workspaceRoot, projectionRefs.page_spans_ref, projections.pageSpans);
     await writeJsonRef(workspaceRoot, projectionRefs.provenance_ref, projections.provenance);
     const diagnostics = diagnosticsPayload({
       status: "completed",
@@ -196,6 +215,13 @@ export function projectGrobidTei({ tei, pdfRef, teiRef, manifestRef, diagnostics
     ...sourceRefs,
     references: extractReferences(tei),
   };
+  const pageSpans = {
+    schema_version: PAGE_SPANS_SCHEMA_VERSION,
+    output_prefix_ref: outputPrefixRef,
+    ...sourceRefs,
+    extraction_method: "grobid_tei_coordinates",
+    spans: extractPageSpans(tei),
+  };
   const provenance = {
     schema_version: TEI_PROVENANCE_SCHEMA_VERSION,
     output_prefix_ref: outputPrefixRef,
@@ -211,12 +237,121 @@ export function projectGrobidTei({ tei, pdfRef, teiRef, manifestRef, diagnostics
       section_count: sections.sections.length,
       reference_count: references.references.length,
       author_count: metadata.authors.length,
+      page_span_count: pageSpans.spans.length,
     },
   };
-  return { metadata, sections, references, provenance };
+  return { metadata, sections, references, pageSpans, provenance };
+}
+
+export async function ocrParsePdf(params = {}, signal) {
+  const pdfRef = requireInputPdfRef(params.pdf_ref);
+  const outputPrefixRef = requireOutputPrefixRef(params.output_prefix_ref);
+  const workspaceRoot = process.cwd();
+  const pdfPath = resolveWorkspaceRef(workspaceRoot, pdfRef);
+  const baseUrl = normalizeBaseUrl(process.env[PDF_OCR_BASE_URL_ENV]);
+  const ocrResultRef = `${outputPrefixRef}/ocr_result.json`;
+  const ocrTextRef = `${outputPrefixRef}/ocr_text.txt`;
+  const ocrDiagnosticsRef = `${outputPrefixRef}/ocr_diagnostics.json`;
+  const pageSpansRef = projectionRefsForPrefix(outputPrefixRef).page_spans_ref;
+  const pdfBytes = await readFile(pdfPath);
+  if (!baseUrl) {
+    const diagnostics = ocrDiagnosticsPayload({
+      status: "unavailable",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      reason_codes: ["ocr_base_url_missing"],
+      message: `${PDF_OCR_BASE_URL_ENV} is not configured`,
+      page_spans_ref: "",
+    });
+    await writeJsonRef(workspaceRoot, ocrDiagnosticsRef, diagnostics);
+    const result = {
+      schema_version: OCR_PARSE_RESULT_SCHEMA_VERSION,
+      status: "unavailable",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      ocr_result_ref: ocrResultRef,
+      ocr_text_ref: "",
+      ocr_diagnostics_ref: ocrDiagnosticsRef,
+      page_spans_ref: "",
+    };
+    await writeJsonRef(workspaceRoot, ocrResultRef, result);
+    return result;
+  }
+  try {
+    const ocrPayload = await callOcrPdf({
+      baseUrl,
+      pdfBytes,
+      filename: basename(pdfRef),
+      signal,
+    });
+    const pageSpans = pageSpansFromOcrPayload({
+      payload: ocrPayload,
+      pdfRef,
+      outputPrefixRef,
+      ocrResultRef,
+      ocrDiagnosticsRef,
+    });
+    await writeTextFile(resolveWorkspaceRef(workspaceRoot, ocrTextRef), ocrTextFromPageSpans(pageSpans));
+    await writeJsonRef(workspaceRoot, pageSpansRef, pageSpans);
+    const diagnostics = ocrDiagnosticsPayload({
+      status: "completed",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      reason_codes: [],
+      message: "OCR fallback completed through configured external provider.",
+      ocr_result_ref: ocrResultRef,
+      ocr_text_ref: ocrTextRef,
+      page_spans_ref: pageSpansRef,
+      page_span_count: pageSpans.spans.length,
+    });
+    await writeJsonRef(workspaceRoot, ocrDiagnosticsRef, diagnostics);
+    const result = {
+      schema_version: OCR_PARSE_RESULT_SCHEMA_VERSION,
+      status: "completed",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      ocr_result_ref: ocrResultRef,
+      ocr_text_ref: ocrTextRef,
+      ocr_diagnostics_ref: ocrDiagnosticsRef,
+      page_spans_ref: pageSpansRef,
+    };
+    await writeJsonRef(workspaceRoot, ocrResultRef, result);
+    return result;
+  } catch (error) {
+    const diagnostics = ocrDiagnosticsPayload({
+      status: "failed",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      reason_codes: ["ocr_request_failed"],
+      message: String(error?.message ?? error).slice(0, 500),
+      page_spans_ref: "",
+    });
+    await writeJsonRef(workspaceRoot, ocrDiagnosticsRef, diagnostics);
+    const result = {
+      schema_version: OCR_PARSE_RESULT_SCHEMA_VERSION,
+      status: "failed",
+      pdf_ref: pdfRef,
+      output_prefix_ref: outputPrefixRef,
+      ocr_result_ref: ocrResultRef,
+      ocr_text_ref: "",
+      ocr_diagnostics_ref: ocrDiagnosticsRef,
+      page_spans_ref: "",
+    };
+    await writeJsonRef(workspaceRoot, ocrResultRef, result);
+    return result;
+  }
 }
 
 async function checkGrobidService(baseUrl, signal) {
+  try {
+    const response = await fetch(`${baseUrl}/api/isalive`, { method: "GET", signal });
+    return response.ok ? "alive" : `http_${response.status}`;
+  } catch (error) {
+    return `unreachable:${String(error?.message ?? error).slice(0, 160)}`;
+  }
+}
+
+async function checkOcrService(baseUrl, signal) {
   try {
     const response = await fetch(`${baseUrl}/api/isalive`, { method: "GET", signal });
     return response.ok ? "alive" : `http_${response.status}`;
@@ -243,9 +378,35 @@ async function callGrobidFulltext({ baseUrl, pdfBytes, filename, includeCoordina
   return text;
 }
 
+async function callOcrPdf({ baseUrl, pdfBytes, filename, signal }) {
+  const form = new FormData();
+  form.append("input", new Blob([pdfBytes], { type: "application/pdf" }), filename || "input.pdf");
+  const response = await fetch(`${baseUrl}/api/ocrPdf`, {
+    method: "POST",
+    body: form,
+    signal,
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`OCR fallback failed with HTTP ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return JSON.parse(text || "{}");
+  }
+  return { pages: [{ page: 1, text }] };
+}
+
 function diagnosticsPayload(payload) {
   return {
     schema_version: GROBID_DIAGNOSTICS_SCHEMA_VERSION,
+    ...payload,
+  };
+}
+
+function ocrDiagnosticsPayload(payload) {
+  return {
+    schema_version: OCR_DIAGNOSTICS_SCHEMA_VERSION,
     ...payload,
   };
 }
@@ -255,6 +416,7 @@ function projectionRefsForPrefix(outputPrefixRef) {
     metadata_ref: `${outputPrefixRef}/metadata.json`,
     sections_ref: `${outputPrefixRef}/sections.json`,
     references_ref: `${outputPrefixRef}/references.json`,
+    page_spans_ref: `${outputPrefixRef}/page_spans.json`,
     provenance_ref: `${outputPrefixRef}/provenance.json`,
   };
 }
@@ -264,6 +426,7 @@ function emptyProjectionRefs() {
     metadata_ref: "",
     sections_ref: "",
     references_ref: "",
+    page_spans_ref: "",
     provenance_ref: "",
   };
 }
@@ -335,22 +498,117 @@ function extractReferences(tei) {
   }).filter((reference) => reference.title || reference.raw_citation_preview);
 }
 
-function provenanceFromBlock(block) {
-  const coords = [];
-  for (const match of block.matchAll(/\bcoords=["']([^"']+)["']/gi)) {
-    coords.push(match[1]);
+function extractPageSpans(tei) {
+  const spans = [];
+  const body = firstBlock(firstBlock(tei, "text"), "body") || firstBlock(tei, "text");
+  const candidates = [
+    ...allBlocks(body, "div").map((block, index) => ({ block, kind: "section", ordinal: index + 1 })),
+    ...allBlocks(body, "p").map((block, index) => ({ block, kind: "paragraph", ordinal: index + 1 })),
+    ...allBlocks(tei, "biblStruct").map((block, index) => ({ block, kind: "reference", ordinal: index + 1 })),
+  ];
+  for (const candidate of candidates) {
+    const text = textFromXml(candidate.block);
+    if (!text) continue;
+    for (const coord of coordinatesFromBlock(candidate.block)) {
+      spans.push({
+        span_id: `SPAN${spans.length + 1}`,
+        source: "grobid_coords",
+        source_kind: candidate.kind,
+        source_ordinal: candidate.ordinal,
+        page_ref: `page:${coord.page}`,
+        page: coord.page,
+        bbox: coord.bbox,
+        text_preview: text.slice(0, 800),
+      });
+      if (spans.length >= 500) return spans;
+    }
   }
+  return spans;
+}
+
+function provenanceFromBlock(block) {
+  const coords = coordinatesFromBlock(block);
   const pages = [];
   for (const coord of coords) {
-    for (const part of coord.split(";")) {
-      const page = part.split(",")[0]?.trim();
-      if (page && !pages.includes(page)) pages.push(page);
-    }
+    if (coord.page && !pages.includes(coord.page)) pages.push(coord.page);
   }
   return {
     page_refs: pages.slice(0, 20).map((page) => `page:${page}`),
     coordinate_count: coords.length,
+    span_refs: coords.slice(0, 20).map((coord) => `page:${coord.page}@${coord.bbox.join(",")}`),
   };
+}
+
+function coordinatesFromBlock(block) {
+  const coords = [];
+  for (const match of String(block ?? "").matchAll(/\bcoords=["']([^"']+)["']/gi)) {
+    for (const part of String(match[1] ?? "").split(";")) {
+      const values = part.split(",").map((value) => Number.parseFloat(value.trim()));
+      if (values.length < 5 || values.some((value) => Number.isNaN(value))) continue;
+      coords.push({
+        page: String(Math.trunc(values[0])),
+        bbox: values.slice(1, 5),
+      });
+    }
+  }
+  return coords;
+}
+
+function pageSpansFromOcrPayload({ payload, pdfRef, outputPrefixRef, ocrResultRef, ocrDiagnosticsRef }) {
+  const pages = Array.isArray(payload?.pages) ? payload.pages : [];
+  const spans = [];
+  for (const pageRecord of pages.slice(0, 1000)) {
+    if (!pageRecord || typeof pageRecord !== "object") continue;
+    const page = String(pageRecord.page ?? pageRecord.page_number ?? spans.length + 1);
+    const blocks = Array.isArray(pageRecord.blocks) && pageRecord.blocks.length
+      ? pageRecord.blocks
+      : [{ text: pageRecord.text ?? "" }];
+    let cursor = 0;
+    for (const block of blocks) {
+      const text = clean(String(block?.text ?? ""));
+      if (!text) continue;
+      const bbox = Array.isArray(block?.bbox)
+        ? block.bbox.slice(0, 4).map((value) => Number(value)).filter((value) => !Number.isNaN(value))
+        : [];
+      spans.push({
+        span_id: `OCR${spans.length + 1}`,
+        source: "ocr_fallback",
+        source_kind: "ocr_text_block",
+        page_ref: `page:${page}`,
+        page,
+        bbox: bbox.length === 4 ? bbox : [],
+        char_start: cursor,
+        char_end: cursor + text.length,
+        text_preview: text.slice(0, 800),
+      });
+      cursor += text.length + 1;
+      if (spans.length >= 1000) break;
+    }
+    if (spans.length >= 1000) break;
+  }
+  return {
+    schema_version: PAGE_SPANS_SCHEMA_VERSION,
+    output_prefix_ref: outputPrefixRef,
+    pdf_ref: pdfRef,
+    ocr_result_ref: ocrResultRef,
+    ocr_diagnostics_ref: ocrDiagnosticsRef,
+    extraction_method: "ocr_fallback",
+    spans,
+  };
+}
+
+function ocrTextFromPageSpans(pageSpans) {
+  const byPage = new Map();
+  for (const span of pageSpans.spans ?? []) {
+    const page = span.page_ref || "page:unknown";
+    const rows = byPage.get(page) ?? [];
+    rows.push(span.text_preview ?? "");
+    byPage.set(page, rows);
+  }
+  return [...byPage.entries()]
+    .map(([page, rows]) => `# ${page}\n\n${rows.filter(Boolean).join("\n\n")}`)
+    .join("\n\n")
+    .trim() + "\n";
 }
 
 function firstBlock(xml, tag) {

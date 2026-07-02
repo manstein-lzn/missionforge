@@ -372,10 +372,10 @@ def build_deepresearch_kernel_v2_flow(
         mf.Toolset(
             id="pdf",
             package="local:extensions/pi-pdf-sources",
-            tools=["pdf_provider_capabilities", "grobid_parse_pdf"],
+            tools=["pdf_provider_capabilities", "grobid_parse_pdf", "ocr_parse_pdf"],
             capability=mf.ExtensionCapability.WEB,
             network=True,
-            required_env=["GROBID_BASE_URL"],
+            required_env=["GROBID_BASE_URL", "PDF_OCR_BASE_URL"],
         ),
     ] if live_extension_mode else []
     seed_normalizer = mf.Step(
@@ -1021,7 +1021,11 @@ def _output_contract(request: AcademicResearchRequest) -> dict[str, Any]:
             "metadata_ref",
             "sections_ref",
             "references_ref",
+            "page_spans_ref",
             "provenance_ref",
+            "ocr_result_ref",
+            "ocr_text_ref",
+            "ocr_diagnostics_ref",
         ],
         "provider_capabilities_ref": KERNEL_V2_PROVIDER_CAPABILITIES_REF,
         "search_plan_ref": KERNEL_V2_SEARCH_PLAN_REF,
@@ -1062,10 +1066,11 @@ def _seed_normalizer_brief(request: AcademicResearchRequest) -> str:
             "For DOI/arXiv/title/URL seed papers, use academic tools when available to resolve metadata candidates. Keep uncertainty and multiple candidates explicit.",
             "For PDF seeds, do not manually parse binary PDF content and do not paste full extracted text into context.",
             "Use `pdf_provider_capabilities` first when PDF tools are available. Use `grobid_parse_pdf` only for available staged PDF refs from `inputs/seed_pdf_index.json`, and write parser outputs to each entry's `parser_output_prefix_ref`.",
-            "Treat raw GROBID TEI as the authoritative parsed artifact. Metadata, sections, references, and provenance JSON are derived views and must cite the TEI/ref diagnostics.",
-            "If GROBID is unavailable, the PDF is missing, scanned, degraded, or parsing fails, record it in `reports/seed_gaps.md`; do not block the run unless no usable topic or source mapping can proceed.",
+            "When GROBID is unavailable or the PDF is scanned/degraded, use `ocr_parse_pdf` only if `pdf_provider_capabilities` reports the OCR provider configured. OCR is a fallback evidence source, not task authority.",
+            "Treat raw GROBID TEI as the authoritative parsed artifact when available. Metadata, sections, references, page spans, and provenance JSON are derived views and must cite the TEI/ref diagnostics.",
+            "If GROBID/OCR are unavailable, the PDF is missing, scanned, degraded, or parsing fails, record it in `reports/seed_gaps.md`; do not block the run unless no usable topic or source mapping can proceed.",
             "`sources/seed_source_packet.json` should use schema_version `missionforge_deepresearch.seed_source_packet.v1` and include source_records for resolved seed papers and usable seed PDFs with stable ids like `SEED1`.",
-            "Seed PDF source records should include `parse_refs` from `inputs/seed_pdf_index.json`: parse_result, manifest, TEI, diagnostics, metadata, sections, references, and provenance refs.",
+            "Seed PDF source records should include `parse_refs` from `inputs/seed_pdf_index.json`: parse_result, manifest, TEI, diagnostics, metadata, sections, references, page spans, provenance, and OCR refs.",
             "`state/seed_control.json` should use schema_version `missionforge_deepresearch.seed_control.v1` and decision `ready_for_source_mapping` when source mapping can continue.",
             "Use `blocked` only when tool or permission failures prevent writing the required seed artifacts.",
             *_optional_input_guidance(request),
@@ -1088,7 +1093,7 @@ def _source_mapper_brief(request: AcademicResearchRequest) -> str:
             "Use academic/repo tools when available. Start live academic runs with `academic_provider_capabilities` and record provider availability, missing optional keys, and disabled enhancements before broad search.",
             "Default academic acquisition is no-key. Do not assume OpenAlex is available unless provider capabilities report it as enabled; missing OpenAlex is a source-gap diagnostic, not a task failure.",
             "If `sources/seed_source_packet.json` is visible, use it as seed evidence and expansion guidance. Do not parse PDFs in this step; seed PDF parsing belongs to the seed normalizer.",
-            "When seed PDF records include `parse_refs` or `parsed_pdf_refs`, carry those refs into `sources/source_packet.json` as `parsed_pdf_refs` and `evidence_refs`; use metadata/sections/references/provenance refs as evidence inputs and expansion cues, not raw PDF text.",
+            "When seed PDF records include `parse_refs` or `parsed_pdf_refs`, carry those refs into `sources/source_packet.json` as `parsed_pdf_refs` and `evidence_refs`; use metadata/sections/references/page_spans/provenance refs as evidence inputs and expansion cues, not raw PDF text.",
             "Before broad search, write `sources/search_plan.json` with query families, provider plan, seed expansion plan when seeds exist, inclusion criteria, stopping criteria, expected evidence classes, and source-count budget.",
             "Use schema_version `missionforge_deepresearch.search_plan.v1` for `sources/search_plan.json`.",
             "Batch independent searches from the search plan through `academic_search.queries` when live tools support it; providers inside each query and queries inside the batch may run concurrently.",
@@ -1189,7 +1194,7 @@ def _researcher_brief(request: AcademicResearchRequest) -> str:
             "In the trends/future directions section, distinguish evidence-supported trends from practical implications and hypotheses.",
             "If evidence is mostly metadata, abstract-only, or README-level, downgrade conclusion strength and use attribution language rather than strong causal claims.",
             "Treat `claims/claim_index.json` as the claim-to-evidence audit artifact. Use schema_version `missionforge_deepresearch.kernel_v2.claim_index.v1` and a `claims` array. Each claim should include `claim_id`, `claim`, `supporting_source_ids`, `evidence_strength`, `verification_status`, and `confidence_note`.",
-            "When a claim uses parsed seed PDF content, include `supporting_evidence_refs` pointing to the relevant metadata/sections/references/provenance refs from the source record. Do not cite a seed PDF filename as evidence for a content claim.",
+            "When a claim uses parsed seed PDF content, include `supporting_evidence_refs` pointing to the relevant metadata/sections/references/page_spans/provenance refs from the source record. Do not cite a seed PDF filename as evidence for a content claim.",
             "Use citations like [S1] for material claims.",
             "Do not hand-author numbered citation anchors; the product citation projector will convert source-id citations to `[cite: N](#ref-N)` and write `citations/citation_registry.json`.",
             "The final report must include all required sections from `product_contract/output_contract.json`, including a References/参考文献 section inside `reports/final_report.md` itself.",
@@ -1244,7 +1249,7 @@ def _researcher_repair_brief(request: AcademicResearchRequest) -> str:
             "Treat `reviews/claim_support_review.json` as the reviewer-authored semantic claim-support audit. Use it to repair unsupported, weak, mismatched, or source-expansion-required claims against `sources/source_packet.json`, fetched/parsed evidence refs, and the frozen contract.",
             "Do not satisfy a claim-support repair by only editing JSON status fields. Repair the reader-facing report, claim index, insight map, evidence index, source gaps, and research state so they agree.",
             "For unsupported or mismatched claims, either remove or weaken the claim, replace the citation with a genuinely supporting source, add a bounded source-mapping continuation request, or mark revision-required when the frozen contract cannot be satisfied.",
-            "For parsed PDF claims, use parsed metadata/sections/references/provenance refs from source records in `supporting_evidence_refs`; raw PDF filenames are not content evidence.",
+            "For parsed PDF claims, use parsed metadata/sections/references/page_spans/provenance refs from source records in `supporting_evidence_refs`; raw PDF filenames are not content evidence.",
             "Required outputs on every repair pass: `reports/final_report.md`, `reports/evidence_index.md`, `reports/source_gaps.md`, `analysis/insight_map.json`, `claims/claim_index.json`, `state/research_state.json`, and `state/researcher_control.json`.",
             "Set `state/researcher_control.json.decision` to `ready_for_review` when the repaired workspace is coherent and ready for reviewer re-check.",
             "Use `continue` only when one more bounded researcher repair pass is necessary before review.",
@@ -1285,7 +1290,7 @@ def _reviewer_rubric(request: AcademicResearchRequest) -> str:
             "Proportion check: source strategy, audit coverage, evidence limitations, and confidence caveats should be explicit but should not dominate the reader-facing report.",
             "Audit placement check: detailed repo/code-audit maps should live in evidence artifacts or source gaps by default; the final report should include only a concise method/confidence summary unless the user requested an audit appendix.",
             "Evidence-conclusion calibration check: when evidence is metadata, abstract-only, README-level, or explicitly weak, require downgraded claim language and visible limits.",
-            "Parsed PDF check: if a report or claim relies on seed PDF content, verify that `claims/claim_index.json.supporting_evidence_refs` points to parsed metadata/sections/references/provenance refs, not only the raw PDF filename.",
+            "Parsed PDF check: if a report or claim relies on seed PDF content, verify that `claims/claim_index.json.supporting_evidence_refs` points to parsed metadata/sections/references/page_spans/provenance refs, not only the raw PDF filename.",
             "Claim-support audit: read `claims/claim_index.json`, `sources/source_packet.json`, `reports/evidence_index.md`, fetched/full-text refs listed in source records, and parsed PDF refs when present. For each claim, decide whether the cited sources and evidence semantically support that claim.",
             f"`reviews/claim_support_review.json` must use schema_version `{_CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION}`.",
             "`reviews/claim_support_review.json` must include `claim_index_ref`, `source_packet_ref`, `evidence_index_ref`, `claim_reviews`, `overall_status`, and `repair_directive`.",
@@ -1339,7 +1344,7 @@ def _judge_rubric(request: AcademicResearchRequest) -> str:
             "The main body should explain the field clearly; method, audit coverage, and source limitations should remain explicit and proportionate.",
             "Do not accept a reader-facing literature review that exposes a full repo/code-audit map as a default body section unless the user explicitly requested an audit appendix.",
             "Do not accept evidence-conclusion mismatch: strong implementation, causal, benchmark, or trend claims need correspondingly strong source, paper, or repo-file evidence; otherwise require repair or revision.",
-            "Do not accept parsed seed PDF content claims unless the claim index cites parsed metadata/sections/references/provenance refs through `supporting_evidence_refs`; raw PDF filenames alone are not content evidence.",
+            "Do not accept parsed seed PDF content claims unless the claim index cites parsed metadata/sections/references/page_spans/provenance refs through `supporting_evidence_refs`; raw PDF filenames alone are not content evidence.",
             "Do not accept when `reviews/claim_support_review.json.overall_status` is repair_required, source_expansion_required, revision_required, or rejected unless you independently find the reviewer audit stale after a completed repair and explain why in `judge/judge_report.json`.",
             "When claim support is inadequate, write `decision=repair` for bounded same-contract fixes, `revision_required` for contract-changing fixes, or `rejected` when the package is unsalvageable under the frozen contract.",
             f"Research intensity: `{profile.intensity.value}`. {profile.guidance}",
@@ -1440,7 +1445,7 @@ def _reference_lines(source_packet: Mapping[str, Any]) -> str:
         lines.append(f"- [{record['source_id']}] {record['title']} ({record.get('locator', '')})")
         parsed_refs = record.get("parsed_pdf_refs") or record.get("parse_refs")
         if isinstance(parsed_refs, Mapping):
-            for key in ("metadata_ref", "sections_ref", "references_ref", "provenance_ref"):
+            for key in ("metadata_ref", "sections_ref", "references_ref", "page_spans_ref", "provenance_ref"):
                 ref = parsed_refs.get(key)
                 if isinstance(ref, str) and ref:
                     lines.append(f"  - {key}: {ref}")

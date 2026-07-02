@@ -86,7 +86,11 @@ def seed_pdf_index_payload(request: Any, *, root: Path, run_root: Path) -> dict[
                 "metadata_ref": f"{parser_output_prefix_ref}/metadata.json",
                 "sections_ref": f"{parser_output_prefix_ref}/sections.json",
                 "references_ref": f"{parser_output_prefix_ref}/references.json",
+                "page_spans_ref": f"{parser_output_prefix_ref}/page_spans.json",
                 "provenance_ref": f"{parser_output_prefix_ref}/provenance.json",
+                "ocr_result_ref": f"{parser_output_prefix_ref}/ocr_result.json",
+                "ocr_text_ref": f"{parser_output_prefix_ref}/ocr_text.txt",
+                "ocr_diagnostics_ref": f"{parser_output_prefix_ref}/ocr_diagnostics.json",
                 "available": available,
                 "sha256": digest,
                 "byte_length": byte_length,
@@ -223,7 +227,11 @@ def _seed_pdf_parse_refs(entry: Mapping[str, Any]) -> dict[str, str]:
         "metadata_ref",
         "sections_ref",
         "references_ref",
+        "page_spans_ref",
         "provenance_ref",
+        "ocr_result_ref",
+        "ocr_text_ref",
+        "ocr_diagnostics_ref",
     ]
     return {field: str(entry.get(field) or "") for field in fields}
 

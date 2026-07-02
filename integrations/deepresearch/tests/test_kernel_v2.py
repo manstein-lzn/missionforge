@@ -546,7 +546,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertIn("pdf", flow.steps[0].tools)
         self.assertIn("academic", flow.steps[0].tools)
         self.assertEqual(flow.toolsets[1].package, "local:extensions/pi-pdf-sources")
-        self.assertEqual(flow.toolsets[1].tools, ["pdf_provider_capabilities", "grobid_parse_pdf"])
+        self.assertEqual(flow.toolsets[1].tools, ["pdf_provider_capabilities", "grobid_parse_pdf", "ocr_parse_pdf"])
 
     def test_researcher_and_reviewer_cannot_self_accept(self) -> None:
         request = AcademicResearchRequest(request_id="kernel-v2-no-self-accept", topic="compiler autotuning")
@@ -718,7 +718,7 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             ["local:extensions/pi-academic-sources", "local:extensions/pi-pdf-sources"],
         )
         self.assertEqual([entry.package for entry in source_lock.extensions], ["local:extensions/pi-academic-sources"])
-        self.assertEqual(seed_lock.extensions[1].required_env, ["GROBID_BASE_URL"])
+        self.assertEqual(seed_lock.extensions[1].required_env, ["GROBID_BASE_URL", "PDF_OCR_BASE_URL"])
 
     def test_kernel_v2_contract_freezes_optional_request_fields(self) -> None:
         request = AcademicResearchRequest.from_dict(
@@ -797,7 +797,11 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
         self.assertEqual(seed_pdf_index["entries"][0]["metadata_ref"], "sources/seed_pdfs/001-paper/metadata.json")
         self.assertEqual(seed_pdf_index["entries"][0]["sections_ref"], "sources/seed_pdfs/001-paper/sections.json")
         self.assertEqual(seed_pdf_index["entries"][0]["references_ref"], "sources/seed_pdfs/001-paper/references.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["page_spans_ref"], "sources/seed_pdfs/001-paper/page_spans.json")
         self.assertEqual(seed_pdf_index["entries"][0]["provenance_ref"], "sources/seed_pdfs/001-paper/provenance.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["ocr_result_ref"], "sources/seed_pdfs/001-paper/ocr_result.json")
+        self.assertEqual(seed_pdf_index["entries"][0]["ocr_text_ref"], "sources/seed_pdfs/001-paper/ocr_text.txt")
+        self.assertEqual(seed_pdf_index["entries"][0]["ocr_diagnostics_ref"], "sources/seed_pdfs/001-paper/ocr_diagnostics.json")
         self.assertTrue(staged_seed_pdf_exists)
         self.assertEqual(seed_source_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
         self.assertEqual(len(seed_source_packet["source_records"]), 2)
@@ -809,10 +813,17 @@ class DeepResearchKernelV2Tests(unittest.TestCase):
             seed_source_packet["source_records"][1]["parse_refs"]["provenance_ref"],
             "sources/seed_pdfs/001-paper/provenance.json",
         )
+        self.assertEqual(
+            seed_source_packet["source_records"][1]["parse_refs"]["page_spans_ref"],
+            "sources/seed_pdfs/001-paper/page_spans.json",
+        )
         seed_pdf_canonical = next(item for item in canonical_sources["sources"] if "SEED2" in item["source_record_ids"])
         self.assertEqual(seed_pdf_canonical["parsed_pdf_refs"]["sections_ref"], "sources/seed_pdfs/001-paper/sections.json")
+        self.assertEqual(seed_pdf_canonical["parsed_pdf_refs"]["page_spans_ref"], "sources/seed_pdfs/001-paper/page_spans.json")
         self.assertIn("sources/seed_pdfs/001-paper/provenance.json", seed_pdf_canonical["evidence_refs"])
+        self.assertIn("sources/seed_pdfs/001-paper/page_spans.json", seed_pdf_canonical["evidence_refs"])
         self.assertIn("metadata_ref: sources/seed_pdfs/001-paper/metadata.json", evidence_index)
+        self.assertIn("page_spans_ref: sources/seed_pdfs/001-paper/page_spans.json", evidence_index)
         self.assertIn("sources/seed_pdfs/001-paper/provenance.json", claim_index["claims"][0]["supporting_evidence_refs"])
         self.assertEqual(claim_validation["status"], "passed")
         self.assertIn("No fixture seed input gaps.", seed_gaps)

@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `web_artifact_access_policy`; next priority is OCR/page-span provenance hardening
+Status: `pdf_ocr_page_span_provenance`; next priority is citation evidence UX hardening
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -307,12 +307,14 @@ Current state:
 - A conditional `seed_normalizer` PiWorker step writes
   `sources/seed_source_packet.json`, `reports/seed_gaps.md`, and
   `state/seed_control.json` before source mapping when seeds exist.
-- `pi-pdf-sources` provides `pdf_provider_capabilities` and
-  `grobid_parse_pdf`. It delegates to a configured GROBID service and writes
-  raw TEI, diagnostics, metadata, sections, references, and provenance under
-  `sources/seed_pdfs/`; it rejects absolute paths and unsafe refs.
-- There is not yet a Web PDF upload UI, OCR fallback, or source-mapper authored
-  semantic use of parsed PDF spans beyond the seed packet refs.
+- `pi-pdf-sources` provides `pdf_provider_capabilities`, `grobid_parse_pdf`,
+  and `ocr_parse_pdf`. It delegates to configured GROBID/OCR providers and
+  writes raw TEI when available plus diagnostics, metadata, sections,
+  references, page spans, and provenance under `sources/seed_pdfs/`; it rejects
+  absolute paths and unsafe refs.
+- Web PDF upload, approved-project seed revision flow, and page-span refs are
+  active. Source-mapper/researcher semantic use remains PiWorker-authored and
+  evidence-ref driven.
 
 Target:
 
@@ -331,7 +333,8 @@ Target:
   - GROBID TEI ref
   - metadata candidate ref
   - parse diagnostics ref
-  - later page/span provenance refs
+  - page/span provenance refs
+  - optional OCR fallback refs
 
 ### G3: Source Graph, Deduplication, And Ranking
 
@@ -1724,8 +1727,8 @@ Implemented notes:
 
 - M5A is complete for artifact lifecycle, CLI seed refs, fixture flow, and
   GROBID-first extension boundary.
-- M5B is complete for deterministic TEI metadata/sections/references/provenance
-  projection refs and seed packet `parse_refs`.
+- M5B is complete for deterministic TEI metadata/sections/references/
+  provenance projection refs and seed packet `parse_refs`.
 - M5C is complete for carrying parsed PDF evidence refs into source packets,
   canonical sources, evidence indexes, and claim indexes.
 - M5D is complete for Web seed upload. Browser seed-paper input and
@@ -1737,10 +1740,17 @@ Implemented notes:
   not raw seed-paper values or PDF bytes. After approval, new seed inputs are
   accepted only through the explicit revision lifecycle; active tasks still
   reject seed additions until a safe revision boundary is available.
+- M5E is complete for page-span evidence provenance and optional OCR fallback.
+  `pi-pdf-sources` now projects GROBID coordinates into
+  `sources/seed_pdfs/{id}/page_spans.json`, carries `page_spans_ref` through
+  `inputs/seed_pdf_index.json`, seed source packets, canonical sources,
+  evidence indexes, and claim-support refs, and exposes `ocr_parse_pdf` as an
+  external-provider fallback gated by `PDF_OCR_BASE_URL`. Missing OCR
+  configuration records diagnostics and is not a task failure.
 - DeepResearch does not hand-parse PDF binaries or dump extracted full text
   into context.
-- Remaining M5 work: OCR fallback and richer page/span provenance when GROBID
-  coordinates are available.
+- Remaining M5 work: mature citation evidence UX over parsed/fetched evidence
+  refs.
 
 ### M6: Citation Support Judge
 
@@ -1780,9 +1790,9 @@ Exit criteria:
   non-passing claim-support audit.
 - Judge `revision_required` writes a refs-only pending revision request while
   preserving the frozen contract.
-- Remaining post-M6 hardening: richer URL accessibility checks, page/span-level
-  parsed PDF provenance when GROBID coordinates are available, and broader live
-  fetched/full-text evidence coverage.
+- Remaining post-M6 hardening: richer URL accessibility checks, citation
+  evidence UX over parsed page spans, and broader live fetched/full-text
+  evidence coverage.
 
 ### M6.1: Acceptance Gate And Revision Request Hardening
 

@@ -20,8 +20,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   `reports/seed_gaps.md`, and `state/seed_control.json`.
 - Active PDF boundary: `pi-pdf-sources` delegates scholarly PDF parsing to
   GROBID when configured, writes raw TEI plus metadata/sections/references/
-  provenance projections under `sources/seed_pdfs/`, and records diagnostics
-  when unavailable.
+  page-spans/provenance projections under `sources/seed_pdfs/`, and records
+  diagnostics when unavailable. It also exposes an optional `ocr_parse_pdf`
+  fallback gated by `PDF_OCR_BASE_URL`; missing OCR configuration is a source
+  gap, not a task failure.
 - Active parsed-PDF evidence path: seed PDF `parse_refs` are preserved through
   source records, canonical sources, evidence indexes, and claim indexes as
   explicit evidence refs.
@@ -122,10 +124,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Upgrade DeepResearch toward the academic literature-review product standard
   in [DeepResearch Academic Literature Upgrade Plan](DEEP_RESEARCH_ACADEMIC_LITERATURE_UPGRADE_PLAN.md).
 - Harden citation and claim support with richer URL accessibility checks,
-  page/span-level parsed PDF provenance when available, and live fetched/full-text
+  citation evidence UX over parsed page spans, and live fetched/full-text
   evidence coverage without making Python a semantic judge.
-- Continue seed/PDF ingestion with OCR fallback and richer page/span citation
-  support.
+- Continue seed/PDF ingestion with stronger page/span citation inspection and
+  better scanned-PDF diagnostics.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into

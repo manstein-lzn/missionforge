@@ -2,6 +2,7 @@ import { Type } from "typebox";
 
 import {
   grobidParsePdf,
+  ocrParsePdf,
   pdfProviderCapabilities,
 } from "./src/pdf_sources.js";
 
@@ -36,7 +37,7 @@ export default function pdfSourcesExtension(pi) {
     promptGuidelines: [
       "Use workspace refs, not absolute paths.",
       "Write parser outputs under a sources/seed_pdfs/... prefix.",
-      "On successful GROBID parsing, use the returned metadata/sections/references/provenance refs instead of pasting TEI into context.",
+      "On successful GROBID parsing, use the returned metadata/sections/references/page_spans/provenance refs instead of pasting TEI into context.",
       "Treat raw TEI as the authoritative parsed artifact; Markdown summaries are derived views only.",
       "If parsing is unavailable or degraded, record diagnostics and continue with public metadata search.",
     ],
@@ -49,6 +50,31 @@ export default function pdfSourcesExtension(pi) {
     }),
     execute: async (_toolCallId, params, signal) => {
       const result = await grobidParsePdf(params, signal);
+      return jsonToolResult(result);
+    },
+  });
+
+  pi.registerTool({
+    name: "ocr_parse_pdf",
+    label: "OCR Parse PDF",
+    description:
+      "Submit an authorized workspace PDF ref to a configured OCR provider and write page-span evidence artifacts. This tool delegates OCR to an external provider.",
+    promptSnippet:
+      "Use ocr_parse_pdf only as a fallback for scanned or GROBID-unavailable seed PDFs when PDF_OCR_BASE_URL is configured.",
+    promptGuidelines: [
+      "Use workspace refs, not absolute paths.",
+      "Write OCR outputs under the same sources/seed_pdfs/... prefix used by the seed PDF index.",
+      "Do not paste OCR text into chat context; use ocr_text_ref and page_spans_ref as artifact refs.",
+      "If OCR is unavailable or degraded, record diagnostics and continue with public metadata search.",
+    ],
+    parameters: Type.Object({
+      pdf_ref: Type.String({ description: "Workspace PDF ref under inputs/, for example inputs/seed_pdfs/001-paper/source.pdf." }),
+      output_prefix_ref: Type.String({
+        description: "Workspace output prefix under sources/seed_pdfs/, for example sources/seed_pdfs/001-paper.",
+      }),
+    }),
+    execute: async (_toolCallId, params, signal) => {
+      const result = await ocrParsePdf(params, signal);
       return jsonToolResult(result);
     },
   });
