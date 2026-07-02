@@ -17,6 +17,7 @@ from missionforge_deepresearch.frontdesk import (
     FrontDeskFixtureAdapter,
     approve_frontdesk_requirements,
     evaluate_frontdesk_resume_state,
+    read_approved_frontdesk_request,
     run_deepresearch_frontdesk_turn,
 )
 from missionforge_deepresearch.project_lifecycle import (
@@ -54,6 +55,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
             requirements = (root / second.requirements_ref).read_text(encoding="utf-8")
             control = _read_json(root, second.control_ref)
             request = approve_frontdesk_requirements(request_id="frontdesk-demo", workspace=root)
+            approved_request = read_approved_frontdesk_request(request_id="frontdesk-demo", workspace=root)
             approval_exists = (root / "runs/frontdesk-demo" / FRONTDESK_APPROVAL_REF).exists()
 
         self.assertEqual(first.status, "needs_user_answer")
@@ -76,6 +78,7 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
         self.assertIn("可执行调研题目", requirements)
         self.assertEqual(control["decision"], "ready_for_approval")
         self.assertEqual(request.request_id, "frontdesk-demo")
+        self.assertEqual(approved_request.request_id, "frontdesk-demo")
         self.assertEqual(request.research_intensity.value, "intensive")
         self.assertTrue(approval_exists)
 
@@ -215,6 +218,38 @@ class DeepResearchFrontDeskTests(unittest.TestCase):
 
             with self.assertRaisesRegex(mf.ContractValidationError, "changed after research request projection"):
                 approve_frontdesk_requirements(request_id="frontdesk-stale", workspace=root)
+
+    def test_read_approved_request_requires_existing_fresh_approval(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            run_deepresearch_frontdesk_turn(
+                initial_input="研究 deep research 工具",
+                request_id="frontdesk-read-approval",
+                workspace=root,
+                adapter=FrontDeskFixtureAdapter(),
+            )
+            result = run_deepresearch_frontdesk_turn(
+                user_message="面向工程选型，覆盖工具架构和报告产物。",
+                request_id="frontdesk-read-approval",
+                workspace=root,
+                adapter=FrontDeskFixtureAdapter(),
+            )
+
+            with self.assertRaisesRegex(mf.ContractValidationError, "frontdesk/approval.json"):
+                read_approved_frontdesk_request(request_id="frontdesk-read-approval", workspace=root)
+
+            approved = approve_frontdesk_requirements(request_id="frontdesk-read-approval", workspace=root)
+            loaded = read_approved_frontdesk_request(request_id="frontdesk-read-approval", workspace=root)
+            (root / result.run_workspace_ref / FRONTDESK_REQUIREMENTS_REF).write_text(
+                "# DeepResearch 调研需求文档\n\napproval 后被修改。\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(mf.ContractValidationError, "changed after research request projection|stale"):
+                read_approved_frontdesk_request(request_id="frontdesk-read-approval", workspace=root)
+
+        self.assertEqual(approved.request_id, "frontdesk-read-approval")
+        self.assertEqual(loaded.request_id, "frontdesk-read-approval")
 
 
 def _read_json(root: Path, ref: str):

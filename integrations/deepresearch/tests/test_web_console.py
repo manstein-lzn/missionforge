@@ -286,6 +286,13 @@ class WebConsoleTests(unittest.TestCase):
                 body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
                 frontdesk_config=frontdesk_config,
             )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-ready",
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
             response = web_console_response(
                 workspace=root,
                 request_id="web-start-ready",
@@ -319,6 +326,50 @@ class WebConsoleTests(unittest.TestCase):
         self.assertTrue(report_exists)
         self.assertEqual(json.loads(task_api.body)["status"], "completed")
 
+    def test_research_start_post_requires_explicit_frontdesk_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            frontdesk_config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-unapproved",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
+                frontdesk_config=frontdesk_config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-unapproved",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
+                frontdesk_config=frontdesk_config,
+            )
+
+            with patch("missionforge_deepresearch.web_actions.run_deepresearch_kernel_v2", Mock()) as run_mock:
+                response = web_console_response(
+                    workspace=root,
+                    request_id="web-start-unapproved",
+                    method="POST",
+                    path="/api/research/start",
+                    body=json.dumps({"adapter_mode": "fixture"}),
+                    kernel_config=kernel_config,
+                )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("frontdesk/approval.json", payload["message"])
+        run_mock.assert_not_called()
+
     def test_research_start_post_does_not_rerun_completed_task(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -346,6 +397,13 @@ class WebConsoleTests(unittest.TestCase):
                 path="/api/frontdesk/message",
                 body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
                 frontdesk_config=frontdesk_config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-once",
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
             )
             first = web_console_response(
                 workspace=root,
@@ -508,6 +566,113 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(final_task["result_ref"], "packages/deepresearch_kernel_v2_result.json")
         run_mock.assert_not_called()
+
+    def test_task_api_sanitizes_malformed_and_extra_task_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            task_ref = root / "runs/web-task-sanitize/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text("{", encoding="utf-8")
+            malformed = web_console_response(
+                workspace=root,
+                request_id="web-task-sanitize",
+                method="GET",
+                path="/api/task",
+            )
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "task-1",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-task-sanitize",
+                        "status": "running",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "",
+                        "result_ref": "",
+                        "error_summary": "",
+                        "secret": "should-not-leak",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            sanitized = web_console_response(
+                workspace=root,
+                request_id="web-task-sanitize",
+                method="GET",
+                path="/api/task",
+            )
+
+        malformed_payload = json.loads(malformed.body)
+        sanitized_payload = json.loads(sanitized.body)
+        self.assertEqual(malformed.status, 200)
+        self.assertEqual(malformed_payload["status"], "idle")
+        self.assertEqual(sanitized_payload["status"], "running")
+        self.assertNotIn("secret", sanitized_payload)
+
+    def test_research_start_failure_state_does_not_include_secret_exception_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            frontdesk_config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-failure",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
+                frontdesk_config=frontdesk_config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-failure",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
+                frontdesk_config=frontdesk_config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-start-failure",
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
+            task_ref = root / "runs/web-start-failure/web/tasks/current_task.json"
+
+            with patch(
+                "missionforge_deepresearch.web_actions.run_deepresearch_kernel_v2",
+                side_effect=RuntimeError("SECRET_TOKEN=abc123"),
+            ):
+                response = web_console_response(
+                    workspace=root,
+                    request_id="web-start-failure",
+                    method="POST",
+                    path="/api/research/start",
+                    body=json.dumps({}),
+                    kernel_config=kernel_config,
+                )
+                deadline = 100
+                while deadline > 0:
+                    if task_ref.is_file():
+                        task_payload = json.loads(task_ref.read_text(encoding="utf-8"))
+                        if task_payload["status"] == "failed":
+                            break
+                    deadline -= 1
+                    time.sleep(0.01)
+                final_task = json.loads(task_ref.read_text(encoding="utf-8"))
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(final_task["status"], "failed")
+        self.assertEqual(final_task["error_summary"], "RuntimeError: task failed")
+        self.assertNotIn("SECRET_TOKEN", json.dumps(final_task))
 
 
 if __name__ == "__main__":

@@ -8,7 +8,12 @@ from typing import Any, Callable, Mapping
 
 import missionforge as mf
 
-from .frontdesk import FRONTDESK_INITIAL_INPUT_REF, approve_frontdesk_requirements, run_deepresearch_frontdesk_turn
+from .frontdesk import (
+    FRONTDESK_INITIAL_INPUT_REF,
+    approve_frontdesk_requirements,
+    read_approved_frontdesk_request,
+    run_deepresearch_frontdesk_turn,
+)
 from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
 from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, json_response
 from .web_tasks import read_or_record_existing_task, start_background_task
@@ -107,7 +112,7 @@ def research_start_response(
         )
 
     try:
-        request = approve_frontdesk_requirements(request_id=request_id, workspace=workspace)
+        request = read_approved_frontdesk_request(request_id=request_id, workspace=workspace)
 
         def runner() -> Any:
             return run_deepresearch_kernel_v2(

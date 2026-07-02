@@ -1313,9 +1313,8 @@ Deliverables:
 - `POST /api/research/start` endpoint.
 - `GET /api/task` endpoint.
 - `web/tasks/current_task.json` as a refs-first web task state artifact.
-- Browser Start Research action that calls the existing FrontDesk approval
-  boundary, then starts `run_deepresearch_kernel_v2` in a process-local
-  background task.
+- Browser Start Research action that verifies an existing FrontDesk approval,
+  then starts `run_deepresearch_kernel_v2` in a process-local background task.
 - Snapshot/dashboard task status card and artifact entry for web task state.
 - CLI wiring for web-console Kernel adapter mode without exposing provider
   selection to browser requests.
@@ -1332,6 +1331,9 @@ Exit criteria:
 - Existing project runs are not silently overwritten by clicking Start Research.
   Future retry/revise flows must use explicit runtime controls and revision
   records.
+- Current duplicate-start protection is process-local plus existing-result-ref
+  detection. Cross-process filesystem locking belongs with the next runtime
+  controls milestone.
 
 ### M4: Citation Projection
 

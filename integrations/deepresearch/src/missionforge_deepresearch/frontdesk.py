@@ -118,7 +118,7 @@ def run_deepresearch_frontdesk_turn(
     if adapter is None:
         raise mf.ContractValidationError("deepresearch_frontdesk requires an explicit PiWorker adapter")
     root = Path(workspace).resolve()
-    run_ref = f"runs/{request_id}"
+    run_ref = _run_ref(request_id)
     run_root = root / run_ref
     run_root.mkdir(parents=True, exist_ok=True)
     write_project_manifest(run_root, request_id=request_id)
@@ -224,17 +224,9 @@ def approve_frontdesk_requirements(
     """Approve the current requirements document and return the frozen research request."""
 
     root = Path(workspace).resolve()
-    run_ref = f"runs/{request_id}"
+    run_ref = _run_ref(request_id)
     run_root = root / run_ref
-    control = read_json_ref(run_root, FRONTDESK_CONTROL_REF, "frontdesk_control")
-    if control.get("decision") != "ready_for_approval":
-        raise mf.ContractValidationError("frontdesk requirements are not ready for approval")
-    projection = read_json_ref(run_root, FRONTDESK_RESEARCH_PROJECTION_REF, "frontdesk_research_projection")
-    requirements = read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
-    if projection.get("requirements_hash") != _text_hash(requirements):
-        raise mf.ContractValidationError("frontdesk requirements changed after research request projection")
-    request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
-    request = AcademicResearchRequest.from_dict(request_payload)
+    request, requirements_hash = _ready_frontdesk_request(run_root)
     write_json_ref(
         run_root,
         FRONTDESK_APPROVAL_REF,
@@ -244,10 +236,56 @@ def approve_frontdesk_requirements(
             "requirements_ref": FRONTDESK_REQUIREMENTS_REF,
             "research_request_ref": FRONTDESK_RESEARCH_REQUEST_REF,
             "research_projection_ref": FRONTDESK_RESEARCH_PROJECTION_REF,
-            "requirements_hash": projection["requirements_hash"],
+            "requirements_hash": requirements_hash,
         },
     )
     return request
+
+
+def read_approved_frontdesk_request(
+    *,
+    request_id: str,
+    workspace: str | Path = ".",
+) -> AcademicResearchRequest:
+    """Return the already-approved research request without writing approval."""
+
+    root = Path(workspace).resolve()
+    run_ref = _run_ref(request_id)
+    run_root = root / run_ref
+    approval = read_json_ref(run_root, FRONTDESK_APPROVAL_REF, "frontdesk_approval")
+    if approval.get("schema_version") != "missionforge_deepresearch.frontdesk_approval.v1":
+        raise mf.ContractValidationError("frontdesk approval schema_version is unsupported")
+    if approval.get("decision") != "approved":
+        raise mf.ContractValidationError("frontdesk requirements are not approved")
+    if approval.get("requirements_ref") != FRONTDESK_REQUIREMENTS_REF:
+        raise mf.ContractValidationError("frontdesk approval requirements_ref is invalid")
+    if approval.get("research_request_ref") != FRONTDESK_RESEARCH_REQUEST_REF:
+        raise mf.ContractValidationError("frontdesk approval research_request_ref is invalid")
+    if approval.get("research_projection_ref") != FRONTDESK_RESEARCH_PROJECTION_REF:
+        raise mf.ContractValidationError("frontdesk approval research_projection_ref is invalid")
+    request, requirements_hash = _ready_frontdesk_request(run_root)
+    if approval.get("requirements_hash") != requirements_hash:
+        raise mf.ContractValidationError("frontdesk approval is stale")
+    return request
+
+
+def _ready_frontdesk_request(run_root: Path) -> tuple[AcademicResearchRequest, str]:
+    control = read_json_ref(run_root, FRONTDESK_CONTROL_REF, "frontdesk_control")
+    if control.get("decision") != "ready_for_approval":
+        raise mf.ContractValidationError("frontdesk requirements are not ready for approval")
+    projection = read_json_ref(run_root, FRONTDESK_RESEARCH_PROJECTION_REF, "frontdesk_research_projection")
+    requirements = read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
+    requirements_hash = str(projection.get("requirements_hash") or "")
+    if requirements_hash != _text_hash(requirements):
+        raise mf.ContractValidationError("frontdesk requirements changed after research request projection")
+    request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
+    return AcademicResearchRequest.from_dict(request_payload), requirements_hash
+
+
+def _run_ref(request_id: str) -> str:
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise mf.ContractValidationError("DeepResearch request_id is required")
+    return mf.validate_ref(f"runs/{request_id.strip()}", "deepresearch_frontdesk.run_ref")
 
 
 class FrontDeskFixtureAdapter:
@@ -388,7 +426,7 @@ def evaluate_frontdesk_resume_state(
     """Evaluate the latest FrontDesk ContextPackage and write diagnostics."""
 
     root = Path(workspace).resolve()
-    run_root = root / f"runs/{request_id}"
+    run_root = root / _run_ref(request_id)
     if not run_root.exists():
         return ""
     write_project_manifest(run_root, request_id=request_id)

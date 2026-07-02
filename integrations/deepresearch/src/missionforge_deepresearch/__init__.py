@@ -11,6 +11,7 @@ from .frontdesk import (
     DeepResearchFrontDeskResult,
     FrontDeskFixtureAdapter,
     approve_frontdesk_requirements,
+    read_approved_frontdesk_request,
     run_deepresearch_frontdesk_turn,
 )
 from .product_contract import AcademicResearchRequest, ResearchIntensity, ResearchIntensityProfile, research_intensity_profile
@@ -32,6 +33,7 @@ __all__ = [
     "create_web_console_server",
     "deepresearch_kernel_v2_flow_run_id",
     "research_intensity_profile",
+    "read_approved_frontdesk_request",
     "run_deepresearch_frontdesk_turn",
     "run_deepresearch_kernel_v2",
     "run_frontdesk_tui",

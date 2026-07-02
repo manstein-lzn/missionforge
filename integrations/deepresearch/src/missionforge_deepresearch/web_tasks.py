@@ -3,27 +3,44 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
+import os
 from pathlib import Path
 import threading
 from typing import Any, Callable, Iterable, Mapping
 
 import missionforge as mf
 
-from .workspace import read_json_ref, ref_exists, write_json_ref
+from .workspace import read_json_ref, ref_exists, resolve_workspace_ref
 
 
 WEB_TASK_STATE_REF = "web/tasks/current_task.json"
 WEB_TASK_SCHEMA_VERSION = "missionforge_deepresearch.web_task_state.v1"
+_TASK_STATUSES = {"idle", "running", "completed", "failed", "interrupted"}
+_TASK_FIELDS = (
+    "schema_version",
+    "task_id",
+    "task_kind",
+    "request_id",
+    "status",
+    "started_at",
+    "finished_at",
+    "result_ref",
+    "error_summary",
+)
 
 _TASK_LOCK = threading.Lock()
 _RUNNING_THREADS: dict[str, threading.Thread] = {}
 
 
 def read_web_task_state(run_root: str | Path) -> dict[str, Any]:
-    if not ref_exists(run_root, WEB_TASK_STATE_REF):
+    try:
+        if not ref_exists(run_root, WEB_TASK_STATE_REF):
+            return _idle_state()
+        payload = read_json_ref(run_root, WEB_TASK_STATE_REF, "deepresearch_web_task_state")
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError, mf.ContractValidationError):
         return _idle_state()
-    payload = read_json_ref(run_root, WEB_TASK_STATE_REF, "deepresearch_web_task_state")
-    return dict(payload) if isinstance(payload, Mapping) else _idle_state()
+    return _sanitize_task_state(payload)
 
 
 def start_background_task(
@@ -52,10 +69,10 @@ def start_background_task(
                     task_kind=task_kind,
                     result_ref=existing_ref,
                 )
-                write_json_ref(run_root, WEB_TASK_STATE_REF, state)
+                _write_task_state(run_root, state)
                 return state
             interrupted = _interrupted_state(existing)
-            write_json_ref(run_root, WEB_TASK_STATE_REF, interrupted)
+            _write_task_state(run_root, interrupted)
             return interrupted
         if existing.get("status") in {"completed", "failed", "interrupted"}:
             return existing
@@ -66,7 +83,7 @@ def start_background_task(
                 task_kind=task_kind,
                 result_ref=existing_ref,
             )
-            write_json_ref(run_root, WEB_TASK_STATE_REF, state)
+            _write_task_state(run_root, state)
             return state
         task_id = f"{task_kind}-{_utc_now().replace(':', '').replace('-', '')}"
         state = {
@@ -80,7 +97,7 @@ def start_background_task(
             "result_ref": "",
             "error_summary": "",
         }
-        write_json_ref(run_root, WEB_TASK_STATE_REF, state)
+        _write_task_state(run_root, state)
         thread = threading.Thread(
             target=_run_task,
             kwargs={
@@ -122,10 +139,10 @@ def read_or_record_existing_task(
                     task_kind=task_kind,
                     result_ref=existing_ref,
                 )
-                write_json_ref(run_root, WEB_TASK_STATE_REF, state)
+                _write_task_state(run_root, state)
                 return state
             interrupted = _interrupted_state(existing)
-            write_json_ref(run_root, WEB_TASK_STATE_REF, interrupted)
+            _write_task_state(run_root, interrupted)
             return interrupted
         if existing.get("status") in {"completed", "failed", "interrupted"}:
             return existing
@@ -137,7 +154,7 @@ def read_or_record_existing_task(
             task_kind=task_kind,
             result_ref=existing_ref,
         )
-        write_json_ref(run_root, WEB_TASK_STATE_REF, state)
+        _write_task_state(run_root, state)
         return state
 
 
@@ -158,7 +175,7 @@ def _run_task(
             "result_ref": result_ref if isinstance(result_ref, str) else "",
             "error_summary": "",
         })
-        write_json_ref(run_root, WEB_TASK_STATE_REF, payload)
+        _write_task_state(run_root, payload)
     except Exception as exc:  # pragma: no cover - defensive task boundary.
         payload = dict(state)
         payload.update({
@@ -167,7 +184,7 @@ def _run_task(
             "result_ref": "",
             "error_summary": f"{type(exc).__name__}: task failed",
         })
-        write_json_ref(run_root, WEB_TASK_STATE_REF, payload)
+        _write_task_state(run_root, payload)
     finally:
         with _TASK_LOCK:
             _RUNNING_THREADS.pop(task_key, None)
@@ -190,6 +207,35 @@ def _idle_state() -> dict[str, Any]:
         "result_ref": "",
         "error_summary": "",
     }
+
+
+def _sanitize_task_state(payload: Mapping[str, Any]) -> dict[str, Any]:
+    state = _idle_state()
+    if payload.get("schema_version") != WEB_TASK_SCHEMA_VERSION:
+        return state
+    status = _string_field(payload, "status")
+    if status not in _TASK_STATUSES:
+        return state
+    for field_name in _TASK_FIELDS:
+        state[field_name] = _string_field(payload, field_name)
+    state["schema_version"] = WEB_TASK_SCHEMA_VERSION
+    state["status"] = status
+    return state
+
+
+def _string_field(payload: Mapping[str, Any], field_name: str) -> str:
+    value = payload.get(field_name)
+    return value if isinstance(value, str) else ""
+
+
+def _write_task_state(run_root: str | Path, payload: Mapping[str, Any]) -> str:
+    state = _sanitize_task_state(payload)
+    path = resolve_workspace_ref(run_root, WEB_TASK_STATE_REF)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    temp_path.write_text(json.dumps(state, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    temp_path.replace(path)
+    return WEB_TASK_STATE_REF
 
 
 def _existing_run_state(*, request_id: str, task_kind: str, result_ref: str) -> dict[str, Any]:
