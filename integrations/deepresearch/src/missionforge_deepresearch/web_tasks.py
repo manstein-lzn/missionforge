@@ -39,20 +39,23 @@ _RUNNING_THREADS: dict[str, threading.Thread] = {}
 
 
 def read_web_task_state(run_root: str | Path) -> dict[str, Any]:
+    root = Path(run_root).resolve()
     try:
-        if not ref_exists(run_root, WEB_TASK_STATE_REF):
-            if _lock_exists(run_root):
-                return _locked_state_from_metadata(run_root)
+        if not ref_exists(root, WEB_TASK_STATE_REF):
+            if _lock_exists(root):
+                return _locked_state_from_metadata(root)
             return _idle_state()
-        payload = read_json_ref(run_root, WEB_TASK_STATE_REF, "deepresearch_web_task_state")
+        payload = read_json_ref(root, WEB_TASK_STATE_REF, "deepresearch_web_task_state")
     except (json.JSONDecodeError, UnicodeDecodeError, OSError, mf.ContractValidationError):
-        if _lock_exists(run_root):
-            return _locked_state_from_metadata(run_root)
+        if _lock_exists(root):
+            return _locked_state_from_metadata(root)
         return _idle_state()
     state = _sanitize_task_state(payload)
+    if _lock_exists(root):
+        if state.get("status") == "running" and _thread_alive(str(root)):
+            return state
+        return _locked_state_from_metadata(root, existing=state)
     if state.get("status") == "locked":
-        if _lock_exists(run_root):
-            return _locked_state_from_metadata(run_root, existing=state)
         return _idle_state()
     return state
 
@@ -64,6 +67,8 @@ def start_background_task(
     task_kind: str,
     runner: Callable[[], Any],
     existing_result_refs: Iterable[str] = (),
+    restart_terminal_statuses: Iterable[str] = (),
+    before_start: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Start a background task if no live task is already running."""
 
@@ -71,6 +76,7 @@ def start_background_task(
     run_root = root / _run_ref(request_id)
     run_root.mkdir(parents=True, exist_ok=True)
     task_key = str(run_root)
+    restartable = set(restart_terminal_statuses)
     with _TASK_LOCK:
         existing = read_web_task_state(run_root)
         if existing.get("status") == "running":
@@ -92,7 +98,7 @@ def start_background_task(
             return interrupted
         if existing.get("status") == "locked":
             return existing
-        if existing.get("status") in {"completed", "failed", "interrupted"}:
+        if existing.get("status") in {"completed", "failed", "interrupted"} and existing.get("status") not in restartable:
             return existing
         existing_ref = _first_existing_ref(run_root, existing_result_refs)
         if existing_ref:
@@ -125,6 +131,8 @@ def start_background_task(
             "lock_ref": lock_ref,
         }
         try:
+            if before_start is not None:
+                before_start(state)
             _write_task_state(run_root, state)
             thread = threading.Thread(
                 target=_run_task,

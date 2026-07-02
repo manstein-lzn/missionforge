@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_retry_revise_lifecycle_first_slice`; next priority is `m3b_attempt_generation`
+Status: `timeline_attempt_grouping_hardened`; next priority is `seed_upload_ui`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1221,8 +1221,45 @@ Implemented notes:
   user-authored reason text refs, and explicit lock recovery records an action
   before converting the web task to `interrupted`. It does not start a new
   Kernel attempt or mutate the frozen contract.
-- Remaining M3B work: attempt generation for consuming retry/revision requests,
-  richer progress timeline, and upload UI.
+- M3B-E first slice is complete for consuming explicit pending retry requests
+  and starting a new Kernel retry attempt from the browser. The attempt path
+  writes `project/attempt_index.json`, per-attempt manifests under
+  `project/attempts/{attempt_id}/attempt_manifest.json`, and before-run
+  snapshots for stable result refs that may be overwritten by the current
+  Kernel v2 output shape. Retry consumption is recorded back to
+  `project/lifecycle/latest_retry_request.json`; revision requests remain
+  pending and are not consumed by this slice.
+- M3B-F first slice is complete for a refs-first progress timeline. The web
+  console projects sanitized rows from `web/progress_timeline.jsonl`, flow
+  ledgers, step records, runtime interaction events,
+  `project/lifecycle_actions.jsonl`, `project/attempt_index.json`, and
+  `web/tasks/current_task.json`. Live FrontDesk/Kernel web runs append
+  sanitized progress markers without persisting raw user text, provider payloads,
+  prompt bodies, or adapter progress messages.
+- M3B-G first slice is complete for consuming explicit pending revision
+  requests through a contract-revision boundary. The web console exposes
+  `POST /api/research/revision/start`, writes revision records under
+  `project/revisions/{revision_id}/`, updates `project/revision_index.json`,
+  consumes `project/lifecycle/latest_revise_request.json`, stages revision
+  artifacts through `inputs/contract_revision_index.json`, and starts a
+  server-owned Kernel revision attempt using the revised request.
+- M3B-H first slice is complete for attempt-scoped output projection. Completed
+  retry/revision attempts copy Kernel v2 stable outputs into
+  `project/attempts/{attempt_id}/outputs/`, write an output manifest, and update
+  `project/current_output_pointer.json`. The web snapshot and artifact browser
+  prefer current attempt-scoped refs while preserving stable refs as fallback.
+- M3B-I is complete for attempt-grouped progress timeline projection. The web
+  snapshot exposes `progress_timeline_groups`, groups sanitized timeline rows by
+  project/attempt refs, highlights the current output pointer, and keeps the
+  flat timeline as an operator fallback view.
+- Reviewer hardening is complete for the M3B-E/F/G/H/I slice. Failed contract
+  revision attempts keep the frozen revised request as current task authority;
+  retry attempts preserve lifecycle `current_revision_ref`; current-output
+  snapshots no longer mix attempt-scoped refs with stable refs after a current
+  pointer exists; FrontDesk dialogue is projected by ref/turn metadata instead
+  of raw dialogue text; and attempt runtime-progress rows carry attempt refs for
+  grouping.
+- Remaining M3B work: upload UI.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1354,7 +1391,7 @@ Exit criteria:
 
 ### M3B-C: Web Runtime Controls Through Interaction Plane
 
-Status: `m3b_d_first_slice_complete`
+Status: `m3b_retry_attempt_generation_first_slice`
 
 Deliverables:
 
@@ -1391,8 +1428,9 @@ Deliverables:
     `project/lifecycle_actions.jsonl`
   - user-entered reasons are written to
     `project/lifecycle/action_text/*.txt` and only referenced by action JSON.
-  - retry requires an approved project plus a failed, interrupted, or locked
-    web task.
+  - retry requires an approved project plus a failed or interrupted web task;
+    locked tasks must first use explicit lock recovery, which converts the web
+    task to `interrupted`.
   - revision requires an approved/completed/revision-required project phase and
     records a pending revision request without mutating the frozen contract.
   - lock recovery requires an approved project plus a locked/stale-lock task
@@ -1410,11 +1448,224 @@ Exit criteria:
 
 Remaining runtime-control hardening:
 
-- Attempt-generation support for consuming pending retry/revise lifecycle
-  requests and starting a new Kernel attempt without overwriting previous refs.
-- Progress timeline from flow ledger and runtime progress events.
+- Timeline UX hardening, including per-attempt grouping and richer live polling.
 - Richer stale-lock diagnostics, including age/owner display and optional
   process-local liveness hints, without automatic lock stealing.
+
+### M3B-E: Retry Attempt Generation
+
+Status: `retry_first_slice_complete`
+
+Deliverables:
+
+- `research_attempts.py` product-layer attempt boundary.
+- `POST /api/research/attempt/start` endpoint. It is separate from
+  `POST /api/research/start`; the original start endpoint remains first-run
+  only and still refuses to silently rerun completed projects.
+- Retry attempt manifests under
+  `project/attempts/{attempt_id}/attempt_manifest.json` with request id,
+  generation, source retry action ref/id, reason ref, base contract ref/hash,
+  parent run refs, task/lock refs, before snapshot ref, status, and result refs.
+- Project attempt index at `project/attempt_index.json`.
+- Pending retry consumption updates
+  `project/lifecycle/latest_retry_request.json` with `status: consumed`,
+  `consumed_at`, and `consumed_by_attempt_ref`, and appends the consumed action
+  to `project/lifecycle_actions.jsonl`.
+- Attempt manifest/index creation and retry consumption run inside the
+  background-task start boundary after the workspace-local web run lock is
+  acquired, so concurrent retry-start requests cannot publish separate pending
+  attempts for the same retry request.
+- Before snapshots preserve key stable refs, including lifecycle state, web
+  task state, result package, run status, reports, source packet, canonical
+  sources, coverage report, acceptance gate, and judge report.
+- Dashboard shows attempt count, latest attempt status, latest attempt ref, and
+  a dedicated Start Retry Attempt button.
+- Tests cover missing retry rejection, retry consumption, before snapshot
+  preservation, idempotent repeat click on a consumed retry, and pending
+  revision rejection.
+
+Exit criteria:
+
+- A failed or interrupted web task with an explicit pending retry request can
+  start a new Kernel retry attempt without overloading Start Research.
+- The browser cannot choose adapter/provider settings, mutate the frozen
+  contract, or convert revision requests into retry attempts.
+- Retry reason text remains behind `reason_ref`; attempt/index/task snapshots
+  do not embed raw user text.
+- Repeating the same attempt-start command after retry consumption returns the
+  existing consumed attempt rather than generating a second attempt.
+
+Remaining:
+
+- Move deeper Kernel internals to native output ref plans only if the projection
+  boundary proves insufficient. The first slice keeps Kernel v2 stable refs and
+  adds immutable attempt-scoped output copies plus a current pointer.
+
+### M3B-F: Progress Timeline
+
+Status: `first_slice_complete`
+
+Deliverables:
+
+- `web_timeline.py` product-layer timeline projection.
+- `web/progress_timeline.jsonl` for sanitized live progress markers emitted
+  during web FrontDesk, Kernel start, and retry attempt runs.
+- Flow ledger and step record projection from persisted Kernel refs.
+- Runtime control event projection from `interaction/user_events.jsonl`.
+- Lifecycle action projection from `project/lifecycle_actions.jsonl`; reason
+  text remains behind `reason_ref`.
+- Attempt projection from `project/attempt_index.json`, including attempt ref
+  and generation.
+- Web task projection from `web/tasks/current_task.json`.
+- Dashboard Progress Timeline panel and artifact entry.
+- Tests cover completed flow-ledger projection, missing ledger/step-record
+  degradation, runtime/lifecycle text redaction, and sanitized live progress
+  markers.
+
+Exit criteria:
+
+- Timeline is read-only product projection, not task authority.
+- Timeline rows carry source kind/ref, visible state, stage, optional attempt
+  ref/generation, and refs; they do not embed FrontDesk dialogue, report
+  markdown, runtime intervention text, provider payloads, stdout/stderr, or
+  secrets.
+- Browser UI reads and renders the projection only; it does not write product
+  truth through timeline state.
+- Missing flow ledger or step records degrade to visible missing/unknown rows
+  instead of failing dashboard render.
+
+Remaining:
+
+- Per-attempt grouping using attempt output manifests.
+- Live browser polling and compact filters for long timelines.
+
+### M3B-G: Revision Contract Flow
+
+Status: `first_slice_complete`
+
+Deliverables:
+
+- `research_requests.py` resolves the current DeepResearch request as the
+  approved FrontDesk request superseded only by usable frozen revision records.
+- `research_revisions.py` product-layer contract revision boundary.
+- `POST /api/research/revision/start` endpoint. It is separate from retry
+  attempts and from first-run Start Research.
+- Pending revision consumption updates
+  `project/lifecycle/latest_revise_request.json` with `status: consumed`,
+  `consumed_at`, `consumed_by_revision_ref`, and `consumed_by_attempt_ref`, and
+  appends the consumed action to `project/lifecycle_actions.jsonl`.
+- Per-revision artifacts under `project/revisions/{revision_id}/`:
+  `revision_directive.md`, `revision_proposal.json`,
+  `revised_research_request.json`, and `revision_record.json`.
+- Project revision index at `project/revision_index.json`.
+- Revised `AcademicResearchRequest.contract_revision_refs` carries only refs to
+  frozen revision artifacts. Kernel stages those refs through
+  `inputs/contract_revision_index.json`, so PiWorker roles can read the
+  directive as task authority without reaching into `project/lifecycle`.
+- Revision attempt manifests share `project/attempt_index.json` with retry
+  attempts and use `kind: revision_attempt`.
+- Dashboard shows revision count, latest revision status/ref, and a dedicated
+  Start Revision Attempt button. The Progress Timeline projects revision rows
+  from the revision index.
+- Tests cover missing pending revision rejection, revision consumption,
+  revised-contract freeze, FrontDesk approval preservation, staged revision
+  inputs, lifecycle `current_revision_ref`, and secret/redaction boundaries in
+  API responses, lifecycle snapshots, and timeline rows.
+
+Exit criteria:
+
+- A pending revision request cannot silently mutate the existing frozen
+  contract; it must be consumed by an explicit revision boundary.
+- The original FrontDesk approval remains intact. The revised request is a new
+  contract authority ref, not a mutation of `frontdesk/research_request.json`.
+- Revision directive text is available to Kernel as a staged input artifact but
+  is not embedded in web task state, lifecycle action summaries, timeline rows,
+  or API response payloads.
+- Retry attempts cannot consume pending revision requests.
+
+Remaining:
+
+- Use a dedicated FrontDesk/revision PiWorker authoring node for richer
+  semantic revision proposals when live adapters are available. The first slice
+  freezes explicit user revision directives as revision artifacts without
+  deterministic semantic interpretation.
+- Move deeper Kernel internals to native output ref plans only if the projection
+  boundary proves insufficient. The first slice preserves revised attempt outputs
+  through immutable copies and `project/current_output_pointer.json`.
+
+### M3B-H: Attempt-Scoped Kernel Outputs
+
+Status: `first_slice_complete`
+
+Deliverables:
+
+- `attempt_outputs.py` product-layer output projection boundary.
+- Completed retry and revision attempts copy stable Kernel output refs into
+  `project/attempts/{attempt_id}/outputs/{source_ref}`.
+- Per-attempt output manifest at
+  `project/attempts/{attempt_id}/outputs/output_manifest.json`.
+- Current output pointer at `project/current_output_pointer.json`.
+- Attempt manifests and attempt index records include `output_manifest_ref`.
+- Revision records and revision index records include `output_manifest_ref`.
+- Web snapshot, report preview, source/citation/judge summaries, artifact list,
+  and current-output summary prefer refs from the current output pointer and
+  fall back to stable refs for first-run projects or legacy workspaces.
+- Once a current output pointer exists, per-artifact dashboard reads do not
+  silently fall back to stable Kernel refs for missing copied outputs. Missing
+  attempt-scoped refs are surfaced as missing rather than mixed with later
+  stable outputs.
+- Progress timeline attempt rows include output manifest refs.
+- Tests prove a completed retry attempt can serve the dashboard from
+  attempt-scoped report refs even when the stable report ref is later changed.
+
+Exit criteria:
+
+- Completed retry/revision attempts leave immutable output refs that remain
+  inspectable after later attempts overwrite Kernel stable refs.
+- The browser reads current outputs through a refs-first pointer instead of
+  inferring semantic truth from stable filenames.
+- Failed process-level attempts do not update the current output pointer because
+  output projection runs only after `run_deepresearch_kernel_v2` returns.
+- The implementation does not require a broad Kernel v2 ref-plan rewrite.
+
+Remaining:
+
+- Consider native Kernel output ref plans only if output-copy projection is not
+  enough for future live-run scale or storage constraints.
+
+### M3B-I: Timeline Attempt Grouping
+
+Status: `complete`
+
+Deliverables:
+
+- `web_timeline.build_timeline_attempt_groups()` groups sanitized progress rows
+  by project-level events and attempt execution boundaries.
+- Attempt groups are joined through refs only: attempt manifest refs,
+  output-manifest refs, revision refs, flow result ledger refs, step-record
+  refs, task refs, and copied attempt-output refs.
+- Retry/revision runtime-progress markers carry the owning attempt ref so
+  progress rows without provider/tool refs still group under their attempt.
+- `build_project_snapshot()` exposes `progress_timeline_groups` alongside the
+  flat `progress_timeline`.
+- The dashboard renders grouped attempt timelines, highlights the group that
+  owns `project/current_output_pointer.json`, and keeps the flat timeline in a
+  collapsible fallback view.
+- Runtime controls expose the current output manifest, owning attempt ref, and
+  output-ref count without reading artifact bodies.
+
+Exit criteria:
+
+- Operators can distinguish base project events, retry attempts, and revision
+  attempts from the browser without opening raw ledgers one by one.
+- Grouping does not infer research semantics, acceptance quality, paper
+  ranking, or citation correctness.
+- Snapshot and HTML views remain sanitized: no raw runtime messages, lifecycle
+  reason text, provider payloads, prompt bodies, or secret-like strings are
+  projected into timeline groups.
+- FrontDesk dialogue projection in the project snapshot is refs-first: it shows
+  role, turn index, timestamp, and `frontdesk/dialogue.jsonl` refs, while raw
+  dialogue text is only available through explicit artifact reads.
 
 ### M4: Citation Projection
 

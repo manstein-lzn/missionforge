@@ -11,13 +11,16 @@ import missionforge as mf
 from .frontdesk import (
     FRONTDESK_INITIAL_INPUT_REF,
     approve_frontdesk_requirements,
-    read_approved_frontdesk_request,
     run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
 from .lifecycle_actions import record_lifecycle_action
+from .research_attempts import start_retry_attempt
+from .research_requests import read_current_research_request
+from .research_revisions import start_revision_attempt
 from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, json_response
 from .web_tasks import read_or_record_existing_task, start_background_task
+from .web_timeline import append_flow_ledger_event, runtime_progress_sink
 from .workspace import resolve_workspace_ref
 
 
@@ -49,6 +52,7 @@ def frontdesk_message_response(
             language=config.language,
             research_intensity=config.research_intensity,
             live_extension_mode=config.live_extension_mode,
+            runtime_progress_sink=runtime_progress_sink(run_root, source="frontdesk", default_stage="frontdesk"),
         )
         return json_response(
             200,
@@ -97,7 +101,7 @@ def research_start_response(
     """Start Kernel v2 in a background task after FrontDesk approval."""
 
     try:
-        request = read_approved_frontdesk_request(request_id=request_id, workspace=workspace)
+        request = read_current_research_request(workspace=workspace, request_id=request_id)
         existing_state = read_or_record_existing_task(
             workspace=workspace,
             request_id=request_id,
@@ -120,6 +124,15 @@ def research_start_response(
                 workspace=workspace,
                 adapter=config.adapter_factory(request.research_intensity),
                 live_extension_mode=config.live_extension_mode,
+                event_sink=lambda event: append_flow_ledger_event(
+                    resolve_workspace_ref(workspace, _run_ref(request_id)),
+                    event,
+                ),
+                runtime_progress_sink=runtime_progress_sink(
+                    resolve_workspace_ref(workspace, _run_ref(request_id)),
+                    source="kernel_v2",
+                    default_stage="kernel_v2",
+                ),
             )
 
         task_state = start_background_task(
@@ -176,6 +189,83 @@ def lifecycle_action_response(
         )
     except (json.JSONDecodeError, UnicodeDecodeError):
         return json_response(400, {"status": "error", "message": "invalid_json_body"})
+    except mf.ContractValidationError as exc:
+        return json_response(409, {"status": "error", "message": str(exc)})
+
+
+def research_attempt_start_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    config: WebKernelConfig,
+) -> WebConsoleResponse:
+    """Start a retry attempt after an explicit pending retry request."""
+
+    try:
+        result = start_retry_attempt(
+            workspace=workspace,
+            request_id=request_id,
+            config=config,
+            event_sink=lambda event: append_flow_ledger_event(
+                resolve_workspace_ref(workspace, _run_ref(request_id)),
+                event,
+            ),
+            runtime_progress_sink=runtime_progress_sink(
+                resolve_workspace_ref(workspace, _run_ref(request_id)),
+                source="retry_attempt",
+                default_stage="kernel_v2_retry_attempt",
+            ),
+        )
+        response_status = 202 if result.get("status") == "running" else 200
+        return json_response(
+            response_status,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.research_attempt_start_result.v1",
+                "status": result.get("status", "unknown"),
+                "attempt": result.get("attempt", {}),
+                "task": result.get("task", {}),
+                "action": result.get("action", {}),
+            },
+        )
+    except mf.ContractValidationError as exc:
+        return json_response(409, {"status": "error", "message": str(exc)})
+
+
+def research_revision_start_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    config: WebKernelConfig,
+) -> WebConsoleResponse:
+    """Start a revised-contract attempt after an explicit pending revision request."""
+
+    try:
+        result = start_revision_attempt(
+            workspace=workspace,
+            request_id=request_id,
+            config=config,
+            event_sink=lambda event: append_flow_ledger_event(
+                resolve_workspace_ref(workspace, _run_ref(request_id)),
+                event,
+            ),
+            runtime_progress_sink=runtime_progress_sink(
+                resolve_workspace_ref(workspace, _run_ref(request_id)),
+                source="revision_attempt",
+                default_stage="kernel_v2_revision_attempt",
+            ),
+        )
+        response_status = 202 if result.get("status") == "running" else 200
+        return json_response(
+            response_status,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.research_revision_start_result.v1",
+                "status": result.get("status", "unknown"),
+                "revision": result.get("revision", {}),
+                "attempt": result.get("attempt", {}),
+                "task": result.get("task", {}),
+                "action": result.get("action", {}),
+            },
+        )
     except mf.ContractValidationError as exc:
         return json_response(409, {"status": "error", "message": str(exc)})
 

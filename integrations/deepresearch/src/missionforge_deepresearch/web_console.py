@@ -18,9 +18,11 @@ from urllib.parse import parse_qs, quote, urlparse
 
 import missionforge as mf
 
+from .attempt_outputs import CURRENT_OUTPUT_POINTER_REF, read_current_output_pointer
 from .frontdesk import (
     FRONTDESK_ASSISTANT_TURN_REF,
     FRONTDESK_CONTROL_REF,
+    FRONTDESK_DIALOGUE_REF,
     FRONTDESK_REQUIREMENTS_REF,
 )
 from .kernel_v2 import (
@@ -62,10 +64,21 @@ from .project_lifecycle import (
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
-from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response, lifecycle_action_response, research_start_response
+from .research_attempts import ATTEMPT_INDEX_REF, read_attempt_index
+from .research_requests import CONTRACT_REVISION_INDEX_REF, read_contract_revision_index
+from .web_actions import (
+    content_length,
+    frontdesk_approve_response,
+    frontdesk_message_response,
+    lifecycle_action_response,
+    research_attempt_start_response,
+    research_revision_start_response,
+    research_start_response,
+)
 from .web_common import WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
 from .web_controls import runtime_control_response
 from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
+from .web_timeline import PROGRESS_TIMELINE_REF, build_project_timeline, build_timeline_attempt_groups
 from .workspace import resolve_workspace_ref
 
 
@@ -83,26 +96,36 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
     manifest = _read_json_if_exists(run_root, PROJECT_MANIFEST_REF)
     lifecycle = _read_json_if_exists(run_root, PROJECT_LIFECYCLE_STATE_REF)
     run_index = _read_json_if_exists(run_root, PROJECT_RUN_INDEX_REF)
+    attempt_index = read_attempt_index(run_root)
+    revision_index = read_contract_revision_index(run_root)
+    current_outputs = read_current_output_pointer(run_root)
     resume_diagnostics = _read_json_if_exists(run_root, _resume_ref(lifecycle))
-    run_status = _read_json_if_exists(run_root, _run_status_ref(lifecycle))
-    coverage_report = _read_json_if_exists(run_root, KERNEL_V2_COVERAGE_REPORT_REF)
-    source_packet = _read_json_if_exists(run_root, KERNEL_V2_SOURCE_PACKET_REF)
-    canonical_sources = _read_json_if_exists(run_root, KERNEL_V2_CANONICAL_SOURCES_REF)
-    citation_registry = _read_json_if_exists(run_root, KERNEL_V2_CITATION_REGISTRY_REF)
-    claim_support_review = _read_json_if_exists(run_root, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF)
-    acceptance_gate = _read_json_if_exists(run_root, KERNEL_V2_ACCEPTANCE_GATE_REF)
-    judge_report = _read_json_if_exists(run_root, KERNEL_V2_JUDGE_REPORT_REF)
-    usage_summary = _read_json_if_exists(run_root, KERNEL_V2_USAGE_SUMMARY_REF)
+    run_status = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, _run_status_ref(lifecycle)))
+    coverage_report = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_COVERAGE_REPORT_REF))
+    source_packet = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_SOURCE_PACKET_REF))
+    canonical_sources = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_CANONICAL_SOURCES_REF))
+    citation_registry = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_CITATION_REGISTRY_REF))
+    claim_support_review = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF))
+    acceptance_gate = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_ACCEPTANCE_GATE_REF))
+    judge_report = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_JUDGE_REPORT_REF))
+    usage_summary = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_USAGE_SUMMARY_REF))
     web_task = read_web_task_state(run_root)
     lifecycle_actions = read_latest_lifecycle_actions(run_root)
     runtime_events = _runtime_event_rows(run_root)
-    report_ref = _preferred_report_ref(run_root, lifecycle, run_status)
+    progress_timeline = build_project_timeline(run_root, lifecycle=lifecycle, run_status=run_status)
+    progress_timeline_groups = build_timeline_attempt_groups(
+        run_root,
+        progress_timeline,
+        current_outputs=current_outputs,
+    )
+    report_ref = _preferred_report_ref(run_root, lifecycle, run_status, current_outputs)
     report_preview = _read_text_preview_if_exists(run_root, report_ref)
     artifacts = _artifact_entries(
         run_root,
         lifecycle=lifecycle,
         run_status=run_status,
         report_ref=report_ref,
+        current_outputs=current_outputs,
     )
     return {
         "schema_version": WEB_CONSOLE_SCHEMA_VERSION,
@@ -113,11 +136,16 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             "manifest": manifest or {},
             "lifecycle": lifecycle or {},
             "run_index": _run_index_summary(run_index),
+            "attempt_index": _attempt_index_summary(attempt_index),
+            "revision_index": _revision_index_summary(revision_index),
+            "current_outputs": _current_output_summary(current_outputs),
             "resume_diagnostics": resume_diagnostics or {},
         },
         "web_task": web_task,
         "lifecycle_actions": lifecycle_actions,
         "runtime_events": runtime_events,
+        "progress_timeline": progress_timeline,
+        "progress_timeline_groups": progress_timeline_groups,
         "status_cards": _status_cards(
             lifecycle=lifecycle,
             run_status=run_status,
@@ -193,10 +221,13 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
     dialogue = _list(snapshot.get("frontdesk_dialogue"))[-30:]
     web_task = _mapping(snapshot.get("web_task"))
     runtime_events = _list(snapshot.get("runtime_events"))[-12:]
+    progress_timeline = _list(snapshot.get("progress_timeline"))[-80:]
+    progress_timeline_groups = _list(snapshot.get("progress_timeline_groups"))
     claim_support = _mapping(snapshot.get("claim_support"))
     judge = _mapping(snapshot.get("judge"))
     report_preview = _mapping(snapshot.get("report_preview"))
     source_summary = _mapping(snapshot.get("source_summary"))
+    project = _mapping(snapshot.get("project"))
     return _page(
         "DeepResearch Project",
         "\n".join(
@@ -204,7 +235,14 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
                 _header(snapshot),
                 _status_grid(status_cards),
                 _frontdesk_chat_panel(frontdesk, dialogue, web_task),
-                _runtime_controls_panel(runtime_events, _mapping(snapshot.get("lifecycle_actions"))),
+                _runtime_controls_panel(
+                    runtime_events,
+                    _mapping(snapshot.get("lifecycle_actions")),
+                    _mapping(project.get("attempt_index")),
+                    _mapping(project.get("revision_index")),
+                    _mapping(project.get("current_outputs")),
+                ),
+                _timeline_panel(progress_timeline, progress_timeline_groups),
                 _two_column(
                     _frontdesk_panel(frontdesk),
                     _source_summary_panel(source_summary),
@@ -347,6 +385,22 @@ def web_console_response(
             request_id=request_id,
             config=kernel_config,
         )
+    if method == "POST" and parsed.path == "/api/research/attempt/start":
+        if kernel_config is None:
+            return json_response(409, {"status": "error", "message": "kernel_not_configured"})
+        return research_attempt_start_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            config=kernel_config,
+        )
+    if method == "POST" and parsed.path == "/api/research/revision/start":
+        if kernel_config is None:
+            return json_response(409, {"status": "error", "message": "kernel_not_configured"})
+        return research_revision_start_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            config=kernel_config,
+        )
     if method == "POST" and parsed.path == "/api/runtime/control":
         return runtime_control_response(
             workspace=workspace_root,
@@ -438,8 +492,24 @@ def _run_status_ref(lifecycle: Mapping[str, Any] | None) -> str:
     return value or KERNEL_V2_RUN_STATUS_REF
 
 
-def _preferred_report_ref(run_root: Path, lifecycle: Mapping[str, Any] | None, run_status: Mapping[str, Any] | None) -> str:
+def _preferred_report_ref(
+    run_root: Path,
+    lifecycle: Mapping[str, Any] | None,
+    run_status: Mapping[str, Any] | None,
+    current_outputs: Mapping[str, Any] | None = None,
+) -> str:
+    if _current_outputs_active(current_outputs):
+        candidates = [
+            _current_output_ref(current_outputs, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
+            _current_output_ref(current_outputs, KERNEL_V2_FINAL_REPORT_REF),
+        ]
+        for ref in candidates:
+            if ref and _ref_is_file(run_root, ref):
+                return ref
+        return candidates[0] or candidates[1] or ""
     candidates = [
+        _current_output_ref(current_outputs, KERNEL_V2_CITATION_PROJECTED_REPORT_REF),
+        _current_output_ref(current_outputs, KERNEL_V2_FINAL_REPORT_REF),
         _clean((run_status or {}).get("citation_projected_report_ref")),
         KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
         _clean((lifecycle or {}).get("final_report_ref")),
@@ -450,6 +520,32 @@ def _preferred_report_ref(run_root: Path, lifecycle: Mapping[str, Any] | None, r
         if ref and _ref_is_file(run_root, ref):
             return ref
     return KERNEL_V2_FINAL_REPORT_REF
+
+
+def _current_or_stable_ref(current_outputs: Mapping[str, Any] | None, stable_ref: str) -> str:
+    current_ref = _current_output_ref(current_outputs, stable_ref)
+    if current_ref:
+        return current_ref
+    if _current_outputs_active(current_outputs):
+        return ""
+    return stable_ref
+
+
+def _current_output_ref(current_outputs: Mapping[str, Any] | None, stable_ref: str) -> str:
+    safe_stable_ref = _clean(stable_ref)
+    for entry in _list((current_outputs or {}).get("entries")):
+        if not isinstance(entry, Mapping):
+            continue
+        if _clean(entry.get("source_ref")) == safe_stable_ref:
+            return _clean(entry.get("output_ref"))
+    return ""
+
+
+def _current_outputs_active(current_outputs: Mapping[str, Any] | None) -> bool:
+    return bool(
+        _clean((current_outputs or {}).get("status")) == "current"
+        and _clean((current_outputs or {}).get("output_manifest_ref"))
+    )
 
 
 def _ref_is_file(run_root: Path, ref: str) -> bool:
@@ -465,6 +561,7 @@ def _artifact_entries(
     lifecycle: Mapping[str, Any] | None,
     run_status: Mapping[str, Any] | None,
     report_ref: str,
+    current_outputs: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     specs = [
         ("Project Manifest", PROJECT_MANIFEST_REF, "project"),
@@ -472,37 +569,51 @@ def _artifact_entries(
         ("Run Index", PROJECT_RUN_INDEX_REF, "project"),
         ("Resume Diagnostics", _resume_ref(lifecycle), "project"),
         ("Lifecycle Actions", "project/lifecycle_actions.jsonl", "project"),
+        ("Attempt Index", ATTEMPT_INDEX_REF, "project"),
+        ("Revision Index", CONTRACT_REVISION_INDEX_REF, "project"),
+        ("Current Output Pointer", CURRENT_OUTPUT_POINTER_REF, "project"),
+        (
+            "Current Output Manifest",
+            _clean((current_outputs or {}).get("output_manifest_ref")),
+            "project",
+        ),
+        ("Progress Timeline", PROGRESS_TIMELINE_REF, "web"),
         ("Retry Request", LATEST_RETRY_REQUEST_REF, "project"),
         ("Revise Request", LATEST_REVISE_REQUEST_REF, "project"),
         ("Lock Recovery Request", LATEST_LOCK_RECOVERY_REQUEST_REF, "project"),
+        ("FrontDesk Dialogue", FRONTDESK_DIALOGUE_REF, "frontdesk"),
         ("FrontDesk Requirements", _clean((lifecycle or {}).get("frontdesk_requirements_ref")) or FRONTDESK_REQUIREMENTS_REF, "frontdesk"),
         ("FrontDesk Control", _clean((lifecycle or {}).get("frontdesk_control_ref")) or FRONTDESK_CONTROL_REF, "frontdesk"),
         ("FrontDesk Assistant Turn", _clean((lifecycle or {}).get("frontdesk_assistant_turn_ref")) or FRONTDESK_ASSISTANT_TURN_REF, "frontdesk"),
-        ("Search Plan", KERNEL_V2_SEARCH_PLAN_REF, "sources"),
-        ("Provider Hits", KERNEL_V2_PROVIDER_HITS_REF, "sources"),
-        ("Source Packet", KERNEL_V2_SOURCE_PACKET_REF, "sources"),
-        ("Source Graph", KERNEL_V2_SOURCE_GRAPH_REF, "sources"),
-        ("Canonical Sources", KERNEL_V2_CANONICAL_SOURCES_REF, "sources"),
-        ("Coverage Report", KERNEL_V2_COVERAGE_REPORT_REF, "sources"),
-        ("Research State", KERNEL_V2_RESEARCH_STATE_REF, "state"),
-        ("Insight Map", KERNEL_V2_INSIGHT_MAP_REF, "analysis"),
-        ("Evidence Index", KERNEL_V2_EVIDENCE_INDEX_REF, "reports"),
-        ("Source Gaps", KERNEL_V2_SOURCE_GAPS_REF, "reports"),
+        ("Search Plan", _current_or_stable_ref(current_outputs, KERNEL_V2_SEARCH_PLAN_REF), "sources"),
+        ("Provider Hits", _current_or_stable_ref(current_outputs, KERNEL_V2_PROVIDER_HITS_REF), "sources"),
+        ("Source Packet", _current_or_stable_ref(current_outputs, KERNEL_V2_SOURCE_PACKET_REF), "sources"),
+        ("Source Graph", _current_or_stable_ref(current_outputs, KERNEL_V2_SOURCE_GRAPH_REF), "sources"),
+        ("Canonical Sources", _current_or_stable_ref(current_outputs, KERNEL_V2_CANONICAL_SOURCES_REF), "sources"),
+        ("Coverage Report", _current_or_stable_ref(current_outputs, KERNEL_V2_COVERAGE_REPORT_REF), "sources"),
+        ("Research State", _current_or_stable_ref(current_outputs, KERNEL_V2_RESEARCH_STATE_REF), "state"),
+        ("Insight Map", _current_or_stable_ref(current_outputs, KERNEL_V2_INSIGHT_MAP_REF), "analysis"),
+        ("Evidence Index", _current_or_stable_ref(current_outputs, KERNEL_V2_EVIDENCE_INDEX_REF), "reports"),
+        ("Source Gaps", _current_or_stable_ref(current_outputs, KERNEL_V2_SOURCE_GAPS_REF), "reports"),
         ("Final Report", report_ref, "reports"),
-        ("HTML Export", KERNEL_V2_REPORT_HTML_REF, "reports"),
-        ("Citation Registry", KERNEL_V2_CITATION_REGISTRY_REF, "citations"),
-        ("Citation Validation", KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF, "citations"),
-        ("Claim Index", KERNEL_V2_CLAIM_INDEX_REF, "claims"),
-        ("Claim Index Validation", KERNEL_V2_CLAIM_INDEX_VALIDATION_REF, "claims"),
-        ("Claim Support Review", KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF, "reviews"),
-        ("Claim Support Validation", KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF, "reviews"),
-        ("Acceptance Gate", KERNEL_V2_ACCEPTANCE_GATE_REF, "state"),
-        ("Judge Report", KERNEL_V2_JUDGE_REPORT_REF, "judge"),
+        ("HTML Export", _current_or_stable_ref(current_outputs, KERNEL_V2_REPORT_HTML_REF), "reports"),
+        ("Citation Registry", _current_or_stable_ref(current_outputs, KERNEL_V2_CITATION_REGISTRY_REF), "citations"),
+        ("Citation Validation", _current_or_stable_ref(current_outputs, KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF), "citations"),
+        ("Claim Index", _current_or_stable_ref(current_outputs, KERNEL_V2_CLAIM_INDEX_REF), "claims"),
+        ("Claim Index Validation", _current_or_stable_ref(current_outputs, KERNEL_V2_CLAIM_INDEX_VALIDATION_REF), "claims"),
+        ("Claim Support Review", _current_or_stable_ref(current_outputs, KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF), "reviews"),
+        ("Claim Support Validation", _current_or_stable_ref(current_outputs, KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF), "reviews"),
+        ("Acceptance Gate", _current_or_stable_ref(current_outputs, KERNEL_V2_ACCEPTANCE_GATE_REF), "state"),
+        ("Judge Report", _current_or_stable_ref(current_outputs, KERNEL_V2_JUDGE_REPORT_REF), "judge"),
         ("Revision Request", KERNEL_V2_REVISION_REQUEST_REF, "revisions"),
-        ("Run Status", _run_status_ref(lifecycle), "state"),
-        ("Usage Summary", KERNEL_V2_USAGE_SUMMARY_REF, "metrics"),
+        ("Run Status", _current_or_stable_ref(current_outputs, _run_status_ref(lifecycle)), "state"),
+        ("Usage Summary", _current_or_stable_ref(current_outputs, KERNEL_V2_USAGE_SUMMARY_REF), "metrics"),
         ("Web Task State", WEB_TASK_STATE_REF, "web"),
-        ("Result Package", _clean((run_status or {}).get("result_ref")) or KERNEL_V2_RESULT_REF, "packages"),
+        (
+            "Result Package",
+            _current_or_stable_ref(current_outputs, _clean((run_status or {}).get("result_ref")) or KERNEL_V2_RESULT_REF),
+            "packages",
+        ),
     ]
     entries = []
     seen: set[str] = set()
@@ -586,11 +697,16 @@ def _frontdesk_summary(run_root: Path, lifecycle: Mapping[str, Any] | None) -> d
         _clean((lifecycle or {}).get("frontdesk_control_ref")) or FRONTDESK_CONTROL_REF,
     )
     requirements_ref = _clean((lifecycle or {}).get("frontdesk_requirements_ref")) or FRONTDESK_REQUIREMENTS_REF
+    assistant_turn_ref = _clean((lifecycle or {}).get("frontdesk_assistant_turn_ref")) or FRONTDESK_ASSISTANT_TURN_REF
+    control_ref = _clean((lifecycle or {}).get("frontdesk_control_ref")) or FRONTDESK_CONTROL_REF
     return {
         "status": _clean((control or {}).get("status")) or _clean((control or {}).get("decision")) or _clean((lifecycle or {}).get("phase")),
-        "message": _clean((assistant or {}).get("message")),
+        "message": "Assistant turn recorded." if assistant else "",
         "question_count": len(_list((assistant or {}).get("questions"))),
         "requirements_ref": requirements_ref if _ref_is_file(run_root, requirements_ref) else "",
+        "assistant_turn_ref": assistant_turn_ref if _ref_is_file(run_root, assistant_turn_ref) else "",
+        "control_ref": control_ref if _ref_is_file(run_root, control_ref) else "",
+        "dialogue_ref": FRONTDESK_DIALOGUE_REF if _ref_is_file(run_root, FRONTDESK_DIALOGUE_REF) else "",
     }
 
 
@@ -601,7 +717,7 @@ def _frontdesk_dialogue(run_root: Path) -> list[dict[str, str]]:
         if not path.is_file():
             return []
         rows = []
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
             payload = json.loads(line)
@@ -609,8 +725,10 @@ def _frontdesk_dialogue(run_root: Path) -> list[dict[str, str]]:
                 continue
             rows.append(
                 {
+                    "turn_index": str(index),
                     "role": _clean(payload.get("role")) or "unknown",
-                    "content": _clean(payload.get("content")),
+                    "summary": "Dialogue turn recorded.",
+                    "dialogue_ref": FRONTDESK_DIALOGUE_REF,
                     "created_at": _clean(payload.get("created_at")),
                 }
             )
@@ -741,6 +859,40 @@ def _run_index_summary(run_index: Mapping[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _attempt_index_summary(attempt_index: Mapping[str, Any] | None) -> dict[str, Any]:
+    attempts = _list((attempt_index or {}).get("attempts"))
+    latest = attempts[-1] if attempts and isinstance(attempts[-1], Mapping) else {}
+    return {
+        "attempt_count": len(attempts),
+        "latest_attempt_ref": _clean((attempt_index or {}).get("latest_attempt_ref")),
+        "latest": dict(latest) if isinstance(latest, Mapping) else {},
+    }
+
+
+def _revision_index_summary(revision_index: Mapping[str, Any] | None) -> dict[str, Any]:
+    revisions = _list((revision_index or {}).get("revisions"))
+    latest = revisions[-1] if revisions and isinstance(revisions[-1], Mapping) else {}
+    return {
+        "revision_count": len(revisions),
+        "latest_revision_ref": _clean((revision_index or {}).get("latest_revision_ref")),
+        "latest_revised_request_ref": _clean((revision_index or {}).get("latest_revised_request_ref")),
+        "latest": dict(latest) if isinstance(latest, Mapping) else {},
+    }
+
+
+def _current_output_summary(current_outputs: Mapping[str, Any] | None) -> dict[str, Any]:
+    entries = _list((current_outputs or {}).get("entries"))
+    return {
+        "status": _clean((current_outputs or {}).get("status")),
+        "attempt_id": _clean((current_outputs or {}).get("attempt_id")),
+        "attempt_ref": _clean((current_outputs or {}).get("attempt_ref")),
+        "attempt_kind": _clean((current_outputs or {}).get("attempt_kind")),
+        "output_manifest_ref": _clean((current_outputs or {}).get("output_manifest_ref")),
+        "output_count": len(entries),
+        "updated_at": _clean((current_outputs or {}).get("updated_at")),
+    }
+
+
 def _first_locator(source: Mapping[str, Any]) -> str:
     locators = source.get("locators")
     if isinstance(locators, list):
@@ -825,11 +977,15 @@ def _two_column(left: str, right: str) -> str:
 def _frontdesk_panel(frontdesk: Mapping[str, Any]) -> str:
     requirements_ref = _clean(frontdesk.get("requirements_ref"))
     requirements = _artifact_link(requirements_ref, "requirements") if requirements_ref else ""
+    assistant_ref = _clean(frontdesk.get("assistant_turn_ref"))
+    dialogue_ref = _clean(frontdesk.get("dialogue_ref"))
     return (
         '<section class="panel">'
         "<h2>FrontDesk</h2>"
         f'<dl>{_row("status", _clean(frontdesk.get("status")))}'
         f'{_row("questions", _format_int(frontdesk.get("question_count")))}'
+        f'{_row("assistant", _artifact_link(assistant_ref, "assistant turn"), raw=True)}'
+        f'{_row("dialogue", _artifact_link(dialogue_ref, "dialogue"), raw=True)}'
         f'{_row("requirements", requirements, raw=True)}</dl>'
         f'<p class="message">{_e(_clean(frontdesk.get("message")))}</p>'
         "</section>"
@@ -842,13 +998,14 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web
         if not isinstance(item, Mapping):
             continue
         role = _clean(item.get("role")) or "unknown"
-        content = _clean(item.get("content"))
-        if not content:
-            continue
+        turn_index = _clean(item.get("turn_index"))
+        dialogue_ref = _clean(item.get("dialogue_ref"))
+        summary = _clean(item.get("summary")) or "Dialogue turn recorded."
+        content = _artifact_link(dialogue_ref, f"turn {turn_index or '?'}") if dialogue_ref else _e(summary)
         rows.append(
             '<div class="chat-row">'
             f'<span class="chat-role">{_e(role)}</span>'
-            f'<p>{_e(content)}</p>'
+            f'<p>{content} <span class="detail">{_e(summary)}</span></p>'
             "</div>"
         )
     if not rows:
@@ -880,7 +1037,13 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web
     )
 
 
-def _runtime_controls_panel(runtime_events: list[Any], lifecycle_actions: Mapping[str, Any]) -> str:
+def _runtime_controls_panel(
+    runtime_events: list[Any],
+    lifecycle_actions: Mapping[str, Any],
+    attempt_index: Mapping[str, Any],
+    revision_index: Mapping[str, Any],
+    current_outputs: Mapping[str, Any],
+) -> str:
     rows = []
     for item in runtime_events:
         if not isinstance(item, Mapping):
@@ -911,6 +1074,8 @@ def _runtime_controls_panel(runtime_events: list[Any], lifecycle_actions: Mappin
     retry = _mapping(lifecycle_actions.get("retry"))
     revise = _mapping(lifecycle_actions.get("revise"))
     recover = _mapping(lifecycle_actions.get("recover_lock"))
+    latest_attempt = _mapping(attempt_index.get("latest"))
+    latest_revision = _mapping(revision_index.get("latest"))
     return (
         '<section class="panel runtime-panel">'
         "<h2>Runtime Controls</h2>"
@@ -922,19 +1087,106 @@ def _runtime_controls_panel(runtime_events: list[Any], lifecycle_actions: Mappin
         "</form>"
         '<div class="control-buttons lifecycle-buttons">'
         '<button type="button" data-lifecycle-action="retry">Request Retry</button>'
+        '<button type="button" data-attempt-start="retry">Start Retry Attempt</button>'
         '<button type="button" data-lifecycle-action="revise">Request Revision</button>'
+        '<button type="button" data-revision-start="contract">Start Revision Attempt</button>'
         '<button type="button" data-lifecycle-action="recover_lock">Recover Lock</button>'
         "</div>"
         '<div class="task-state">'
         f'{_row("retry", _clean(retry.get("status")))}'
         f'{_row("revision", _clean(revise.get("status")))}'
         f'{_row("lock recovery", _clean(recover.get("status")))}'
+        f'{_row("attempts", _format_int(attempt_index.get("attempt_count")))}'
+        f'{_row("latest attempt", _clean(latest_attempt.get("status")))}'
+        f'{_row("attempt ref", _artifact_link(_clean(attempt_index.get("latest_attempt_ref")), "open"), raw=True)}'
+        f'{_row("revisions", _format_int(revision_index.get("revision_count")))}'
+        f'{_row("latest revision", _clean(latest_revision.get("status")))}'
+        f'{_row("revision ref", _artifact_link(_clean(revision_index.get("latest_revision_ref")), "open"), raw=True)}'
+        f'{_row("current output", _artifact_link(_clean(current_outputs.get("output_manifest_ref")), "open"), raw=True)}'
+        f'{_row("output attempt", _artifact_link(_clean(current_outputs.get("attempt_ref")), _clean(current_outputs.get("attempt_kind")) or "attempt"), raw=True)}'
+        f'{_row("output refs", _format_int(current_outputs.get("output_count")))}'
         "</div>"
         '<div class="event-log">'
         f"{''.join(rows)}"
         "</div>"
         "</section>"
     )
+
+
+def _timeline_panel(rows: list[Any], groups: list[Any]) -> str:
+    grouped = []
+    for group in groups:
+        if not isinstance(group, Mapping):
+            continue
+        group_rows = _list(group.get("rows"))[-40:]
+        status = _clean(group.get("status")) or _clean(group.get("latest_state")) or "unknown"
+        output_manifest_ref = _clean(group.get("output_manifest_ref"))
+        refs = [
+            _artifact_link(ref, "ref")
+            for ref in _string_list(group.get("refs"))[:4]
+            if ref
+        ]
+        if output_manifest_ref and output_manifest_ref not in _string_list(group.get("refs")):
+            refs.append(_artifact_link(output_manifest_ref, "outputs"))
+        badge = '<span class="current-output">current output</span>' if group.get("is_current_output") is True else ""
+        grouped.append(
+            '<details class="timeline-group" open>'
+            "<summary>"
+            f'<span>{_e(_clean(group.get("title")) or "Timeline group")}</span>'
+            f'<code>{_e(status)}</code>'
+            f'<span class="detail">{_format_int(group.get("row_count"))} rows</span>'
+            f"{badge}"
+            "</summary>"
+            f'<div class="timeline-group-refs">{", ".join(refs)}</div>'
+            f'<div class="event-log">{_timeline_rows(group_rows)}</div>'
+            "</details>"
+        )
+    if not grouped:
+        grouped.append('<p class="muted">No grouped timeline yet.</p>')
+    flat_items = _timeline_rows(rows)
+    if not flat_items:
+        flat_items = '<p class="muted">No progress timeline yet.</p>'
+    return (
+        '<section class="panel timeline-panel">'
+        "<h2>Progress Timeline</h2>"
+        '<div class="timeline-groups">'
+        f"{''.join(grouped)}"
+        "</div>"
+        "<details>"
+        "<summary>Flat timeline</summary>"
+        '<div class="event-log">'
+        f"{flat_items}"
+        "</div>"
+        "</details>"
+        "</section>"
+    )
+
+
+def _timeline_rows(rows: list[Any]) -> str:
+    items = []
+    for item in rows:
+        if not isinstance(item, Mapping):
+            continue
+        source = _clean(item.get("source"))
+        stage = _clean(item.get("stage"))
+        state = _clean(item.get("state"))
+        summary = _clean(item.get("summary"))
+        refs = [
+            _artifact_link(ref, "ref")
+            for ref in _string_list(item.get("refs"))[:3]
+            if ref
+        ]
+        ref_html = ", ".join(refs)
+        items.append(
+            '<div class="event-row timeline-row">'
+            f'<span>{_e(source or "timeline")}</span>'
+            f'<code>{_e(stage or "unknown")}</code>'
+            f'<span class="detail">{_e(state or "unknown")}</span>'
+            f'<span>{_e(summary)}</span>'
+            f'<span>{ref_html}</span>'
+            "</div>"
+        )
+    return "".join(items)
 
 
 def _source_summary_panel(summary: Mapping[str, Any]) -> str:
@@ -1309,6 +1561,42 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .event-row code {
   overflow-wrap: anywhere;
 }
+.timeline-groups {
+  display: grid;
+  gap: 12px;
+}
+.timeline-group {
+  border: 1px solid var(--line);
+  background: #fbfcfd;
+}
+.timeline-group summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px 90px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.timeline-group .event-log {
+  margin: 0;
+  padding: 0 10px 10px;
+}
+.timeline-group-refs {
+  padding: 0 12px 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.current-output {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #1b5a49;
+  color: #1b5a49;
+  background: #eef8f4;
+  font-size: 12px;
+  font-weight: 650;
+}
 .task-state {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);
@@ -1383,6 +1671,7 @@ pre {
   .chat-form { grid-template-columns: 1fr; }
   .runtime-panel .chat-form { grid-template-columns: 1fr; }
   .event-row { grid-template-columns: 1fr; }
+  .timeline-group summary { grid-template-columns: 1fr; }
   .approve-form { display: grid; }
   button { min-height: 44px; }
 }
@@ -1493,6 +1782,32 @@ _CHAT_SCRIPT = """
       button.disabled = true;
       try {
         await postJson("/api/lifecycle/action", {action, text});
+        window.location.reload();
+      } catch (error) {
+        alert(String(error));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-attempt-start]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await postJson("/api/research/attempt/start", {});
+        window.location.reload();
+      } catch (error) {
+        alert(String(error));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  document.querySelectorAll("[data-revision-start]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await postJson("/api/research/revision/start", {});
         window.location.reload();
       } catch (error) {
         alert(String(error));

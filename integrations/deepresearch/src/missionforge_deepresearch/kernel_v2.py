@@ -64,6 +64,7 @@ KERNEL_V2_WORKSPACE_POLICY_REF = "policy/workspace_policy.json"
 KERNEL_V2_REQUEST_REF = "product_contract/research_request.json"
 KERNEL_V2_OUTPUT_CONTRACT_REF = "product_contract/output_contract.json"
 KERNEL_V2_PREVIOUS_RUN_INDEX_REF = "inputs/previous_run_index.json"
+KERNEL_V2_CONTRACT_REVISION_INDEX_REF = "inputs/contract_revision_index.json"
 KERNEL_V2_SOURCE_MAPPER_BRIEF_REF = "manuals/source_mapper.md"
 KERNEL_V2_RESEARCHER_BRIEF_REF = "manuals/researcher.md"
 KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF = "manuals/researcher_repair.md"
@@ -837,6 +838,7 @@ def _write_kernel_v2_workspace(
     write_json_ref(run_root, KERNEL_V2_REQUEST_REF, request.to_dict())
     write_json_ref(run_root, KERNEL_V2_CONTRACT_REF, contract)
     _write_previous_run_inputs(request, root=root, run_root=run_root)
+    _write_contract_revision_inputs(request, root=root, run_root=run_root)
     write_json_ref(run_root, KERNEL_V2_SEED_PAPERS_REF, seed_papers_payload(request))
     write_json_ref(run_root, KERNEL_V2_SEED_PDF_INDEX_REF, seed_pdf_index_payload(request, root=root, run_root=run_root))
     if not has_seed_inputs(request):
@@ -907,6 +909,34 @@ def _write_previous_run_inputs(request: AcademicResearchRequest, *, root: Path, 
     )
 
 
+def _write_contract_revision_inputs(request: AcademicResearchRequest, *, root: Path, run_root: Path) -> None:
+    if not request.contract_revision_refs:
+        return
+    entries = []
+    for index, revision_ref in enumerate(request.contract_revision_refs, start=1):
+        source_path = root / revision_ref
+        if not source_path.is_file():
+            raise mf.ContractValidationError(f"contract_revision_ref does not exist: {revision_ref}")
+        staged_ref = f"inputs/contract_revisions/{index:03d}-{source_path.name}"
+        staged_path = run_root / staged_ref
+        staged_path.parent.mkdir(parents=True, exist_ok=True)
+        staged_path.write_bytes(source_path.read_bytes())
+        entries.append(
+            {
+                "contract_revision_ref": revision_ref,
+                "staged_ref": staged_ref,
+            }
+        )
+    write_json_ref(
+        run_root,
+        KERNEL_V2_CONTRACT_REVISION_INDEX_REF,
+        {
+            "schema_version": "missionforge_deepresearch.kernel_v2.contract_revision_index.v1",
+            "entries": entries,
+        },
+    )
+
+
 def _request_input_refs(request: AcademicResearchRequest, *, include_seed_indexes: bool = True) -> list[str]:
     refs = []
     if include_seed_indexes and has_seed_inputs(request):
@@ -915,6 +945,8 @@ def _request_input_refs(request: AcademicResearchRequest, *, include_seed_indexe
         refs.append(request.sample_report_ref)
     if request.previous_run_refs:
         refs.append(KERNEL_V2_PREVIOUS_RUN_INDEX_REF)
+    if request.contract_revision_refs:
+        refs.append(KERNEL_V2_CONTRACT_REVISION_INDEX_REF)
     return _dedupe_refs(refs)
 
 
@@ -960,6 +992,10 @@ def _optional_input_guidance(request: AcademicResearchRequest) -> list[str]:
     if request.previous_run_refs:
         guidance.append(
             "Previous run refs are staged through `inputs/previous_run_index.json`; read staged refs from that index rather than reaching outside the run workspace."
+        )
+    if request.contract_revision_refs:
+        guidance.append(
+            "Explicit contract revisions are staged through `inputs/contract_revision_index.json`; read the staged revision records and directive files from that index as frozen task authority for this run."
         )
     if request.provider_policy == "openalex_enhanced":
         guidance.append(

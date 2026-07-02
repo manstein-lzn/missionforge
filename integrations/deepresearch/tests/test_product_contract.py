@@ -34,6 +34,7 @@ class ProductContractTests(unittest.TestCase):
         self.assertEqual(request.research_intensity, ResearchIntensity.STANDARD)
         self.assertEqual(request.previous_run_refs, ["runs/previous/packages/deepresearch_run_result.json"])
         self.assertEqual(request.seed_papers, [])
+        self.assertEqual(request.contract_revision_refs, [])
         self.assertEqual(request.provider_policy, "default_no_key")
         self.assertEqual(request.citation_style, "cite_anchor_v1")
 
@@ -47,6 +48,7 @@ class ProductContractTests(unittest.TestCase):
             ],
             seed_pdf_refs=["inputs/seeds/paper.pdf"],
             sample_report_ref="inputs/sample_report.md",
+            contract_revision_refs=["runs/current/project/revisions/REV1/revision_record.json"],
             target_source_count=100,
             provider_policy="openalex_enhanced",
         )
@@ -54,6 +56,7 @@ class ProductContractTests(unittest.TestCase):
         payload = request.to_dict()
 
         self.assertEqual(payload["seed_papers"][0]["kind"], "doi")
+        self.assertEqual(payload["contract_revision_refs"], ["runs/current/project/revisions/REV1/revision_record.json"])
         self.assertEqual(payload["target_source_count"], 100)
         self.assertEqual(AcademicResearchRequest.from_dict(payload), request)
 

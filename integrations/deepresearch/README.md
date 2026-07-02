@@ -156,9 +156,27 @@ events through the same MissionForge interaction ledger as TUI. Start Research
 uses a workspace-local `web/locks/kernel_v2.lock` guard; if another process owns
 the project run, the web API reports a sanitized `locked` task state instead of
 starting a duplicate Kernel run. The web console also records explicit retry,
-revision, and lock-recovery lifecycle requests as project refs. These requests
-do not mutate the frozen contract or start a new Kernel attempt; attempt
-generation and upload controls remain follow-up work.
+revision, and lock-recovery lifecycle requests as project refs. Pending retry
+requests can be explicitly consumed through Start Retry Attempt, which calls
+`POST /api/research/attempt/start`, records an attempt manifest and attempt
+index, snapshots stable pre-rerun refs, and starts a server-owned Kernel retry
+attempt. The dashboard includes a Progress Timeline projected from sanitized
+live progress markers, flow ledgers, step records, runtime interaction events,
+lifecycle actions, attempt index, revision index, and web task state. Revision
+requests still do not mutate the frozen contract or start a retry attempt; they
+must be consumed explicitly through Start Revision Attempt, which calls
+`POST /api/research/revision/start`, writes revision records and a revised
+request, stages revision refs for Kernel, and launches a server-owned revision
+attempt. Completed retry/revision attempts copy Kernel outputs into
+attempt-scoped refs, write `outputs/output_manifest.json`, and update
+`project/current_output_pointer.json`; the dashboard prefers those current
+attempt refs while preserving stable refs as fallback for legacy/first-run
+projects. Once a current output pointer exists, missing attempt-scoped refs are
+shown as missing instead of mixed with stable Kernel refs. The Progress Timeline
+is grouped by project/attempt refs and highlights the attempt that owns the
+current output pointer. FrontDesk dialogue is projected by refs and turn
+metadata in the dashboard; raw dialogue remains available through explicit
+artifact reads. Upload controls remain follow-up work.
 
 ## Product Shape
 

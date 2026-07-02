@@ -32,7 +32,7 @@ LATEST_RETRY_REQUEST_REF = "project/lifecycle/latest_retry_request.json"
 LATEST_REVISE_REQUEST_REF = "project/lifecycle/latest_revise_request.json"
 LATEST_LOCK_RECOVERY_REQUEST_REF = "project/lifecycle/latest_lock_recovery_request.json"
 _ACTION_KINDS = {"retry", "revise", "recover_lock"}
-_RETRYABLE_TASK_STATUSES = {"failed", "interrupted", "locked"}
+_RETRYABLE_TASK_STATUSES = {"failed", "interrupted"}
 _REVISION_PHASES = {"revision_required", "rejected", "blocked", "accepted", "approved"}
 
 
@@ -71,11 +71,80 @@ def read_latest_lifecycle_actions(run_root: str | Path) -> dict[str, dict[str, A
     }
 
 
+def consume_latest_retry_request(run_root: str | Path, *, attempt_ref: str) -> dict[str, Any]:
+    """Mark the latest pending retry request as consumed by a Kernel attempt."""
+
+    root = Path(run_root).resolve()
+    if not ref_exists(root, LATEST_RETRY_REQUEST_REF):
+        raise mf.ContractValidationError("pending retry request is required")
+    payload = read_json_ref(root, LATEST_RETRY_REQUEST_REF, "deepresearch_lifecycle_retry_request")
+    if payload.get("kind") != "retry":
+        raise mf.ContractValidationError("pending retry request is required")
+    status = _clean(payload.get("status"))
+    existing_attempt_ref = _clean(payload.get("consumed_by_attempt_ref"))
+    if status == "consumed" and existing_attempt_ref:
+        if existing_attempt_ref != mf.validate_ref(attempt_ref, "deepresearch_lifecycle_retry_request.attempt_ref"):
+            raise mf.ContractValidationError("retry request was already consumed")
+        return dict(payload)
+    if status != "pending_retry":
+        raise mf.ContractValidationError("pending retry request is required")
+    payload.update({
+        "status": "consumed",
+        "consumed_at": _utc_now(),
+        "consumed_by": "kernel_attempt",
+        "consumed_by_attempt_ref": mf.validate_ref(attempt_ref, "deepresearch_lifecycle_retry_request.attempt_ref"),
+        "next_required_boundary": "",
+    })
+    mf.assert_refs_only_payload(payload, "deepresearch_lifecycle_retry_request")
+    write_json_ref(root, LATEST_RETRY_REQUEST_REF, payload)
+    _append_action_index(root, payload)
+    return dict(payload)
+
+
+def consume_latest_revise_request(
+    run_root: str | Path,
+    *,
+    revision_ref: str,
+    attempt_ref: str,
+) -> dict[str, Any]:
+    """Mark the latest pending revision request as consumed by a revision boundary."""
+
+    root = Path(run_root).resolve()
+    if not ref_exists(root, LATEST_REVISE_REQUEST_REF):
+        raise mf.ContractValidationError("pending revision request is required")
+    payload = read_json_ref(root, LATEST_REVISE_REQUEST_REF, "deepresearch_lifecycle_revise_request")
+    if payload.get("kind") != "revise":
+        raise mf.ContractValidationError("pending revision request is required")
+    safe_revision_ref = mf.validate_ref(revision_ref, "deepresearch_lifecycle_revise_request.revision_ref")
+    safe_attempt_ref = mf.validate_ref(attempt_ref, "deepresearch_lifecycle_revise_request.attempt_ref")
+    status = _clean(payload.get("status"))
+    existing_revision_ref = _clean(payload.get("consumed_by_revision_ref"))
+    existing_attempt_ref = _clean(payload.get("consumed_by_attempt_ref"))
+    if status == "consumed" and existing_revision_ref and existing_attempt_ref:
+        if existing_revision_ref != safe_revision_ref or existing_attempt_ref != safe_attempt_ref:
+            raise mf.ContractValidationError("revision request was already consumed")
+        return dict(payload)
+    if status != "pending_revision":
+        raise mf.ContractValidationError("pending revision request is required")
+    payload.update({
+        "status": "consumed",
+        "consumed_at": _utc_now(),
+        "consumed_by": "contract_revision",
+        "consumed_by_revision_ref": safe_revision_ref,
+        "consumed_by_attempt_ref": safe_attempt_ref,
+        "next_required_boundary": "",
+    })
+    mf.assert_refs_only_payload(payload, "deepresearch_lifecycle_revise_request")
+    write_json_ref(root, LATEST_REVISE_REQUEST_REF, payload)
+    _append_action_index(root, payload)
+    return dict(payload)
+
+
 def _record_retry_request(*, run_root: Path, request_id: str, text: str) -> dict[str, Any]:
     task_state = read_web_task_state(run_root)
     status = _clean(task_state.get("status"))
     if status not in _RETRYABLE_TASK_STATUSES:
-        raise mf.ContractValidationError("retry requires a failed, interrupted, or locked task")
+        raise mf.ContractValidationError("retry requires a failed or interrupted task")
     text_ref = _write_action_text(run_root, kind="retry", text=text)
     payload = _base_action_payload(
         request_id=request_id,
@@ -97,6 +166,7 @@ def _record_retry_request(*, run_root: Path, request_id: str, text: str) -> dict
 def _record_revise_request(*, run_root: Path, request_id: str, text: str) -> dict[str, Any]:
     if not _clean(text):
         raise mf.ContractValidationError("revision text is required")
+    _require_no_active_web_task(run_root, action="revise")
     lifecycle = _read_project_lifecycle(run_root)
     phase = _clean(lifecycle.get("phase"))
     if phase not in _REVISION_PHASES:
@@ -117,6 +187,12 @@ def _record_revise_request(*, run_root: Path, request_id: str, text: str) -> dic
     mf.assert_refs_only_payload(payload, "deepresearch_lifecycle_revise_request")
     write_json_ref(run_root, LATEST_REVISE_REQUEST_REF, payload)
     return payload
+
+
+def _require_no_active_web_task(run_root: Path, *, action: str) -> None:
+    task_state = read_web_task_state(run_root)
+    if _clean(task_state.get("status")) in {"running", "locked"}:
+        raise mf.ContractValidationError(f"{action} requires no active web task")
 
 
 def _record_lock_recovery_request(*, run_root: Path, request_id: str, text: str) -> dict[str, Any]:
@@ -194,6 +270,9 @@ def _read_action_if_exists(run_root: str | Path, ref: str) -> dict[str, Any]:
             "status": _clean(payload.get("status")),
             "reason_ref": _clean(payload.get("reason_ref")),
             "created_at": _clean(payload.get("created_at")),
+            "consumed_at": _clean(payload.get("consumed_at")),
+            "consumed_by_revision_ref": _clean(payload.get("consumed_by_revision_ref")),
+            "consumed_by_attempt_ref": _clean(payload.get("consumed_by_attempt_ref")),
             "next_required_boundary": _clean(payload.get("next_required_boundary")),
         }
     except (OSError, json.JSONDecodeError, mf.ContractValidationError):

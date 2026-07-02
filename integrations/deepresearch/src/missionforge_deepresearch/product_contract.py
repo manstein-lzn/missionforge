@@ -310,6 +310,7 @@ class AcademicResearchRequest:
     seed_papers: list[SeedPaper] = field(default_factory=list)
     seed_pdf_refs: list[str] = field(default_factory=list)
     sample_report_ref: str | None = None
+    contract_revision_refs: list[str] = field(default_factory=list)
     target_source_count: int | None = None
     provider_policy: str = "default_no_key"
     requested_provider_families: list[str] = field(default_factory=list)
@@ -348,6 +349,7 @@ class AcademicResearchRequest:
                 "seed_papers",
                 "seed_pdf_refs",
                 "sample_report_ref",
+                "contract_revision_refs",
                 "target_source_count",
                 "provider_policy",
                 "requested_provider_families",
@@ -379,6 +381,10 @@ class AcademicResearchRequest:
             seed_papers=_seed_paper_list(data.get("seed_papers", []), "academic_research_request.seed_papers"),
             seed_pdf_refs=_ref_list(data.get("seed_pdf_refs", []), "academic_research_request.seed_pdf_refs"),
             sample_report_ref=_optional_ref(data.get("sample_report_ref"), "academic_research_request.sample_report_ref"),
+            contract_revision_refs=_ref_list(
+                data.get("contract_revision_refs", []),
+                "academic_research_request.contract_revision_refs",
+            ),
             target_source_count=_optional_positive_int(
                 data.get("target_source_count"),
                 "academic_research_request.target_source_count",
@@ -426,6 +432,7 @@ class AcademicResearchRequest:
         _validate_seed_papers(self.seed_papers, "academic_research_request.seed_papers")
         _validate_unique_refs(self.seed_pdf_refs, "academic_research_request.seed_pdf_refs")
         _optional_ref(self.sample_report_ref, "academic_research_request.sample_report_ref")
+        _validate_unique_refs(self.contract_revision_refs, "academic_research_request.contract_revision_refs")
         _optional_positive_int(self.target_source_count, "academic_research_request.target_source_count")
         if self.provider_policy not in PROVIDER_POLICIES:
             raise mf.ContractValidationError("academic_research_request.provider_policy is unsupported")
@@ -460,6 +467,7 @@ class AcademicResearchRequest:
             "seed_papers": [item.to_dict() for item in self.seed_papers],
             "seed_pdf_refs": list(self.seed_pdf_refs),
             "sample_report_ref": self.sample_report_ref,
+            "contract_revision_refs": list(self.contract_revision_refs),
             "target_source_count": self.target_source_count,
             "provider_policy": self.provider_policy,
             "requested_provider_families": list(self.requested_provider_families),

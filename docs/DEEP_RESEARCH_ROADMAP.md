@@ -70,8 +70,27 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   another web-console process surfaces a sanitized locked task state instead of
   starting a second Kernel run for the same project. Browser lifecycle actions
   record explicit retry, revision, and lock-recovery requests as refs-only
-  project artifacts without mutating the frozen contract or starting a new
-  Kernel attempt.
+  project artifacts. Pending retry requests can now be explicitly consumed by
+  `POST /api/research/attempt/start`, which writes attempt manifests, an
+  attempt index, and before-run snapshots before launching a server-owned Kernel
+  retry attempt. The dashboard also exposes a refs-first Progress Timeline
+  projected from live sanitized progress markers, flow ledgers, step records,
+  runtime interaction events, lifecycle actions, attempt index, and web task
+  state. Pending revision requests can now be explicitly consumed by
+  `POST /api/research/revision/start`, which writes contract revision records,
+  a revision index, staged Kernel revision inputs, and a revision attempt before
+  launching a server-owned Kernel run from the revised request. Retry attempts
+  still cannot consume revision requests. Completed retry/revision attempts now
+  copy stable Kernel outputs into attempt-scoped output refs, write an output
+  manifest, and update `project/current_output_pointer.json` so the dashboard
+  can prefer current attempt outputs while preserving stable refs as fallback
+  for legacy/first-run projects. Once a current output pointer exists, missing
+  attempt-scoped refs are surfaced as missing instead of silently falling back
+  to stable Kernel refs.
+  The progress timeline is now also grouped by project/attempt refs and
+  highlights the attempt that owns the current output pointer. FrontDesk
+  dialogue is projected by refs and turn metadata in the project snapshot; raw
+  dialogue remains an explicit artifact read, not default dashboard state.
 
 ## Design Principles
 
@@ -109,8 +128,11 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   source/citation inspection, artifact browser, Markdown preview, and FrontDesk
   chat plus requirements approval, background start-run, and first runtime
   controls are active; conservative cross-process run locking and first-slice
-  retry/revise/recover lifecycle requests are active. Attempt generation from
-  those pending requests and a richer progress timeline remain next.
+  retry/revise/recover lifecycle requests are active. Retry attempt generation
+  from pending retry requests, the refs-first progress timeline, the first
+  explicit contract revision flow, and attempt-scoped output projection are
+  active. Attempt-grouped timeline projection is active. Upload controls remain
+  next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

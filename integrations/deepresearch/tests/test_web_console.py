@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import missionforge as mf
 from missionforge_deepresearch.kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from missionforge_deepresearch.product_contract import AcademicResearchRequest
+from missionforge_deepresearch.research_requests import read_current_research_request
 from missionforge_deepresearch.frontdesk import FrontDeskFixtureAdapter
 from missionforge_deepresearch.web_console import (
     WebFrontDeskConfig,
@@ -55,6 +56,18 @@ class WebConsoleTests(unittest.TestCase):
         )
         self.assertEqual(response.status, 200)
 
+    def _wait_task_terminal(self, root: Path, request_id: str) -> dict[str, object]:
+        task_ref = root / f"runs/{request_id}/web/tasks/current_task.json"
+        deadline = 200
+        while deadline > 0:
+            if task_ref.is_file():
+                task_payload = json.loads(task_ref.read_text(encoding="utf-8"))
+                if task_payload.get("status") in {"completed", "failed", "interrupted"}:
+                    return task_payload
+            deadline -= 1
+            time.sleep(0.01)
+        self.fail(f"task did not reach a terminal state for {request_id}")
+
     def test_snapshot_reads_existing_project_refs_without_writing_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -85,6 +98,7 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(snapshot["judge"]["decision"], "accepted")
         self.assertEqual(snapshot["report_preview"]["ref"], "reports/final_report.citation_projected.md")
         self.assertIn("Kernel v2 DeepResearch Fixture Report", snapshot["report_preview"]["markdown"])
+        self.assertTrue(any(group["group_kind"] == "project" for group in snapshot["progress_timeline_groups"]))
         artifact_refs = {item["ref"] for item in snapshot["artifacts"] if item["exists"]}
         self.assertIn("state/acceptance_gate.json", artifact_refs)
         self.assertIn("judge/judge_report.json", artifact_refs)
@@ -389,6 +403,13 @@ class WebConsoleTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            retry_while_locked = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-recover-lock",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
             recover = web_console_response(
                 workspace=root,
                 request_id="web-lifecycle-recover-lock",
@@ -406,12 +427,225 @@ class WebConsoleTests(unittest.TestCase):
                 body=json.dumps({"action": "retry"}),
             )
 
+        self.assertEqual(retry_while_locked.status, 409)
+        self.assertIn("failed or interrupted", json.loads(retry_while_locked.body)["message"])
         self.assertEqual(recover.status, 202)
         self.assertEqual(json.loads(recover.body)["status"], "completed")
         self.assertFalse(lock_dir_exists_after_recovery)
         self.assertEqual(recovered_task["status"], "interrupted")
         self.assertEqual(retry.status, 202)
         self.assertEqual(json.loads(retry.body)["status"], "pending_retry")
+
+    def test_lifecycle_action_does_not_record_revision_while_task_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-revise-locked")
+            request = AcademicResearchRequest(
+                request_id="web-lifecycle-revise-locked",
+                topic="compiler autotuning survey",
+            )
+            run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            run_root = root / "runs/web-lifecycle-revise-locked"
+            task_ref = run_root / "web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-revise-locked",
+                        "status": "failed",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:00:01Z",
+                        "result_ref": "",
+                        "error_summary": "RuntimeError: task failed",
+                        "lock_ref": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            lock_dir = run_root / "web/locks/kernel_v2.lock"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            (lock_dir / "lock.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_lock.v1",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-revise-locked",
+                        "owner_pid": "999999",
+                        "owner_thread": "1",
+                        "owner_host": "test-host",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-revise-locked",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "需要调整研究范围"}),
+            )
+            revise_ref = run_root / "project/lifecycle/latest_revise_request.json"
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("active web task", payload["message"])
+        self.assertFalse(revise_ref.exists())
+
+    def test_progress_timeline_projects_completed_flow_ledger_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request = AcademicResearchRequest(
+                request_id="web-timeline-flow",
+                topic="compiler autotuning survey",
+            )
+            run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+
+            snapshot = build_project_snapshot(root, "web-timeline-flow")
+            html = render_project_dashboard(snapshot)
+
+        timeline = snapshot["progress_timeline"]
+        self.assertTrue(any(row["source"] == "flow_ledger" and row["stage"] == "source_mapper" for row in timeline))
+        self.assertTrue(any(row["source"] == "flow_ledger" and row["stage"] == "judge" for row in timeline))
+        self.assertTrue(any(row["source"] == "step_record" and row["state"] == "completed" for row in timeline))
+        self.assertTrue(all("source_kind" in row and "source_ref" in row for row in timeline))
+        self.assertIn("Progress Timeline", html)
+        self.assertIn("flow_ledger", html)
+
+    def test_progress_timeline_degrades_when_flow_ledger_or_step_record_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request = AcademicResearchRequest(
+                request_id="web-timeline-missing-ledger",
+                topic="compiler autotuning survey",
+            )
+            result = run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            run_root = root / result.run_workspace_ref
+            flow_result = json.loads((root / result.flow_result_ref).read_text(encoding="utf-8"))
+            ledger_ref = flow_result["ledger_refs"][0]
+            missing_step_ref = flow_result["step_record_refs"][0]
+            (run_root / ledger_ref).unlink()
+            (run_root / missing_step_ref).unlink()
+
+            snapshot = build_project_snapshot(root, "web-timeline-missing-ledger")
+
+        timeline = snapshot["progress_timeline"]
+        self.assertFalse(any(row["source"] == "flow_ledger" for row in timeline))
+        self.assertTrue(
+            any(
+                row["source"] == "step_record"
+                and row["source_ref"] == missing_step_ref
+                and row["stage"] == "step"
+                for row in timeline
+            )
+        )
+
+    def test_progress_timeline_does_not_expose_runtime_or_lifecycle_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-timeline-redaction"
+            self._approve_frontdesk_fixture(root, request_id)
+            task_ref = root / f"runs/{request_id}/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-failed",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": request_id,
+                        "status": "failed",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:00:01Z",
+                        "result_ref": "",
+                        "error_summary": "RuntimeError: task failed",
+                        "lock_ref": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "message", "text": "SECRET_TOKEN=runtime"}),
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry", "text": "SECRET_TOKEN=lifecycle"}),
+            )
+
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        timeline_json = json.dumps(snapshot["progress_timeline"])
+        self.assertIn("runtime_control", timeline_json)
+        self.assertIn("lifecycle_action", timeline_json)
+        self.assertNotIn("SECRET_TOKEN", timeline_json)
+        self.assertNotIn("SECRET_TOKEN", html)
+
+    def test_web_research_start_records_sanitized_live_progress_timeline(self) -> None:
+        class ProgressFixtureAdapter(KernelV2FixtureAdapter):
+            def run_call(self, call, *, runtime_progress_sink=None, **kwargs):
+                if runtime_progress_sink is not None:
+                    runtime_progress_sink(
+                        {
+                            "stage": str(call.metadata.get("kernel_step_id", "")),
+                            "message": "SECRET_TOKEN=progress",
+                            "detail": "SECRET_TOKEN=detail",
+                        }
+                    )
+                return super().run_call(call, runtime_progress_sink=runtime_progress_sink, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-timeline-live"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: ProgressFixtureAdapter(),
+                live_extension_mode=False,
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            timeline_ref = root / f"runs/{request_id}/web/progress_timeline.jsonl"
+            timeline_exists = timeline_ref.is_file()
+            timeline_text = timeline_ref.read_text(encoding="utf-8")
+            snapshot = build_project_snapshot(root, request_id)
+
+        self.assertEqual(response.status, 202)
+        self.assertTrue(timeline_exists)
+        self.assertIn("Runtime progress update", timeline_text)
+        self.assertIn("flow_ledger", timeline_text)
+        self.assertNotIn("SECRET_TOKEN", timeline_text)
+        self.assertTrue(any(row["source"] == "runtime_progress" or row["source"] == "kernel_v2" for row in snapshot["progress_timeline"]))
 
     def test_lifecycle_action_does_not_recover_live_process_lock(self) -> None:
         from missionforge_deepresearch.web_tasks import start_background_task
@@ -502,6 +736,557 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn("existing lock", payload["message"])
         self.assertFalse(recovery_ref.exists())
 
+    def test_research_attempt_start_requires_pending_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-attempt-no-retry")
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-attempt-no-retry",
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            attempt_index_exists = (root / "runs/web-attempt-no-retry/project/attempt_index.json").exists()
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("pending retry request", payload["message"])
+        self.assertFalse(attempt_index_exists)
+
+    def test_research_attempt_start_consumes_retry_and_snapshots_previous_outputs(self) -> None:
+        class ProgressAttemptFixtureAdapter(KernelV2FixtureAdapter):
+            def run_call(self, call, *, runtime_progress_sink=None, **kwargs):
+                if runtime_progress_sink is not None:
+                    runtime_progress_sink(
+                        {
+                            "stage": str(call.metadata.get("kernel_step_id", "")),
+                            "message": "SECRET_TOKEN=attempt-progress",
+                        }
+                    )
+                return super().run_call(call, runtime_progress_sink=runtime_progress_sink, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-attempt-retry"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: ProgressAttemptFixtureAdapter(),
+                live_extension_mode=False,
+            )
+            first = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            first_task = self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            report_ref = run_root / "reports/final_report.md"
+            report_ref.write_text("OLD REPORT MARKER\n", encoding="utf-8")
+            task_ref = run_root / "web/tasks/current_task.json"
+            failed_task = dict(first_task)
+            failed_task.update(
+                {
+                    "task_id": "kernel_v2_run-failed-for-retry",
+                    "task_kind": "kernel_v2_run",
+                    "status": "failed",
+                    "finished_at": "2026-01-01T00:00:01Z",
+                    "result_ref": "",
+                    "error_summary": "RuntimeError: task failed",
+                    "lock_ref": "",
+                }
+            )
+            task_ref.write_text(json.dumps(failed_task), encoding="utf-8")
+            retry = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry", "text": "SECRET_TOKEN=abc123"}),
+            )
+            attempt_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            final_task = self._wait_task_terminal(root, request_id)
+            retry_action = json.loads((run_root / "project/lifecycle/latest_retry_request.json").read_text(encoding="utf-8"))
+            attempt_index = json.loads((run_root / "project/attempt_index.json").read_text(encoding="utf-8"))
+            attempt_ref = attempt_index["latest_attempt_ref"]
+            attempt = json.loads((run_root / attempt_ref).read_text(encoding="utf-8"))
+            output_manifest = json.loads((run_root / attempt["output_manifest_ref"]).read_text(encoding="utf-8"))
+            current_outputs = json.loads((run_root / "project/current_output_pointer.json").read_text(encoding="utf-8"))
+            projected_output_ref = next(
+                item["output_ref"]
+                for item in output_manifest["entries"]
+                if item["source_ref"] == "reports/final_report.citation_projected.md"
+            )
+            projected_source_packet_ref = next(
+                item["output_ref"]
+                for item in output_manifest["entries"]
+                if item["source_ref"] == "sources/source_packet.json"
+            )
+            projected_canonical_sources_ref = next(
+                item["output_ref"]
+                for item in output_manifest["entries"]
+                if item["source_ref"] == "sources/canonical_sources.json"
+            )
+            (run_root / "reports/final_report.citation_projected.md").write_text(
+                "CORRUPTED STABLE REPORT\n",
+                encoding="utf-8",
+            )
+            (run_root / projected_source_packet_ref).unlink()
+            (run_root / projected_canonical_sources_ref).unlink()
+            before_snapshot = json.loads((run_root / attempt["before_snapshot_ref"]).read_text(encoding="utf-8"))
+            report_snapshot_ref = next(
+                item["snapshot_ref"]
+                for item in before_snapshot["entries"]
+                if item["source_ref"] == "reports/final_report.md"
+            )
+            report_snapshot_text = (run_root / report_snapshot_ref).read_text(encoding="utf-8")
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        retry_payload = json.loads(retry.body)
+        attempt_payload = json.loads(attempt_start.body)
+        self.assertEqual(first.status, 202)
+        self.assertEqual(retry.status, 202)
+        self.assertEqual(attempt_start.status, 202)
+        self.assertEqual(retry_payload["status"], "pending_retry")
+        self.assertEqual(attempt_payload["status"], "running")
+        self.assertEqual(final_task["status"], "completed")
+        self.assertEqual(retry_action["status"], "consumed")
+        self.assertEqual(retry_action["consumed_by_attempt_ref"], attempt_ref)
+        self.assertEqual(attempt["kind"], "retry_attempt")
+        self.assertEqual(attempt["status"], "completed")
+        self.assertEqual(attempt["base_contract_ref"], "contract/task_contract.json")
+        self.assertTrue(attempt["base_contract_hash"].startswith("sha256:"))
+        self.assertEqual(attempt["parent_web_task_ref"], "web/tasks/current_task.json")
+        self.assertEqual(attempt["source_retry_request_ref"], "project/lifecycle/latest_retry_request.json")
+        self.assertEqual(attempt["reason_ref"], retry_action["reason_ref"])
+        self.assertEqual(attempt["output_manifest_ref"], current_outputs["output_manifest_ref"])
+        self.assertEqual(current_outputs["attempt_ref"], attempt_ref)
+        self.assertEqual(snapshot["project"]["current_outputs"]["output_manifest_ref"], attempt["output_manifest_ref"])
+        self.assertEqual(snapshot["report_preview"]["ref"], projected_output_ref)
+        self.assertIn("Kernel v2 DeepResearch Fixture Report", snapshot["report_preview"]["markdown"])
+        self.assertNotIn("CORRUPTED STABLE REPORT", snapshot["report_preview"]["markdown"])
+        self.assertEqual(snapshot["source_summary"]["source_records"], 0)
+        self.assertEqual(snapshot["source_summary"]["canonical_sources"], 0)
+        self.assertIn("OLD REPORT MARKER", report_snapshot_text)
+        self.assertEqual(snapshot["project"]["attempt_index"]["attempt_count"], 1)
+        current_groups = [
+            group
+            for group in snapshot["progress_timeline_groups"]
+            if group["group_kind"] == "attempt" and group["is_current_output"]
+        ]
+        self.assertEqual(len(current_groups), 1)
+        self.assertEqual(current_groups[0]["attempt_ref"], attempt_ref)
+        self.assertEqual(current_groups[0]["output_manifest_ref"], attempt["output_manifest_ref"])
+        self.assertTrue(any(row["source"] == "attempt" for row in current_groups[0]["rows"]))
+        self.assertTrue(any(row["source"] == "flow_ledger" for row in current_groups[0]["rows"]))
+        self.assertTrue(
+            any(
+                row["source"] == "retry_attempt" and row["source_kind"] == "runtime_progress"
+                for row in current_groups[0]["rows"]
+            )
+        )
+        self.assertIn("Start Retry Attempt", html)
+        self.assertIn("current output", html)
+        self.assertIn(attempt["output_manifest_ref"], html)
+        self.assertIn("data-attempt-start=\"retry\"", html)
+        self.assertNotIn("SECRET_TOKEN", json.dumps(attempt_payload))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot["lifecycle_actions"]))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot["progress_timeline_groups"]))
+
+    def test_research_attempt_start_is_idempotent_for_consumed_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-attempt-idempotent"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            first_task = self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            failed_task = dict(first_task)
+            failed_task.update({"status": "failed", "result_ref": "", "error_summary": "RuntimeError: task failed"})
+            (run_root / "web/tasks/current_task.json").write_text(json.dumps(failed_task), encoding="utf-8")
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
+            first_attempt = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            second_attempt = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            attempt_index = json.loads((run_root / "project/attempt_index.json").read_text(encoding="utf-8"))
+
+        first_payload = json.loads(first_attempt.body)
+        second_payload = json.loads(second_attempt.body)
+        first_attempt_ref = first_payload["action"]["consumed_by_attempt_ref"]
+        second_attempt_ref = second_payload["action"]["consumed_by_attempt_ref"]
+        self.assertEqual(first_attempt.status, 202)
+        self.assertEqual(second_attempt.status, 200)
+        self.assertEqual(first_attempt_ref, second_attempt_ref)
+        self.assertEqual(attempt_index["latest_attempt_ref"], first_attempt_ref)
+        self.assertEqual(len(attempt_index["attempts"]), 1)
+
+    def test_research_attempt_start_rejects_pending_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-attempt-pending-revision"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            task_ref = root / f"runs/{request_id}/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-failed",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": request_id,
+                        "status": "failed",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:00:01Z",
+                        "result_ref": "",
+                        "error_summary": "RuntimeError: task failed",
+                        "lock_ref": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            retry = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
+            revise = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "需要调整研究范围"}),
+            )
+            attempt = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            retry_action = json.loads(
+                (root / f"runs/{request_id}/project/lifecycle/latest_retry_request.json").read_text(encoding="utf-8")
+            )
+            attempt_index_exists = (root / f"runs/{request_id}/project/attempt_index.json").exists()
+
+        payload = json.loads(attempt.body)
+        self.assertEqual(retry.status, 202)
+        self.assertEqual(revise.status, 202)
+        self.assertEqual(attempt.status, 409)
+        self.assertIn("pending revision", payload["message"])
+        self.assertEqual(retry_action["status"], "pending_retry")
+        self.assertFalse(attempt_index_exists)
+
+    def test_research_revision_start_requires_pending_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-revision-no-request"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            revision_index_exists = (root / f"runs/{request_id}/project/revision_index.json").exists()
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("pending revision request", payload["message"])
+        self.assertFalse(revision_index_exists)
+
+    def test_research_revision_start_consumes_revision_and_freezes_revised_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-revision-start"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            approval_before = (run_root / "frontdesk/approval.json").read_text(encoding="utf-8")
+            old_contract = json.loads((run_root / "contract/task_contract.json").read_text(encoding="utf-8"))
+            old_contract_hash = mf.stable_json_hash(old_contract)
+            revise = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "SECRET_TOKEN=abc123 需要把范围调整到 UI 生命周期控制。"}),
+            )
+            revision_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            final_task = self._wait_task_terminal(root, request_id)
+            second_revision_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            revise_action = json.loads((run_root / "project/lifecycle/latest_revise_request.json").read_text(encoding="utf-8"))
+            revision_index = json.loads((run_root / "project/revision_index.json").read_text(encoding="utf-8"))
+            attempt_index = json.loads((run_root / "project/attempt_index.json").read_text(encoding="utf-8"))
+            revision_ref = revision_index["latest_revision_ref"]
+            attempt_ref = attempt_index["latest_attempt_ref"]
+            revision = json.loads((run_root / revision_ref).read_text(encoding="utf-8"))
+            attempt = json.loads((run_root / attempt_ref).read_text(encoding="utf-8"))
+            revised_request = json.loads((run_root / revision["revised_request_ref"]).read_text(encoding="utf-8"))
+            kernel_request = json.loads((run_root / "product_contract/research_request.json").read_text(encoding="utf-8"))
+            new_contract = json.loads((run_root / "contract/task_contract.json").read_text(encoding="utf-8"))
+            contract_revision_input = json.loads((run_root / "inputs/contract_revision_index.json").read_text(encoding="utf-8"))
+            staged_directive_ref = next(
+                item["staged_ref"]
+                for item in contract_revision_input["entries"]
+                if item["contract_revision_ref"].endswith("/revision_directive.md")
+            )
+            staged_directive_text = (run_root / staged_directive_ref).read_text(encoding="utf-8")
+            lifecycle = json.loads((run_root / "project/lifecycle_state.json").read_text(encoding="utf-8"))
+            approval_after = (run_root / "frontdesk/approval.json").read_text(encoding="utf-8")
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        revise_payload = json.loads(revise.body)
+        start_payload = json.loads(revision_start.body)
+        second_start_payload = json.loads(second_revision_start.body)
+        self.assertEqual(revise.status, 202)
+        self.assertEqual(revision_start.status, 202)
+        self.assertEqual(second_revision_start.status, 200)
+        self.assertEqual(revise_payload["status"], "pending_revision")
+        self.assertEqual(start_payload["status"], "running")
+        self.assertEqual(second_start_payload["action"]["consumed_by_revision_ref"], revision_ref)
+        self.assertEqual(second_start_payload["action"]["consumed_by_attempt_ref"], attempt_ref)
+        self.assertEqual(final_task["status"], "completed")
+        self.assertEqual(revise_action["status"], "consumed")
+        self.assertEqual(revise_action["consumed_by_revision_ref"], revision_ref)
+        self.assertEqual(revise_action["consumed_by_attempt_ref"], attempt_ref)
+        self.assertEqual(revision["status"], "completed")
+        self.assertEqual(revision["attempt_ref"], attempt_ref)
+        self.assertEqual(attempt["kind"], "revision_attempt")
+        self.assertEqual(attempt["status"], "completed")
+        self.assertEqual(attempt["revision_record_ref"], revision_ref)
+        self.assertEqual(revised_request["contract_revision_refs"], kernel_request["contract_revision_refs"])
+        self.assertIn(f"runs/{request_id}/{revision_ref}", revised_request["contract_revision_refs"])
+        self.assertIn(f"runs/{request_id}/{revision['directive_ref']}", revised_request["contract_revision_refs"])
+        self.assertIn("SECRET_TOKEN=abc123", staged_directive_text)
+        self.assertNotEqual(old_contract_hash, mf.stable_json_hash(new_contract))
+        self.assertEqual(lifecycle["current_revision_ref"], revision_ref)
+        self.assertEqual(snapshot["project"]["revision_index"]["revision_count"], 1)
+        self.assertEqual(len(revision_index["revisions"]), 1)
+        self.assertTrue(any(row["source"] == "contract_revision" for row in snapshot["progress_timeline"]))
+        self.assertIn("Start Revision Attempt", html)
+        self.assertEqual(approval_before, approval_after)
+        self.assertNotIn("SECRET_TOKEN", json.dumps(start_payload))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot["lifecycle_actions"]))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot["progress_timeline"]))
+
+    def test_failed_revision_attempt_keeps_revised_request_as_current_authority(self) -> None:
+        class FailingRevisionAdapter(KernelV2FixtureAdapter):
+            def run_call(self, call, **kwargs):
+                if str(call.metadata.get("kernel_step_id", "")) == "source_mapper":
+                    raise RuntimeError("revision provider failed")
+                return super().run_call(call, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-revision-failed-current"
+            self._approve_frontdesk_fixture(root, request_id)
+            ok_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            failing_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: FailingRevisionAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=ok_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "失败后也必须保留冻结后的修订合同。"}),
+            )
+            revision_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=failing_config,
+            )
+            final_task = self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            revision_index = json.loads((run_root / "project/revision_index.json").read_text(encoding="utf-8"))
+            revision_ref = revision_index["latest_revision_ref"]
+            revision = json.loads((run_root / revision_ref).read_text(encoding="utf-8"))
+            lifecycle = json.loads((run_root / "project/lifecycle_state.json").read_text(encoding="utf-8"))
+            current_request = read_current_research_request(workspace=root, request_id=request_id)
+
+        self.assertEqual(revision_start.status, 202)
+        self.assertEqual(final_task["status"], "failed")
+        self.assertEqual(revision["status"], "failed")
+        self.assertEqual(lifecycle["current_revision_ref"], revision_ref)
+        self.assertIn(f"runs/{request_id}/{revision_ref}", current_request.contract_revision_refs)
+        self.assertIn(f"runs/{request_id}/{revision['directive_ref']}", current_request.contract_revision_refs)
+
+    def test_retry_after_completed_revision_preserves_current_revision_lifecycle_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-revision-then-retry"
+            self._approve_frontdesk_fixture(root, request_id)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "把研究范围修订到 lifecycle retry 后仍保持合同权威。"}),
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            revision_task = self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            revision_index = json.loads((run_root / "project/revision_index.json").read_text(encoding="utf-8"))
+            revision_ref = revision_index["latest_revision_ref"]
+            failed_task = dict(revision_task)
+            failed_task.update({"status": "failed", "result_ref": "", "error_summary": "RuntimeError: task failed"})
+            (run_root / "web/tasks/current_task.json").write_text(json.dumps(failed_task), encoding="utf-8")
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
+            retry_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/attempt/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            retry_task = self._wait_task_terminal(root, request_id)
+            lifecycle = json.loads((run_root / "project/lifecycle_state.json").read_text(encoding="utf-8"))
+            current_request = read_current_research_request(workspace=root, request_id=request_id)
+
+        self.assertEqual(retry_start.status, 202)
+        self.assertEqual(retry_task["status"], "completed")
+        self.assertEqual(lifecycle["current_revision_ref"], revision_ref)
+        self.assertIn(f"runs/{request_id}/{revision_ref}", current_request.contract_revision_refs)
+
     def test_frontdesk_message_post_requires_server_owned_config(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -530,7 +1315,7 @@ class WebConsoleTests(unittest.TestCase):
                 request_id="web-frontdesk-chat",
                 method="POST",
                 path="/api/frontdesk/message",
-                body=json.dumps({"message": "我想调研 AI 模型到 FPGA 的编译框架"}),
+                body=json.dumps({"message": "我想调研 AI 模型到 FPGA 的编译框架 SECRET_TOKEN=frontdesk"}),
                 frontdesk_config=config,
             )
             second = web_console_response(
@@ -542,6 +1327,8 @@ class WebConsoleTests(unittest.TestCase):
                 frontdesk_config=config,
             )
             requirements_exists = (root / "runs/web-frontdesk-chat/frontdesk/research_requirements.md").is_file()
+            snapshot = build_project_snapshot(root, "web-frontdesk-chat")
+            html = render_project_dashboard(snapshot)
 
         first_payload = json.loads(first.body)
         second_payload = json.loads(second.body)
@@ -551,6 +1338,12 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(second_payload["status"], "ready_for_approval")
         self.assertEqual(second_payload["snapshot"]["frontdesk"]["status"], "ready_for_approval")
         self.assertEqual(len(second_payload["snapshot"]["frontdesk_dialogue"]), 2)
+        self.assertNotIn("AI 模型到 FPGA", json.dumps(second_payload["snapshot"], ensure_ascii=False))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(second_payload["snapshot"], ensure_ascii=False))
+        self.assertNotIn("AI 模型到 FPGA", html)
+        self.assertNotIn("SECRET_TOKEN", html)
+        self.assertTrue(all("content" not in row for row in second_payload["snapshot"]["frontdesk_dialogue"]))
+        self.assertEqual(snapshot["frontdesk_dialogue"][0]["dialogue_ref"], "frontdesk/dialogue.jsonl")
         self.assertTrue(requirements_exists)
 
     def test_frontdesk_approve_post_requires_approval_ready_requirements(self) -> None:
