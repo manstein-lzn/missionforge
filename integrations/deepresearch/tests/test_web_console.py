@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import multiprocessing
 from pathlib import Path
@@ -1345,6 +1346,184 @@ class WebConsoleTests(unittest.TestCase):
         self.assertTrue(all("content" not in row for row in second_payload["snapshot"]["frontdesk_dialogue"]))
         self.assertEqual(snapshot["frontdesk_dialogue"][0]["dialogue_ref"], "frontdesk/dialogue.jsonl")
         self.assertTrue(requirements_exists)
+
+    def test_seed_paper_post_updates_preapproval_request_without_snapshot_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-paper"
+            config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 seed paper support"}),
+                frontdesk_config=config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于论文综述。"}),
+                frontdesk_config=config,
+            )
+            seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({"kind": "doi", "value": "10.1145/1234567.1234568", "note": "SECRET_TOKEN=seed"}),
+            )
+            approve = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        seed_payload = json.loads(seed.body)
+        approve_payload = json.loads(approve.body)
+        self.assertEqual(seed.status, 202)
+        self.assertEqual(seed_payload["seed_paper_count"], 1)
+        self.assertEqual(seed_payload["snapshot"]["seeds"]["seed_paper_count"], 1)
+        self.assertNotIn("10.1145/1234567.1234568", json.dumps(seed_payload["snapshot"]))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(seed_payload["snapshot"]))
+        self.assertEqual(approve.status, 200)
+        self.assertEqual(approve_payload["research_request"]["seed_papers"][0]["kind"], "doi")
+        self.assertEqual(approve_payload["research_request"]["seed_papers"][0]["value"], "10.1145/1234567.1234568")
+        self.assertEqual(snapshot["seeds"]["seed_paper_count"], 1)
+        self.assertIn("Seed Inputs", html)
+        self.assertNotIn("10.1145/1234567.1234568", html)
+        self.assertNotIn("SECRET_TOKEN", html)
+
+    def test_seed_pdf_upload_updates_request_and_kernel_seed_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-pdf"
+            config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 PDF seed support"}),
+                frontdesk_config=config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于论文综述。"}),
+                frontdesk_config=config,
+            )
+            pdf_body = base64.b64encode(b"%PDF-1.4\nfixture seed\n").decode("ascii")
+            seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/pdfs",
+                body=json.dumps({"filename": "seed paper.pdf", "content_base64": pdf_body}),
+            )
+            approve = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            self._wait_task_terminal(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            seed_payload = json.loads(seed.body)
+            approve_payload = json.loads(approve.body)
+            seed_pdf_ref = seed_payload["seed_pdf_ref"]
+            pdf_exists = (run_root / seed_pdf_ref).is_file()
+            seed_pdf_index = json.loads((run_root / "inputs/seed_pdf_index.json").read_text(encoding="utf-8"))
+            seed_packet = json.loads((run_root / "sources/seed_source_packet.json").read_text(encoding="utf-8"))
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        self.assertEqual(seed.status, 202)
+        self.assertEqual(approve.status, 200)
+        self.assertEqual(start.status, 202)
+        self.assertTrue(pdf_exists)
+        self.assertEqual(seed_pdf_ref, "inputs/seeds/001-seed-paper.pdf")
+        self.assertEqual(approve_payload["research_request"]["seed_pdf_refs"], [seed_pdf_ref])
+        self.assertTrue(seed_pdf_index["entries"][0]["available"])
+        self.assertEqual(seed_pdf_index["entries"][0]["original_ref"], seed_pdf_ref)
+        self.assertEqual(seed_packet["schema_version"], "missionforge_deepresearch.seed_source_packet.v1")
+        self.assertEqual(snapshot["seeds"]["seed_pdf_count"], 1)
+        self.assertIn(seed_pdf_ref, snapshot["seeds"]["seed_pdf_refs"])
+        self.assertIn("/artifact?ref=inputs/seeds/001-seed-paper.pdf", html)
+        self.assertNotIn("fixture seed", json.dumps(snapshot))
+
+    def test_seed_upload_rejects_unsafe_pdf_and_postapproval_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-rejects"
+            self._approve_frontdesk_fixture(root, request_id)
+            after_approval = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({"kind": "doi", "value": "10.1145/1234567.1234568"}),
+            )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-unsafe-pdf"
+            unsafe_name = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/pdfs",
+                body=json.dumps({
+                    "filename": "../paper.pdf",
+                    "content_base64": base64.b64encode(b"%PDF-1.4\n").decode("ascii"),
+                }),
+            )
+            bad_content = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/pdfs",
+                body=json.dumps({
+                    "filename": "paper.pdf",
+                    "content_base64": base64.b64encode(b"not a pdf").decode("ascii"),
+                }),
+            )
+
+        self.assertEqual(after_approval.status, 409)
+        self.assertIn("explicit revision", json.loads(after_approval.body)["message"])
+        self.assertEqual(unsafe_name.status, 409)
+        self.assertIn("path separators", json.loads(unsafe_name.body)["message"])
+        self.assertEqual(bad_content.status, 409)
+        self.assertIn("must be a PDF", json.loads(bad_content.body)["message"])
 
     def test_frontdesk_approve_post_requires_approval_ready_requirements(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

@@ -64,6 +64,7 @@ from .project_lifecycle import (
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
+from .project_seeds import PROJECT_SEED_INPUTS_REF
 from .research_attempts import ATTEMPT_INDEX_REF, read_attempt_index
 from .research_requests import CONTRACT_REVISION_INDEX_REF, read_contract_revision_index
 from .web_actions import (
@@ -75,8 +76,9 @@ from .web_actions import (
     research_revision_start_response,
     research_start_response,
 )
-from .web_common import WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
+from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
 from .web_controls import runtime_control_response
+from .web_seeds import WEB_SEED_PDF_POST_MAX_BYTES, seed_paper_response, seed_pdf_response, seed_snapshot
 from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
 from .web_timeline import PROGRESS_TIMELINE_REF, build_project_timeline, build_timeline_attempt_groups
 from .workspace import resolve_workspace_ref
@@ -111,6 +113,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
     usage_summary = _read_json_if_exists(run_root, _current_or_stable_ref(current_outputs, KERNEL_V2_USAGE_SUMMARY_REF))
     web_task = read_web_task_state(run_root)
     lifecycle_actions = read_latest_lifecycle_actions(run_root)
+    seeds = seed_snapshot(run_root)
     runtime_events = _runtime_event_rows(run_root)
     progress_timeline = build_project_timeline(run_root, lifecycle=lifecycle, run_status=run_status)
     progress_timeline_groups = build_timeline_attempt_groups(
@@ -143,6 +146,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
         },
         "web_task": web_task,
         "lifecycle_actions": lifecycle_actions,
+        "seeds": seeds,
         "runtime_events": runtime_events,
         "progress_timeline": progress_timeline,
         "progress_timeline_groups": progress_timeline_groups,
@@ -220,6 +224,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
     frontdesk = _mapping(snapshot.get("frontdesk"))
     dialogue = _list(snapshot.get("frontdesk_dialogue"))[-30:]
     web_task = _mapping(snapshot.get("web_task"))
+    seeds = _mapping(snapshot.get("seeds"))
     runtime_events = _list(snapshot.get("runtime_events"))[-12:]
     progress_timeline = _list(snapshot.get("progress_timeline"))[-80:]
     progress_timeline_groups = _list(snapshot.get("progress_timeline_groups"))
@@ -235,6 +240,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
                 _header(snapshot),
                 _status_grid(status_cards),
                 _frontdesk_chat_panel(frontdesk, dialogue, web_task),
+                _seed_input_panel(seeds),
                 _runtime_controls_panel(
                     runtime_events,
                     _mapping(snapshot.get("lifecycle_actions")),
@@ -303,7 +309,8 @@ def create_web_console_server(
             self._write_response(response)
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
-            body = self.rfile.read(content_length(self.headers.get("Content-Length")))
+            max_bytes = WEB_SEED_PDF_POST_MAX_BYTES if self.path.split("?", 1)[0] == "/api/seeds/pdfs" else WEB_POST_MAX_BYTES
+            body = self.rfile.read(content_length(self.headers.get("Content-Length"), max_bytes=max_bytes))
             response = web_console_response(
                 workspace=workspace_root,
                 request_id=request_id,
@@ -375,6 +382,20 @@ def web_console_response(
         return frontdesk_approve_response(
             workspace=workspace_root,
             request_id=request_id,
+            snapshot_factory=build_project_snapshot,
+        )
+    if method == "POST" and parsed.path == "/api/seeds/papers":
+        return seed_paper_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            body=body,
+            snapshot_factory=build_project_snapshot,
+        )
+    if method == "POST" and parsed.path == "/api/seeds/pdfs":
+        return seed_pdf_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            body=body,
             snapshot_factory=build_project_snapshot,
         )
     if method == "POST" and parsed.path == "/api/research/start":
@@ -572,6 +593,7 @@ def _artifact_entries(
         ("Attempt Index", ATTEMPT_INDEX_REF, "project"),
         ("Revision Index", CONTRACT_REVISION_INDEX_REF, "project"),
         ("Current Output Pointer", CURRENT_OUTPUT_POINTER_REF, "project"),
+        ("Seed Inputs", PROJECT_SEED_INPUTS_REF, "project"),
         (
             "Current Output Manifest",
             _clean((current_outputs or {}).get("output_manifest_ref")),
@@ -1033,6 +1055,41 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web
         f'{_row("error", _clean(web_task.get("error_summary")))}'
         "</div>"
         f"<script>{_CHAT_SCRIPT}</script>"
+        "</section>"
+    )
+
+
+def _seed_input_panel(seeds: Mapping[str, Any]) -> str:
+    seed_inputs_ref = _clean(seeds.get("seed_inputs_ref"))
+    pdf_refs = [
+        _artifact_link(ref, Path(ref).name or ref)
+        for ref in _string_list(seeds.get("seed_pdf_refs"))[:10]
+    ]
+    return (
+        '<section class="panel seed-panel">'
+        "<h2>Seed Inputs</h2>"
+        "<dl>"
+        f'{_row("seed papers", _format_int(seeds.get("seed_paper_count")))}'
+        f'{_row("seed PDFs", _format_int(seeds.get("seed_pdf_count")))}'
+        f'{_row("seed inputs", _artifact_link(seed_inputs_ref, "open"), raw=True)}'
+        f'{_row("pdf refs", ", ".join(pdf_refs), raw=True)}'
+        f'{_row("updated", _clean(seeds.get("updated_at")))}'
+        "</dl>"
+        '<form id="seed-paper-form" class="seed-form">'
+        '<select id="seed-paper-kind" name="kind">'
+        '<option value="doi">DOI</option>'
+        '<option value="arxiv">arXiv</option>'
+        '<option value="title">Title</option>'
+        '<option value="url">URL</option>'
+        "</select>"
+        '<input id="seed-paper-value" name="value" type="text" placeholder="Seed paper identifier">'
+        '<input id="seed-paper-note" name="note" type="text" placeholder="Optional note">'
+        '<button type="submit">Add Paper</button>'
+        "</form>"
+        '<form id="seed-pdf-form" class="seed-form">'
+        '<input id="seed-pdf-file" name="pdf" type="file" accept="application/pdf,.pdf">'
+        '<button type="submit">Upload PDF</button>'
+        "</form>"
         "</section>"
     )
 
@@ -1536,6 +1593,24 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .runtime-panel .chat-form {
   grid-template-columns: minmax(0, 1fr) 96px 96px;
 }
+.seed-form {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr) 110px;
+  gap: 10px;
+  margin-top: 12px;
+}
+.seed-form input, .seed-form select {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  min-width: 0;
+}
+.seed-form input[type="file"] {
+  padding-top: 8px;
+}
 .control-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -1669,6 +1744,7 @@ pre {
   dl { grid-template-columns: 110px minmax(0, 1fr); }
   .chat-row { grid-template-columns: 1fr; }
   .chat-form { grid-template-columns: 1fr; }
+  .seed-form { grid-template-columns: 1fr; }
   .runtime-panel .chat-form { grid-template-columns: 1fr; }
   .event-row { grid-template-columns: 1fr; }
   .timeline-group summary { grid-template-columns: 1fr; }
@@ -1685,6 +1761,8 @@ _CHAT_SCRIPT = """
   const startForm = document.getElementById("research-start-form");
   const runtimeForm = document.getElementById("runtime-message-form");
   const runtimeTextarea = document.getElementById("runtime-message");
+  const seedPaperForm = document.getElementById("seed-paper-form");
+  const seedPdfForm = document.getElementById("seed-pdf-form");
   const textarea = document.getElementById("frontdesk-message");
   const postJson = async (path, payload) => {
     const response = await fetch(path, {
@@ -1732,6 +1810,54 @@ _CHAT_SCRIPT = """
     if (button) button.disabled = true;
     try {
       await postJson("/api/research/start", {});
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+  if (seedPaperForm) seedPaperForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const kind = document.getElementById("seed-paper-kind");
+    const value = document.getElementById("seed-paper-value");
+    const note = document.getElementById("seed-paper-note");
+    const button = seedPaperForm.querySelector("button");
+    const payload = {
+      kind: kind ? kind.value : "doi",
+      value: value ? value.value.trim() : "",
+      note: note ? note.value.trim() : ""
+    };
+    if (!payload.value) return;
+    if (button) button.disabled = true;
+    try {
+      await postJson("/api/seeds/papers", payload);
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+  const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      resolve(dataUrl.includes(",") ? dataUrl.split(",", 2)[1] : dataUrl);
+    };
+    reader.onerror = () => reject(reader.error || new Error("File read failed."));
+    reader.readAsDataURL(file);
+  });
+  if (seedPdfForm) seedPdfForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = document.getElementById("seed-pdf-file");
+    const file = input && input.files && input.files[0] ? input.files[0] : null;
+    if (!file) return;
+    const button = seedPdfForm.querySelector("button");
+    if (button) button.disabled = true;
+    try {
+      const content_base64 = await fileToBase64(file);
+      await postJson("/api/seeds/pdfs", {filename: file.name, content_base64});
       window.location.reload();
     } catch (error) {
       alert(String(error));

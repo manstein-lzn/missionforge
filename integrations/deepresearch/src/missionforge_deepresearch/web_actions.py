@@ -283,14 +283,14 @@ def json_body(body: bytes | str) -> dict[str, Any]:
     return dict(payload) if isinstance(payload, Mapping) else {}
 
 
-def content_length(value: str | None) -> int:
+def content_length(value: str | None, *, max_bytes: int = WEB_POST_MAX_BYTES) -> int:
     try:
         parsed = int(value or "0")
     except ValueError:
         return 0
     if parsed < 0:
         return 0
-    return min(parsed, WEB_POST_MAX_BYTES)
+    return min(parsed, max_bytes)
 
 
 def _run_ref(request_id: str) -> str:

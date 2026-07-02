@@ -176,7 +176,11 @@ shown as missing instead of mixed with stable Kernel refs. The Progress Timeline
 is grouped by project/attempt refs and highlights the attempt that owns the
 current output pointer. FrontDesk dialogue is projected by refs and turn
 metadata in the dashboard; raw dialogue remains available through explicit
-artifact reads. Upload controls remain follow-up work.
+artifact reads. Before approval, the dashboard can record seed papers and
+upload seed PDFs through `POST /api/seeds/papers` and `POST /api/seeds/pdfs`;
+those inputs are staged as refs and merged into the FrontDesk research request
+before approval. Approved projects require an explicit revision before new seed
+inputs are added.
 
 ## Product Shape
 

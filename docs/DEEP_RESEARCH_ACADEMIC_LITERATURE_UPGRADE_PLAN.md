@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `timeline_attempt_grouping_hardened`; next priority is `seed_upload_ui`
+Status: `seed_upload_ui_first_slice`; next priority is `seed_upload_revision_flow`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1259,7 +1259,14 @@ Implemented notes:
   pointer exists; FrontDesk dialogue is projected by ref/turn metadata instead
   of raw dialogue text; and attempt runtime-progress rows carry attempt refs for
   grouping.
-- Remaining M3B work: upload UI.
+- M3B-J first slice is complete for Web seed-paper/PDF input. The dashboard
+  includes a Seed Inputs panel, `POST /api/seeds/papers`, and
+  `POST /api/seeds/pdfs`. Seed inputs are staged as explicit project artifacts
+  and merged into `frontdesk/research_request.json` before FrontDesk approval.
+  Once a project is approved, seed additions fail closed and require an
+  explicit contract revision instead of mutating the frozen request.
+- Remaining M3B work: seed upload through explicit revision flow for already
+  approved projects.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1715,10 +1722,17 @@ Implemented notes:
   projection refs and seed packet `parse_refs`.
 - M5C is complete for carrying parsed PDF evidence refs into source packets,
   canonical sources, evidence indexes, and claim indexes.
+- M5D first slice is complete for Web seed upload. Browser seed-paper input and
+  PDF upload write `project/seed_inputs.json` and `inputs/seeds/*.pdf` before
+  approval. The approved request carries `seed_papers` and `seed_pdf_refs` into
+  Kernel v2, where existing `inputs/seed_papers.json`,
+  `inputs/seed_pdf_index.json`, and seed-normalizer flow handle parsing and
+  source-packet projection. The project snapshot shows seed counts and refs,
+  not raw seed-paper values or PDF bytes.
 - DeepResearch does not hand-parse PDF binaries or dump extracted full text
   into context.
-- Remaining M5 work: Web upload UI, OCR fallback, and richer page/span
-  provenance when GROBID coordinates are available.
+- Remaining M5 work: approved-project seed revision flow, OCR fallback, and
+  richer page/span provenance when GROBID coordinates are available.
 
 ### M6: Citation Support Judge
 

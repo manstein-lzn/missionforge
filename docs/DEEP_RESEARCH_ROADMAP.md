@@ -91,6 +91,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   highlights the attempt that owns the current output pointer. FrontDesk
   dialogue is projected by refs and turn metadata in the project snapshot; raw
   dialogue remains an explicit artifact read, not default dashboard state.
+  The web console also accepts pre-approval seed-paper and seed-PDF inputs,
+  stages them as project refs, and merges them into the FrontDesk research
+  request before approval. Approved projects require an explicit revision before
+  adding new seed inputs.
 
 ## Design Principles
 
@@ -118,8 +122,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Harden citation and claim support with richer URL accessibility checks,
   page/span-level parsed PDF provenance when available, and live fetched/full-text
   evidence coverage without making Python a semantic judge.
-- Continue seed/PDF ingestion later with Web upload UI, OCR fallback, and
-  richer page/span citation support.
+- Continue seed/PDF ingestion with approved-project seed revision flow, OCR
+  fallback, and richer page/span citation support.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into
@@ -131,8 +135,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   retry/revise/recover lifecycle requests are active. Retry attempt generation
   from pending retry requests, the refs-first progress timeline, the first
   explicit contract revision flow, and attempt-scoped output projection are
-  active. Attempt-grouped timeline projection is active. Upload controls remain
-  next.
+  active. Attempt-grouped timeline projection and pre-approval seed upload are
+  active.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

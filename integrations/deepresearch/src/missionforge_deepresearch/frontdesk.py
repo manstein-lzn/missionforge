@@ -16,6 +16,7 @@ from typing import Any, Mapping
 import missionforge as mf
 
 from .product_contract import AcademicResearchRequest, ResearchIntensity
+from .project_seeds import apply_project_seed_inputs, project_seed_inputs_hash, PROJECT_SEED_INPUTS_REF
 from .project_lifecycle import (
     evaluate_project_context_packages,
     write_frontdesk_lifecycle_state,
@@ -278,6 +279,9 @@ def _ready_frontdesk_request(run_root: Path) -> tuple[AcademicResearchRequest, s
     requirements_hash = str(projection.get("requirements_hash") or "")
     if requirements_hash != _text_hash(requirements):
         raise mf.ContractValidationError("frontdesk requirements changed after research request projection")
+    seed_inputs_hash = str(projection.get("seed_inputs_hash") or "")
+    if seed_inputs_hash and seed_inputs_hash != project_seed_inputs_hash(run_root):
+        raise mf.ContractValidationError("frontdesk seed inputs changed after research request projection")
     request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
     return AcademicResearchRequest.from_dict(request_payload), requirements_hash
 
@@ -764,6 +768,7 @@ def _write_research_request_projection(
         research_intensity=research_intensity,
         constraints=[f"Use approved requirements from {FRONTDESK_REQUIREMENTS_REF}."],
     )
+    request = apply_project_seed_inputs(run_root, request)
     write_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, request.to_dict())
     write_json_ref(
         run_root,
@@ -773,6 +778,8 @@ def _write_research_request_projection(
             "requirements_ref": FRONTDESK_REQUIREMENTS_REF,
             "requirements_hash": _text_hash(requirements),
             "research_request_ref": FRONTDESK_RESEARCH_REQUEST_REF,
+            "seed_inputs_ref": PROJECT_SEED_INPUTS_REF,
+            "seed_inputs_hash": project_seed_inputs_hash(run_root),
         },
     )
     return FRONTDESK_RESEARCH_REQUEST_REF
