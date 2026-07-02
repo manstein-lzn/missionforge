@@ -136,6 +136,87 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(artifact_payload["ref"], "state/run_status.json")
         self.assertEqual(blocked.status, 404)
 
+    def test_runtime_control_post_appends_interaction_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            pause = web_console_response(
+                workspace=root,
+                request_id="web-runtime-control",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "pause"}),
+            )
+            revise = web_console_response(
+                workspace=root,
+                request_id="web-runtime-control",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "revise", "text": "需要收紧到产品体验。"}),
+            )
+            message = web_console_response(
+                workspace=root,
+                request_id="web-runtime-control",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "message", "text": "补充关注进度可观测性。"}),
+            )
+            event_log = root / "runs/web-runtime-control/interaction/user_events.jsonl"
+            events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+        self.assertEqual(pause.status, 202)
+        self.assertEqual(revise.status, 202)
+        self.assertEqual(message.status, 202)
+        self.assertEqual(
+            [event["kind"] for event in events],
+            ["pause_request", "contract_revision_request", "message"],
+        )
+        self.assertEqual(events[0]["run_id"], "deepresearch-v2-web-runtime-control")
+        self.assertEqual(events[0]["target"], "flow")
+        self.assertEqual(json.loads(revise.body)["events_ref"], "interaction/user_events.jsonl")
+
+    def test_runtime_control_requires_text_for_revision_and_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            revise = web_console_response(
+                workspace=root,
+                request_id="web-runtime-control-text",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "revise"}),
+            )
+            message = web_console_response(
+                workspace=root,
+                request_id="web-runtime-control-text",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "message"}),
+            )
+
+        self.assertEqual(revise.status, 409)
+        self.assertEqual(message.status, 409)
+        self.assertIn("revision text is required", json.loads(revise.body)["message"])
+        self.assertIn("message text is required", json.loads(message.body)["message"])
+
+    def test_runtime_controls_render_without_exposing_event_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            web_console_response(
+                workspace=root,
+                request_id="web-runtime-render",
+                method="POST",
+                path="/api/runtime/control",
+                body=json.dumps({"action": "message", "text": "SECRET_TOKEN=abc123"}),
+            )
+            snapshot = build_project_snapshot(root, "web-runtime-render")
+            html = render_project_dashboard(snapshot)
+
+        self.assertEqual(snapshot["runtime_events"][0]["kind"], "message")
+        self.assertNotIn("text", snapshot["runtime_events"][0])
+        self.assertIn("Runtime Controls", html)
+        self.assertIn('data-runtime-action="pause"', html)
+        self.assertIn('data-runtime-submit="revise"', html)
+        self.assertNotIn("SECRET_TOKEN", html)
+
     def test_frontdesk_message_post_requires_server_owned_config(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

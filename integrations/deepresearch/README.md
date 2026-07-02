@@ -151,7 +151,10 @@ Research requires that approval to already exist, then runs Kernel v2 as a
 server-owned background task and writes
 `web/tasks/current_task.json`; `/api/task` returns the current task state. The
 browser still cannot choose provider config or adapter mode. Pause, resume,
-cancel, revise, and upload controls remain explicit follow-up work.
+checkpoint, stop-after-current-turn, cancel, message, and revise controls append
+events through the same MissionForge interaction ledger as TUI. Cross-process
+run locking, explicit retry/revise run lifecycle, and upload controls remain
+follow-up work.
 
 ## Product Shape
 

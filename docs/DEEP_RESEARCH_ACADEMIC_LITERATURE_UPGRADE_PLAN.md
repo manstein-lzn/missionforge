@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_web_start_run_background_task`; next priority is `m3b_runtime_controls`
+Status: `m3b_web_runtime_controls_first_slice`; next priority is `m3b_cross_process_run_lock`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1204,8 +1204,13 @@ Implemented notes:
   config or adapter mode. Existing web tasks or already-written Kernel result
   refs are surfaced as current task state rather than silently rerunning and
   overwriting the same project run.
-- Remaining M3B work: pause/resume/checkpoint/revise/cancel controls,
-  revision request submission, and upload UI.
+- M3B-C first slice is complete for browser runtime controls backed by the same
+  MissionForge interaction plane as TUI. Web pause, resume, checkpoint,
+  stop-after-current-turn, cancel, message, and revise actions append
+  `interaction/user_events.jsonl` events through `FileControlPort`; the browser
+  does not mutate lifecycle state or the frozen task contract directly.
+- Remaining M3B work: cross-process run locking, explicit retry/revise run
+  lifecycle, richer progress timeline, and upload UI.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1334,6 +1339,44 @@ Exit criteria:
 - Current duplicate-start protection is process-local plus existing-result-ref
   detection. Cross-process filesystem locking belongs with the next runtime
   controls milestone.
+
+### M3B-C: Web Runtime Controls Through Interaction Plane
+
+Status: `first_slice_complete`
+
+Deliverables:
+
+- `web_controls.py` maps browser runtime actions onto
+  `mf.FileControlPort(mf.FileInteractionPort(run_root))`.
+- `POST /api/runtime/control` endpoint for:
+  - `pause`
+  - `resume`
+  - `checkpoint`
+  - `stop_after_current_turn`
+  - `cancel`
+  - `message`
+  - `revise`
+- Runtime control panel in the web console.
+- Project snapshot includes sanitized runtime event summaries from
+  `interaction/user_events.jsonl`; it does not expose raw intervention text.
+- Tests prove controls append product-neutral interaction events with the
+  expected run id and that revision/message actions require explicit text.
+
+Exit criteria:
+
+- Web runtime controls use the same interaction ledger and safe-point semantics
+  as TUI.
+- Pause/cancel/revision requests do not interrupt an in-flight PiWorker call;
+  Kernel consumes them at safe points.
+- Revision requests are user interventions, not contract mutations. The frozen
+  task remains unchanged until a later explicit revision flow.
+
+Remaining runtime-control hardening:
+
+- Workspace-local cross-process run lock.
+- Explicit retry/revise lifecycle records for starting a new run after
+  interrupted, failed, cancelled, paused, or revision-required states.
+- Progress timeline from flow ledger and runtime progress events.
 
 ### M4: Citation Projection
 

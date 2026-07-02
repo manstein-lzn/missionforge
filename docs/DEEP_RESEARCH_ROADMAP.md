@@ -63,7 +63,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   FrontDesk approval boundary. Browser Start Research starts Kernel v2 as a
   server-owned background task, records `web/tasks/current_task.json`, and
   exposes `/api/task` for task state without letting the browser choose provider
-  config or adapter mode.
+  config or adapter mode. Browser runtime controls append pause, resume,
+  checkpoint, stop-after-current-turn, cancel, message, and revise events
+  through the same MissionForge interaction ledger used by TUI.
 
 ## Design Principles
 
@@ -99,8 +101,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   DeepResearch.
 - Continue the project-oriented web console. The project dashboard,
   source/citation inspection, artifact browser, Markdown preview, and FrontDesk
-  chat plus requirements approval and background start-run are active;
-  pause/resume/checkpoint/revision controls remain next.
+  chat plus requirements approval, background start-run, and first runtime
+  controls are active; cross-process run locking, explicit retry/revise
+  lifecycle, and richer progress timeline remain next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

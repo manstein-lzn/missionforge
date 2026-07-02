@@ -58,6 +58,7 @@ from .project_lifecycle import (
 )
 from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response, research_start_response
 from .web_common import WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
+from .web_controls import runtime_control_response
 from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
 from .workspace import resolve_workspace_ref
 
@@ -87,6 +88,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
     judge_report = _read_json_if_exists(run_root, KERNEL_V2_JUDGE_REPORT_REF)
     usage_summary = _read_json_if_exists(run_root, KERNEL_V2_USAGE_SUMMARY_REF)
     web_task = read_web_task_state(run_root)
+    runtime_events = _runtime_event_rows(run_root)
     report_ref = _preferred_report_ref(run_root, lifecycle, run_status)
     report_preview = _read_text_preview_if_exists(run_root, report_ref)
     artifacts = _artifact_entries(
@@ -107,6 +109,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             "resume_diagnostics": resume_diagnostics or {},
         },
         "web_task": web_task,
+        "runtime_events": runtime_events,
         "status_cards": _status_cards(
             lifecycle=lifecycle,
             run_status=run_status,
@@ -181,6 +184,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
     frontdesk = _mapping(snapshot.get("frontdesk"))
     dialogue = _list(snapshot.get("frontdesk_dialogue"))[-30:]
     web_task = _mapping(snapshot.get("web_task"))
+    runtime_events = _list(snapshot.get("runtime_events"))[-12:]
     claim_support = _mapping(snapshot.get("claim_support"))
     judge = _mapping(snapshot.get("judge"))
     report_preview = _mapping(snapshot.get("report_preview"))
@@ -192,6 +196,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
                 _header(snapshot),
                 _status_grid(status_cards),
                 _frontdesk_chat_panel(frontdesk, dialogue, web_task),
+                _runtime_controls_panel(runtime_events),
                 _two_column(
                     _frontdesk_panel(frontdesk),
                     _source_summary_panel(source_summary),
@@ -333,6 +338,12 @@ def web_console_response(
             workspace=workspace_root,
             request_id=request_id,
             config=kernel_config,
+        )
+    if method == "POST" and parsed.path == "/api/runtime/control":
+        return runtime_control_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            body=body,
         )
     if method == "GET" and parsed.path == "/api/task":
         run_root = resolve_workspace_ref(workspace_root, _run_ref(request_id))
@@ -590,6 +601,32 @@ def _frontdesk_dialogue(run_root: Path) -> list[dict[str, str]]:
         return []
 
 
+def _runtime_event_rows(run_root: Path) -> list[dict[str, str]]:
+    try:
+        path = resolve_workspace_ref(run_root, mf.USER_EVENTS_REF)
+        if not path.is_file():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, Mapping):
+                continue
+            rows.append(
+                {
+                    "event_id": _clean(payload.get("event_id")),
+                    "kind": _clean(payload.get("kind")),
+                    "delivery": _clean(payload.get("delivery")),
+                    "target": _clean(payload.get("target")),
+                    "created_at": _clean(payload.get("created_at")),
+                }
+            )
+        return rows
+    except (OSError, json.JSONDecodeError, mf.ContractValidationError):
+        return []
+
+
 def _source_summary(
     source_packet: Mapping[str, Any] | None,
     canonical_sources: Mapping[str, Any] | None,
@@ -821,6 +858,50 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web
         f'{_row("error", _clean(web_task.get("error_summary")))}'
         "</div>"
         f"<script>{_CHAT_SCRIPT}</script>"
+        "</section>"
+    )
+
+
+def _runtime_controls_panel(runtime_events: list[Any]) -> str:
+    rows = []
+    for item in runtime_events:
+        if not isinstance(item, Mapping):
+            continue
+        event_id = _clean(item.get("event_id"))
+        kind = _clean(item.get("kind"))
+        if not event_id and not kind:
+            continue
+        rows.append(
+            '<div class="event-row">'
+            f'<span>{_e(kind or "event")}</span>'
+            f'<code>{_e(event_id)}</code>'
+            f'<span class="detail">{_e(_clean(item.get("delivery")))}</span>'
+            "</div>"
+        )
+    if not rows:
+        rows.append('<p class="muted">No runtime interventions yet.</p>')
+    buttons = "".join(
+        f'<button type="button" data-runtime-action="{_e(action)}">{_e(label)}</button>'
+        for action, label in (
+            ("pause", "Pause"),
+            ("resume", "Resume"),
+            ("checkpoint", "Checkpoint"),
+            ("stop_after_current_turn", "Stop Turn"),
+            ("cancel", "Cancel"),
+        )
+    )
+    return (
+        '<section class="panel runtime-panel">'
+        "<h2>Runtime Controls</h2>"
+        f'<div class="control-buttons">{buttons}</div>'
+        '<form id="runtime-message-form" class="chat-form">'
+        '<textarea id="runtime-message" name="message" rows="3" placeholder="Runtime intervention or revision request"></textarea>'
+        '<button type="submit" data-runtime-submit="message">Send</button>'
+        '<button type="button" data-runtime-submit="revise">Revise</button>'
+        "</form>"
+        '<div class="event-log">'
+        f"{''.join(rows)}"
+        "</div>"
         "</section>"
     )
 
@@ -1169,6 +1250,34 @@ dd { margin: 0; overflow-wrap: anywhere; }
   min-height: 40px;
   padding: 0 14px;
 }
+.runtime-panel .chat-form {
+  grid-template-columns: minmax(0, 1fr) 96px 96px;
+}
+.control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.control-buttons button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+.event-log {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.event-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) 150px;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: #fbfcfd;
+}
+.event-row code {
+  overflow-wrap: anywhere;
+}
 .task-state {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);
@@ -1241,6 +1350,8 @@ pre {
   dl { grid-template-columns: 110px minmax(0, 1fr); }
   .chat-row { grid-template-columns: 1fr; }
   .chat-form { grid-template-columns: 1fr; }
+  .runtime-panel .chat-form { grid-template-columns: 1fr; }
+  .event-row { grid-template-columns: 1fr; }
   .approve-form { display: grid; }
   button { min-height: 44px; }
 }
@@ -1252,6 +1363,8 @@ _CHAT_SCRIPT = """
   const form = document.getElementById("frontdesk-form");
   const approveForm = document.getElementById("frontdesk-approve-form");
   const startForm = document.getElementById("research-start-form");
+  const runtimeForm = document.getElementById("runtime-message-form");
+  const runtimeTextarea = document.getElementById("runtime-message");
   const textarea = document.getElementById("frontdesk-message");
   const postJson = async (path, payload) => {
     const response = await fetch(path, {
@@ -1305,6 +1418,42 @@ _CHAT_SCRIPT = """
     } finally {
       if (button) button.disabled = false;
     }
+  });
+  document.querySelectorAll("[data-runtime-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.getAttribute("data-runtime-action");
+      button.disabled = true;
+      try {
+        await postJson("/api/runtime/control", {action});
+        window.location.reload();
+      } catch (error) {
+        alert(String(error));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  const sendRuntime = async (action, button) => {
+    const text = runtimeTextarea ? runtimeTextarea.value.trim() : "";
+    if (!text) return;
+    if (button) button.disabled = true;
+    try {
+      await postJson("/api/runtime/control", {action, text});
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  };
+  if (runtimeForm) runtimeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await sendRuntime("message", runtimeForm.querySelector("[data-runtime-submit='message']"));
+  });
+  document.querySelectorAll("[data-runtime-submit='revise']").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await sendRuntime("revise", button);
+    });
   });
 })();
 """
