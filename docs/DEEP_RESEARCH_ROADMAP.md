@@ -68,7 +68,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   through the same MissionForge interaction ledger used by TUI. Browser Start
   Research also uses a workspace-local `web/locks/kernel_v2.lock` guard so
   another web-console process surfaces a sanitized locked task state instead of
-  starting a second Kernel run for the same project.
+  starting a second Kernel run for the same project. Browser lifecycle actions
+  record explicit retry, revision, and lock-recovery requests as refs-only
+  project artifacts without mutating the frozen contract or starting a new
+  Kernel attempt.
 
 ## Design Principles
 
@@ -105,8 +108,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Continue the project-oriented web console. The project dashboard,
   source/citation inspection, artifact browser, Markdown preview, and FrontDesk
   chat plus requirements approval, background start-run, and first runtime
-  controls are active; conservative cross-process run locking is active. Explicit
-  retry/revise lifecycle and richer progress timeline remain next.
+  controls are active; conservative cross-process run locking and first-slice
+  retry/revise/recover lifecycle requests are active. Attempt generation from
+  those pending requests and a richer progress timeline remain next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_workspace_local_run_lock`; next priority is `m3b_retry_revise_lifecycle`
+Status: `m3b_retry_revise_lifecycle_first_slice`; next priority is `m3b_attempt_generation`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1216,8 +1216,13 @@ Implemented notes:
   `POST /api/research/start` validates existing FrontDesk approval before it
   records or returns existing task state; read-only task polling remains
   `/api/task`.
-- Remaining M3B work: explicit retry/revise run lifecycle, richer progress
-  timeline, and upload UI.
+- M3B-D first slice is complete for explicit retry/revise/recover lifecycle
+  requests. The web surface writes refs-only lifecycle action records and
+  user-authored reason text refs, and explicit lock recovery records an action
+  before converting the web task to `interrupted`. It does not start a new
+  Kernel attempt or mutate the frozen contract.
+- Remaining M3B work: attempt generation for consuming retry/revision requests,
+  richer progress timeline, and upload UI.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1349,7 +1354,7 @@ Exit criteria:
 
 ### M3B-C: Web Runtime Controls Through Interaction Plane
 
-Status: `m3b_c2_complete`
+Status: `m3b_d_first_slice_complete`
 
 Deliverables:
 
@@ -1376,6 +1381,23 @@ Deliverables:
   - `/api/research/start` requires existing FrontDesk approval before recording
     existing task refs or acquiring a lock.
   - background tasks release the lock after completion or failure.
+- Explicit retry/revise/recover lifecycle actions:
+  - `POST /api/lifecycle/action` for `retry`, `revise`, and `recover_lock`.
+  - latest request refs:
+    - `project/lifecycle/latest_retry_request.json`
+    - `project/lifecycle/latest_revise_request.json`
+    - `project/lifecycle/latest_lock_recovery_request.json`
+  - append-only action ledger:
+    `project/lifecycle_actions.jsonl`
+  - user-entered reasons are written to
+    `project/lifecycle/action_text/*.txt` and only referenced by action JSON.
+  - retry requires an approved project plus a failed, interrupted, or locked
+    web task.
+  - revision requires an approved/completed/revision-required project phase and
+    records a pending revision request without mutating the frozen contract.
+  - lock recovery requires an approved project plus a locked/stale-lock task
+    state; it releases `web/locks/kernel_v2.lock`, marks the web task
+    `interrupted`, and leaves retry as a separate explicit request.
 
 Exit criteria:
 
@@ -1388,11 +1410,11 @@ Exit criteria:
 
 Remaining runtime-control hardening:
 
-- Explicit retry/revise lifecycle records for starting a new run after
-  interrupted, failed, cancelled, paused, or revision-required states.
+- Attempt-generation support for consuming pending retry/revise lifecycle
+  requests and starting a new Kernel attempt without overwriting previous refs.
 - Progress timeline from flow ledger and runtime progress events.
-- Stale-lock diagnosis/recovery is intentionally deferred to the retry/revise
-  lifecycle; the first lock slice is conservative and does not steal locks.
+- Richer stale-lock diagnostics, including age/owner display and optional
+  process-local liveness hints, without automatic lock stealing.
 
 ### M4: Citation Projection
 

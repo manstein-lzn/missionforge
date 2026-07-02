@@ -50,13 +50,19 @@ from .kernel_v2 import (
     KERNEL_V2_SOURCE_PACKET_REF,
     KERNEL_V2_USAGE_SUMMARY_REF,
 )
+from .lifecycle_actions import (
+    LATEST_LOCK_RECOVERY_REQUEST_REF,
+    LATEST_RETRY_REQUEST_REF,
+    LATEST_REVISE_REQUEST_REF,
+    read_latest_lifecycle_actions,
+)
 from .project_lifecycle import (
     PROJECT_LIFECYCLE_STATE_REF,
     PROJECT_MANIFEST_REF,
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
-from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response, research_start_response
+from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response, lifecycle_action_response, research_start_response
 from .web_common import WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
 from .web_controls import runtime_control_response
 from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
@@ -88,6 +94,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
     judge_report = _read_json_if_exists(run_root, KERNEL_V2_JUDGE_REPORT_REF)
     usage_summary = _read_json_if_exists(run_root, KERNEL_V2_USAGE_SUMMARY_REF)
     web_task = read_web_task_state(run_root)
+    lifecycle_actions = read_latest_lifecycle_actions(run_root)
     runtime_events = _runtime_event_rows(run_root)
     report_ref = _preferred_report_ref(run_root, lifecycle, run_status)
     report_preview = _read_text_preview_if_exists(run_root, report_ref)
@@ -109,6 +116,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             "resume_diagnostics": resume_diagnostics or {},
         },
         "web_task": web_task,
+        "lifecycle_actions": lifecycle_actions,
         "runtime_events": runtime_events,
         "status_cards": _status_cards(
             lifecycle=lifecycle,
@@ -196,7 +204,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
                 _header(snapshot),
                 _status_grid(status_cards),
                 _frontdesk_chat_panel(frontdesk, dialogue, web_task),
-                _runtime_controls_panel(runtime_events),
+                _runtime_controls_panel(runtime_events, _mapping(snapshot.get("lifecycle_actions"))),
                 _two_column(
                     _frontdesk_panel(frontdesk),
                     _source_summary_panel(source_summary),
@@ -345,6 +353,12 @@ def web_console_response(
             request_id=request_id,
             body=body,
         )
+    if method == "POST" and parsed.path == "/api/lifecycle/action":
+        return lifecycle_action_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            body=body,
+        )
     if method == "GET" and parsed.path == "/api/task":
         run_root = resolve_workspace_ref(workspace_root, _run_ref(request_id))
         return json_response(200, read_web_task_state(run_root))
@@ -457,6 +471,10 @@ def _artifact_entries(
         ("Lifecycle State", PROJECT_LIFECYCLE_STATE_REF, "project"),
         ("Run Index", PROJECT_RUN_INDEX_REF, "project"),
         ("Resume Diagnostics", _resume_ref(lifecycle), "project"),
+        ("Lifecycle Actions", "project/lifecycle_actions.jsonl", "project"),
+        ("Retry Request", LATEST_RETRY_REQUEST_REF, "project"),
+        ("Revise Request", LATEST_REVISE_REQUEST_REF, "project"),
+        ("Lock Recovery Request", LATEST_LOCK_RECOVERY_REQUEST_REF, "project"),
         ("FrontDesk Requirements", _clean((lifecycle or {}).get("frontdesk_requirements_ref")) or FRONTDESK_REQUIREMENTS_REF, "frontdesk"),
         ("FrontDesk Control", _clean((lifecycle or {}).get("frontdesk_control_ref")) or FRONTDESK_CONTROL_REF, "frontdesk"),
         ("FrontDesk Assistant Turn", _clean((lifecycle or {}).get("frontdesk_assistant_turn_ref")) or FRONTDESK_ASSISTANT_TURN_REF, "frontdesk"),
@@ -862,7 +880,7 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web
     )
 
 
-def _runtime_controls_panel(runtime_events: list[Any]) -> str:
+def _runtime_controls_panel(runtime_events: list[Any], lifecycle_actions: Mapping[str, Any]) -> str:
     rows = []
     for item in runtime_events:
         if not isinstance(item, Mapping):
@@ -890,6 +908,9 @@ def _runtime_controls_panel(runtime_events: list[Any]) -> str:
             ("cancel", "Cancel"),
         )
     )
+    retry = _mapping(lifecycle_actions.get("retry"))
+    revise = _mapping(lifecycle_actions.get("revise"))
+    recover = _mapping(lifecycle_actions.get("recover_lock"))
     return (
         '<section class="panel runtime-panel">'
         "<h2>Runtime Controls</h2>"
@@ -899,6 +920,16 @@ def _runtime_controls_panel(runtime_events: list[Any]) -> str:
         '<button type="submit" data-runtime-submit="message">Send</button>'
         '<button type="button" data-runtime-submit="revise">Revise</button>'
         "</form>"
+        '<div class="control-buttons lifecycle-buttons">'
+        '<button type="button" data-lifecycle-action="retry">Request Retry</button>'
+        '<button type="button" data-lifecycle-action="revise">Request Revision</button>'
+        '<button type="button" data-lifecycle-action="recover_lock">Recover Lock</button>'
+        "</div>"
+        '<div class="task-state">'
+        f'{_row("retry", _clean(retry.get("status")))}'
+        f'{_row("revision", _clean(revise.get("status")))}'
+        f'{_row("lock recovery", _clean(recover.get("status")))}'
+        "</div>"
         '<div class="event-log">'
         f"{''.join(rows)}"
         "</div>"
@@ -1453,6 +1484,21 @@ _CHAT_SCRIPT = """
   document.querySelectorAll("[data-runtime-submit='revise']").forEach((button) => {
     button.addEventListener("click", async () => {
       await sendRuntime("revise", button);
+    });
+  });
+  document.querySelectorAll("[data-lifecycle-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.getAttribute("data-lifecycle-action");
+      const text = runtimeTextarea ? runtimeTextarea.value.trim() : "";
+      button.disabled = true;
+      try {
+        await postJson("/api/lifecycle/action", {action, text});
+        window.location.reload();
+      } catch (error) {
+        alert(String(error));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
 })();

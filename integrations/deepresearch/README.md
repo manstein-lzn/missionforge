@@ -155,8 +155,10 @@ checkpoint, stop-after-current-turn, cancel, message, and revise controls append
 events through the same MissionForge interaction ledger as TUI. Start Research
 uses a workspace-local `web/locks/kernel_v2.lock` guard; if another process owns
 the project run, the web API reports a sanitized `locked` task state instead of
-starting a duplicate Kernel run. Explicit retry/revise run lifecycle and upload
-controls remain follow-up work.
+starting a duplicate Kernel run. The web console also records explicit retry,
+revision, and lock-recovery lifecycle requests as project refs. These requests
+do not mutate the frozen contract or start a new Kernel attempt; attempt
+generation and upload controls remain follow-up work.
 
 ## Product Shape
 

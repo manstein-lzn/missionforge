@@ -15,6 +15,7 @@ from .frontdesk import (
     run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
+from .lifecycle_actions import record_lifecycle_action
 from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, json_response
 from .web_tasks import read_or_record_existing_task, start_background_task
 from .workspace import resolve_workspace_ref
@@ -137,6 +138,44 @@ def research_start_response(
                 "task": task_state,
             },
         )
+    except mf.ContractValidationError as exc:
+        return json_response(409, {"status": "error", "message": str(exc)})
+
+
+def lifecycle_action_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    body: bytes | str,
+) -> WebConsoleResponse:
+    """Record an explicit retry/revise/recover lifecycle request."""
+
+    try:
+        payload = json_body(body)
+        action = _clean(payload.get("action"))
+        text = _clean(payload.get("text"))
+        result = record_lifecycle_action(
+            workspace=workspace,
+            request_id=request_id,
+            action=action,
+            text=text,
+        )
+        return json_response(
+            202,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.lifecycle_action_result.v1",
+                "status": result.get("status", "queued"),
+                "action": {
+                    "action_id": result.get("action_id", ""),
+                    "kind": result.get("kind", ""),
+                    "status": result.get("status", ""),
+                    "reason_ref": result.get("reason_ref", ""),
+                    "next_required_boundary": result.get("next_required_boundary", ""),
+                },
+            },
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return json_response(400, {"status": "error", "message": "invalid_json_body"})
     except mf.ContractValidationError as exc:
         return json_response(409, {"status": "error", "message": str(exc)})
 

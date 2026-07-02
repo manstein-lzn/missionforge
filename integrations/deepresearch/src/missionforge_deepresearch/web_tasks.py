@@ -194,6 +194,35 @@ def read_or_record_existing_task(
         return state
 
 
+def release_web_task_lock_for_recovery(run_root: str | Path) -> str:
+    """Explicitly release a workspace-local web task lock for lifecycle recovery."""
+
+    root = Path(run_root).resolve()
+    with _TASK_LOCK:
+        state = _recoverable_lock_state(root)
+        lock_dir = _recoverable_lock_dir(root, state)
+        _release_lock_dir(lock_dir)
+        recovered = dict(state)
+        recovered.update({
+            "status": "interrupted",
+            "finished_at": _utc_now(),
+            "error_summary": "background task lock was explicitly recovered",
+            "lock_ref": "",
+        })
+        _write_task_state(root, recovered)
+        return WEB_TASK_LOCK_REF
+
+
+def require_web_task_lock_recoverable(run_root: str | Path) -> str:
+    """Validate that explicit lock recovery would affect a stale/cross-process lock."""
+
+    root = Path(run_root).resolve()
+    with _TASK_LOCK:
+        state = _recoverable_lock_state(root)
+        _recoverable_lock_dir(root, state)
+        return WEB_TASK_LOCK_REF
+
+
 def _run_task(
     *,
     run_root: Path,
@@ -230,6 +259,22 @@ def _run_task(
 def _thread_alive(task_key: str) -> bool:
     thread = _RUNNING_THREADS.get(task_key)
     return thread is not None and thread.is_alive()
+
+
+def _recoverable_lock_state(run_root: Path) -> dict[str, Any]:
+    if _thread_alive(str(run_root)):
+        raise mf.ContractValidationError("cannot recover a lock held by a live task in this process")
+    state = read_web_task_state(run_root)
+    if state.get("status") != "locked" and state.get("lock_ref") != WEB_TASK_LOCK_REF:
+        raise mf.ContractValidationError("lock recovery requires a locked task")
+    return state
+
+
+def _recoverable_lock_dir(run_root: Path, state: Mapping[str, Any]) -> Path:
+    lock_dir = resolve_workspace_ref(run_root, WEB_TASK_LOCK_REF)
+    if not lock_dir.exists():
+        raise mf.ContractValidationError("lock recovery requires an existing lock")
+    return lock_dir
 
 
 def _idle_state() -> dict[str, Any]:

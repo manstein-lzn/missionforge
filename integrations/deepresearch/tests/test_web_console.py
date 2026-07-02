@@ -4,6 +4,7 @@ import json
 import multiprocessing
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -248,6 +249,258 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn('data-runtime-action="pause"', html)
         self.assertIn('data-runtime-submit="revise"', html)
         self.assertNotIn("SECRET_TOKEN", html)
+
+    def test_lifecycle_action_requires_frontdesk_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            response = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-unapproved",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("frontdesk/approval.json", payload["message"])
+
+    def test_lifecycle_action_records_retry_without_exposing_reason_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-retry")
+            task_ref = root / "runs/web-lifecycle-retry/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-failed",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-retry",
+                        "status": "failed",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:00:01Z",
+                        "result_ref": "",
+                        "error_summary": "RuntimeError: task failed",
+                        "lock_ref": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-retry",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry", "text": "SECRET_TOKEN=abc123"}),
+            )
+            snapshot = build_project_snapshot(root, "web-lifecycle-retry")
+            action_ref = root / "runs/web-lifecycle-retry/project/lifecycle/latest_retry_request.json"
+            action = json.loads(action_ref.read_text(encoding="utf-8"))
+            action_index = root / "runs/web-lifecycle-retry/project/lifecycle_actions.jsonl"
+            action_index_exists = action_index.is_file()
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 202)
+        self.assertEqual(payload["status"], "pending_retry")
+        self.assertEqual(action["status"], "pending_retry")
+        self.assertEqual(action["source_task_ref"], "web/tasks/current_task.json")
+        self.assertTrue(action["reason_ref"].startswith("project/lifecycle/action_text/retry-"))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(payload))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot["lifecycle_actions"]))
+        self.assertTrue(action_index_exists)
+
+    def test_lifecycle_action_records_revision_request_ref_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-revise")
+            request = AcademicResearchRequest(
+                request_id="web-lifecycle-revise",
+                topic="compiler autotuning survey",
+            )
+            run_deepresearch_kernel_v2(
+                request,
+                workspace=root,
+                adapter=KernelV2FixtureAdapter(),
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-revise",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "revise", "text": "SECRET_TOKEN=abc123"}),
+            )
+            snapshot = build_project_snapshot(root, "web-lifecycle-revise")
+            action = json.loads(
+                (root / "runs/web-lifecycle-revise/project/lifecycle/latest_revise_request.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 202)
+        self.assertEqual(payload["status"], "pending_revision")
+        self.assertEqual(action["status"], "pending_revision")
+        self.assertEqual(action["source_lifecycle_ref"], "project/lifecycle_state.json")
+        self.assertTrue(action["reason_ref"].startswith("project/lifecycle/action_text/revise-"))
+        self.assertIn("pending_revision", render_project_dashboard(snapshot))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(payload))
+
+    def test_lifecycle_action_recovers_lock_and_then_allows_retry_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-recover-lock")
+            run_root = root / "runs/web-lifecycle-recover-lock"
+            task_ref = run_root / "web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-recover-lock",
+                        "status": "running",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "",
+                        "result_ref": "",
+                        "error_summary": "",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            lock_dir = run_root / "web/locks/kernel_v2.lock"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            (lock_dir / "lock.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_lock.v1",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-recover-lock",
+                        "owner_pid": "999999",
+                        "owner_thread": "1",
+                        "owner_host": "test-host",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            recover = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-recover-lock",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "recover_lock", "text": "operator approved"}),
+            )
+            recovered_task = json.loads(task_ref.read_text(encoding="utf-8"))
+            lock_dir_exists_after_recovery = lock_dir.exists()
+            retry = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-recover-lock",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "retry"}),
+            )
+
+        self.assertEqual(recover.status, 202)
+        self.assertEqual(json.loads(recover.body)["status"], "completed")
+        self.assertFalse(lock_dir_exists_after_recovery)
+        self.assertEqual(recovered_task["status"], "interrupted")
+        self.assertEqual(retry.status, 202)
+        self.assertEqual(json.loads(retry.body)["status"], "pending_retry")
+
+    def test_lifecycle_action_does_not_recover_live_process_lock(self) -> None:
+        from missionforge_deepresearch.web_tasks import start_background_task
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-live-lock")
+            release = threading.Event()
+
+            def runner() -> object:
+                release.wait(5)
+                return object()
+
+            task = start_background_task(
+                workspace=root,
+                request_id="web-lifecycle-live-lock",
+                task_kind="kernel_v2_run",
+                runner=runner,
+            )
+            try:
+                response = web_console_response(
+                    workspace=root,
+                    request_id="web-lifecycle-live-lock",
+                    method="POST",
+                    path="/api/lifecycle/action",
+                    body=json.dumps({"action": "recover_lock", "text": "operator approved"}),
+                )
+                task_during_response = web_console_response(
+                    workspace=root,
+                    request_id="web-lifecycle-live-lock",
+                    method="GET",
+                    path="/api/task",
+                )
+            finally:
+                release.set()
+                task_ref = root / "runs/web-lifecycle-live-lock/web/tasks/current_task.json"
+                deadline = 100
+                while deadline > 0:
+                    if task_ref.is_file():
+                        task_payload = json.loads(task_ref.read_text(encoding="utf-8"))
+                        if task_payload["status"] in {"completed", "failed"}:
+                            break
+                    deadline -= 1
+                    time.sleep(0.01)
+
+        payload = json.loads(response.body)
+        task_during = json.loads(task_during_response.body)
+        self.assertEqual(task["status"], "running")
+        self.assertEqual(response.status, 409)
+        self.assertIn("live task", payload["message"])
+        self.assertEqual(task_during["status"], "running")
+        self.assertEqual(task_during["lock_ref"], "web/locks/kernel_v2.lock")
+
+    def test_lifecycle_action_does_not_recover_missing_lock_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-lifecycle-missing-lock")
+            task_ref = root / "runs/web-lifecycle-missing-lock/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-lifecycle-missing-lock",
+                        "status": "running",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "",
+                        "result_ref": "",
+                        "error_summary": "",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-lifecycle-missing-lock",
+                method="POST",
+                path="/api/lifecycle/action",
+                body=json.dumps({"action": "recover_lock", "text": "operator approved"}),
+            )
+            recovery_ref = root / "runs/web-lifecycle-missing-lock/project/lifecycle/latest_lock_recovery_request.json"
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("existing lock", payload["message"])
+        self.assertFalse(recovery_ref.exists())
 
     def test_frontdesk_message_post_requires_server_owned_config(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
