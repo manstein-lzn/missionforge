@@ -95,24 +95,23 @@ def research_start_response(
 ) -> WebConsoleResponse:
     """Start Kernel v2 in a background task after FrontDesk approval."""
 
-    existing_state = read_or_record_existing_task(
-        workspace=workspace,
-        request_id=request_id,
-        task_kind="kernel_v2_run",
-        existing_result_refs=[KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF],
-    )
-    if existing_state is not None:
-        return json_response(
-            200,
-            {
-                "schema_version": "missionforge_deepresearch.web_console.research_start_result.v1",
-                "status": existing_state.get("status", "idle"),
-                "task": existing_state,
-            },
-        )
-
     try:
         request = read_approved_frontdesk_request(request_id=request_id, workspace=workspace)
+        existing_state = read_or_record_existing_task(
+            workspace=workspace,
+            request_id=request_id,
+            task_kind="kernel_v2_run",
+            existing_result_refs=[KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF],
+        )
+        if existing_state is not None:
+            return json_response(
+                200,
+                {
+                    "schema_version": "missionforge_deepresearch.web_console.research_start_result.v1",
+                    "status": existing_state.get("status", "idle"),
+                    "task": existing_state,
+                },
+            )
 
         def runner() -> Any:
             return run_deepresearch_kernel_v2(

@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_web_runtime_controls_first_slice`; next priority is `m3b_cross_process_run_lock`
+Status: `m3b_workspace_local_run_lock`; next priority is `m3b_retry_revise_lifecycle`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1209,8 +1209,15 @@ Implemented notes:
   stop-after-current-turn, cancel, message, and revise actions append
   `interaction/user_events.jsonl` events through `FileControlPort`; the browser
   does not mutate lifecycle state or the frozen task contract directly.
-- Remaining M3B work: cross-process run locking, explicit retry/revise run
-  lifecycle, richer progress timeline, and upload UI.
+- M3B-C2 is complete for a conservative workspace-local cross-process run lock.
+  Browser Start Research acquires `web/locks/kernel_v2.lock` before spawning a
+  background Kernel task, exposes a sanitized `locked` task state when another
+  process holds the lock, and releases the lock after completion or failure.
+  `POST /api/research/start` validates existing FrontDesk approval before it
+  records or returns existing task state; read-only task polling remains
+  `/api/task`.
+- Remaining M3B work: explicit retry/revise run lifecycle, richer progress
+  timeline, and upload UI.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1336,13 +1343,13 @@ Exit criteria:
 - Existing project runs are not silently overwritten by clicking Start Research.
   Future retry/revise flows must use explicit runtime controls and revision
   records.
-- Current duplicate-start protection is process-local plus existing-result-ref
-  detection. Cross-process filesystem locking belongs with the next runtime
-  controls milestone.
+- Current duplicate-start protection combines process-local thread detection,
+  existing-result-ref detection, and the workspace-local run lock delivered in
+  M3B-C2.
 
 ### M3B-C: Web Runtime Controls Through Interaction Plane
 
-Status: `first_slice_complete`
+Status: `m3b_c2_complete`
 
 Deliverables:
 
@@ -1361,6 +1368,14 @@ Deliverables:
   `interaction/user_events.jsonl`; it does not expose raw intervention text.
 - Tests prove controls append product-neutral interaction events with the
   expected run id and that revision/message actions require explicit text.
+- Workspace-local cross-process run lock:
+  - `web/locks/kernel_v2.lock` is acquired through atomic directory creation.
+  - lock metadata is written as `web/locks/kernel_v2.lock/lock.json`.
+  - `/api/task` and `/api/research/start` surface only sanitized task fields,
+    including `status: locked` and `lock_ref`, not process owner metadata.
+  - `/api/research/start` requires existing FrontDesk approval before recording
+    existing task refs or acquiring a lock.
+  - background tasks release the lock after completion or failure.
 
 Exit criteria:
 
@@ -1373,10 +1388,11 @@ Exit criteria:
 
 Remaining runtime-control hardening:
 
-- Workspace-local cross-process run lock.
 - Explicit retry/revise lifecycle records for starting a new run after
   interrupted, failed, cancelled, paused, or revision-required states.
 - Progress timeline from flow ledger and runtime progress events.
+- Stale-lock diagnosis/recovery is intentionally deferred to the retry/revise
+  lifecycle; the first lock slice is conservative and does not steal locks.
 
 ### M4: Citation Projection
 

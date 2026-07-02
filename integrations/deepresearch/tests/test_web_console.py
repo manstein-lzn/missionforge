@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
 import tempfile
 import time
@@ -22,6 +23,37 @@ from missionforge_deepresearch.web_console import (
 
 
 class WebConsoleTests(unittest.TestCase):
+    def _approve_frontdesk_fixture(self, root: Path, request_id: str) -> None:
+        frontdesk_config = WebFrontDeskConfig(
+            adapter_factory=FrontDeskFixtureAdapter,
+            research_intensity="standard",
+            live_extension_mode=False,
+        )
+        web_console_response(
+            workspace=root,
+            request_id=request_id,
+            method="POST",
+            path="/api/frontdesk/message",
+            body=json.dumps({"message": "我想调研 Deep Research 工具"}),
+            frontdesk_config=frontdesk_config,
+        )
+        web_console_response(
+            workspace=root,
+            request_id=request_id,
+            method="POST",
+            path="/api/frontdesk/message",
+            body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
+            frontdesk_config=frontdesk_config,
+        )
+        response = web_console_response(
+            workspace=root,
+            request_id=request_id,
+            method="POST",
+            path="/api/frontdesk/approve",
+            body=json.dumps({}),
+        )
+        self.assertEqual(response.status, 200)
+
     def test_snapshot_reads_existing_project_refs_without_writing_truth(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -342,38 +374,11 @@ class WebConsoleTests(unittest.TestCase):
     def test_research_start_post_runs_kernel_in_background_task(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            frontdesk_config = WebFrontDeskConfig(
-                adapter_factory=FrontDeskFixtureAdapter,
-                research_intensity="standard",
-                live_extension_mode=False,
-            )
             kernel_config = WebKernelConfig(
                 adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
                 live_extension_mode=False,
             )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-ready",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-ready",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-ready",
-                method="POST",
-                path="/api/frontdesk/approve",
-                body=json.dumps({}),
-            )
+            self._approve_frontdesk_fixture(root, "web-start-ready")
             response = web_console_response(
                 workspace=root,
                 request_id="web-start-ready",
@@ -454,38 +459,11 @@ class WebConsoleTests(unittest.TestCase):
     def test_research_start_post_does_not_rerun_completed_task(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            frontdesk_config = WebFrontDeskConfig(
-                adapter_factory=FrontDeskFixtureAdapter,
-                research_intensity="standard",
-                live_extension_mode=False,
-            )
             kernel_config = WebKernelConfig(
                 adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
                 live_extension_mode=False,
             )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-once",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-once",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-once",
-                method="POST",
-                path="/api/frontdesk/approve",
-                body=json.dumps({}),
-            )
+            self._approve_frontdesk_fixture(root, "web-start-once")
             first = web_console_response(
                 workspace=root,
                 request_id="web-start-once",
@@ -523,6 +501,7 @@ class WebConsoleTests(unittest.TestCase):
     def test_research_start_post_does_not_overwrite_existing_kernel_run(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-start-existing")
             request = AcademicResearchRequest(
                 request_id="web-start-existing",
                 topic="compiler autotuning survey",
@@ -556,6 +535,7 @@ class WebConsoleTests(unittest.TestCase):
     def test_research_start_post_marks_orphan_running_task_interrupted(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-start-orphan")
             task_ref = root / "runs/web-start-orphan/web/tasks/current_task.json"
             task_ref.parent.mkdir(parents=True, exist_ok=True)
             task_ref.write_text(
@@ -599,6 +579,7 @@ class WebConsoleTests(unittest.TestCase):
     def test_research_start_post_recovers_orphan_running_task_with_existing_result(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-start-orphan-complete")
             request = AcademicResearchRequest(
                 request_id="web-start-orphan-complete",
                 topic="compiler autotuning survey",
@@ -691,41 +672,118 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(sanitized_payload["status"], "running")
         self.assertNotIn("secret", sanitized_payload)
 
+    def test_task_api_reports_lock_without_exposing_lock_owner_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            run_root = root / "runs/web-task-lock-sanitize"
+            lock_dir = run_root / "web/locks/kernel_v2.lock"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            (lock_dir / "lock.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_lock.v1",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-task-lock-sanitize",
+                        "owner_pid": "999999",
+                        "owner_thread": "1",
+                        "owner_host": "test-host",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            response = web_console_response(
+                workspace=root,
+                request_id="web-task-lock-sanitize",
+                method="GET",
+                path="/api/task",
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "locked")
+        self.assertEqual(payload["lock_ref"], "web/locks/kernel_v2.lock")
+        self.assertNotIn("owner_pid", payload)
+        self.assertNotIn("owner_host", payload)
+
+    def test_task_api_does_not_trust_locked_state_without_lock_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            task_ref = root / "runs/web-task-stale-lock/web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-task-stale-lock",
+                        "status": "locked",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "",
+                        "result_ref": "",
+                        "error_summary": "run lock is held by another process",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            response = web_console_response(
+                workspace=root,
+                request_id="web-task-stale-lock",
+                method="GET",
+                path="/api/task",
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "idle")
+
+    def test_task_api_does_not_project_malformed_lock_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            run_root = root / "runs/web-task-malformed-lock"
+            lock_dir = run_root / "web/locks/kernel_v2.lock"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            (lock_dir / "lock.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "wrong",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                        "task_id": "SECRET_TASK",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-task-malformed-lock",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            response = web_console_response(
+                workspace=root,
+                request_id="web-task-malformed-lock",
+                method="GET",
+                path="/api/task",
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "locked")
+        self.assertEqual(payload["task_id"], "kernel_v2_run-locked")
+        self.assertNotIn("SECRET_TASK", json.dumps(payload))
+
     def test_research_start_failure_state_does_not_include_secret_exception_text(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
-            frontdesk_config = WebFrontDeskConfig(
-                adapter_factory=FrontDeskFixtureAdapter,
-                research_intensity="standard",
-                live_extension_mode=False,
-            )
             kernel_config = WebKernelConfig(
                 adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
                 live_extension_mode=False,
             )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-failure",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-failure",
-                method="POST",
-                path="/api/frontdesk/message",
-                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
-                frontdesk_config=frontdesk_config,
-            )
-            web_console_response(
-                workspace=root,
-                request_id="web-start-failure",
-                method="POST",
-                path="/api/frontdesk/approve",
-                body=json.dumps({}),
-            )
+            self._approve_frontdesk_fixture(root, "web-start-failure")
             task_ref = root / "runs/web-start-failure/web/tasks/current_task.json"
 
             with patch(
@@ -754,6 +812,190 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(final_task["status"], "failed")
         self.assertEqual(final_task["error_summary"], "RuntimeError: task failed")
         self.assertNotIn("SECRET_TOKEN", json.dumps(final_task))
+
+    def test_research_start_post_respects_existing_cross_process_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-start-locked")
+            run_root = root / "runs/web-start-locked"
+            lock_dir = run_root / "web/locks/kernel_v2.lock"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            (lock_dir / "lock.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_lock.v1",
+                        "lock_ref": "web/locks/kernel_v2.lock",
+                        "task_id": "kernel_v2_run-locked",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": "web-start-locked",
+                        "owner_pid": "999999",
+                        "owner_thread": "1",
+                        "owner_host": "test-host",
+                        "acquired_at": "2026-01-01T00:00:00Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+
+            with patch("missionforge_deepresearch.web_actions.run_deepresearch_kernel_v2", Mock()) as run_mock:
+                response = web_console_response(
+                    workspace=root,
+                    request_id="web-start-locked",
+                    method="POST",
+                    path="/api/research/start",
+                    body=json.dumps({}),
+                    kernel_config=kernel_config,
+                )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "locked")
+        self.assertEqual(payload["task"]["lock_ref"], "web/locks/kernel_v2.lock")
+        run_mock.assert_not_called()
+
+    def test_research_start_post_allows_one_cross_process_starter(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            self._approve_frontdesk_fixture(root, "web-start-cross-process")
+            result_queue: multiprocessing.Queue[dict[str, object]] = multiprocessing.Queue()
+            ready = multiprocessing.Event()
+            release = multiprocessing.Event()
+            holder = multiprocessing.Process(
+                target=_hold_web_start_lock,
+                args=(str(root), "web-start-cross-process", result_queue, ready, release),
+            )
+            holder.start()
+            self.assertTrue(ready.wait(5))
+            try:
+                kernel_config = WebKernelConfig(
+                    adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                    live_extension_mode=False,
+                )
+                with patch("missionforge_deepresearch.web_actions.run_deepresearch_kernel_v2", Mock()) as run_mock:
+                    blocked = web_console_response(
+                        workspace=root,
+                        request_id="web-start-cross-process",
+                        method="POST",
+                        path="/api/research/start",
+                        body=json.dumps({}),
+                        kernel_config=kernel_config,
+                    )
+                    run_mock.assert_not_called()
+            finally:
+                release.set()
+                holder.join(5)
+                if holder.is_alive():
+                    holder.terminate()
+                    holder.join(5)
+            holder_result = result_queue.get(timeout=5)
+
+        blocked_payload = json.loads(blocked.body)
+        self.assertEqual(holder.exitcode, 0)
+        self.assertEqual(holder_result["status"], "running")
+        self.assertEqual(blocked.status, 200)
+        self.assertEqual(blocked_payload["status"], "locked")
+
+    def test_research_start_post_releases_cross_process_lock_after_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            self._approve_frontdesk_fixture(root, "web-start-lock-release")
+            response = web_console_response(
+                workspace=root,
+                request_id="web-start-lock-release",
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            task_ref = root / "runs/web-start-lock-release/web/tasks/current_task.json"
+            lock_dir = root / "runs/web-start-lock-release/web/locks/kernel_v2.lock"
+            deadline = 100
+            while deadline > 0:
+                if task_ref.is_file():
+                    task_payload = json.loads(task_ref.read_text(encoding="utf-8"))
+                    if task_payload["status"] in {"completed", "failed"}:
+                        break
+                deadline -= 1
+                time.sleep(0.01)
+            final_task = json.loads(task_ref.read_text(encoding="utf-8"))
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(final_task["status"], "completed")
+        self.assertEqual(final_task["lock_ref"], "web/locks/kernel_v2.lock")
+        self.assertFalse(lock_dir.exists())
+
+    def test_research_start_post_releases_cross_process_lock_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            self._approve_frontdesk_fixture(root, "web-start-lock-failure-release")
+            task_ref = root / "runs/web-start-lock-failure-release/web/tasks/current_task.json"
+            lock_dir = root / "runs/web-start-lock-failure-release/web/locks/kernel_v2.lock"
+
+            with patch("missionforge_deepresearch.web_actions.run_deepresearch_kernel_v2", side_effect=RuntimeError):
+                response = web_console_response(
+                    workspace=root,
+                    request_id="web-start-lock-failure-release",
+                    method="POST",
+                    path="/api/research/start",
+                    body=json.dumps({}),
+                    kernel_config=kernel_config,
+                )
+                deadline = 100
+                while deadline > 0:
+                    if task_ref.is_file():
+                        task_payload = json.loads(task_ref.read_text(encoding="utf-8"))
+                        if task_payload["status"] == "failed":
+                            break
+                    deadline -= 1
+                    time.sleep(0.01)
+                final_task = json.loads(task_ref.read_text(encoding="utf-8"))
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(final_task["status"], "failed")
+        self.assertFalse(lock_dir.exists())
+
+
+def _hold_web_start_lock(
+    workspace: str,
+    request_id: str,
+    result_queue: multiprocessing.Queue[dict[str, object]],
+    ready: multiprocessing.Event,
+    release: multiprocessing.Event,
+) -> None:
+    from missionforge_deepresearch.web_tasks import start_background_task
+
+    def runner() -> object:
+        ready.set()
+        release.wait(5)
+        return object()
+
+    state = start_background_task(
+        workspace=workspace,
+        request_id=request_id,
+        task_kind="kernel_v2_run",
+        runner=runner,
+    )
+    result_queue.put({"status": state["status"], "lock_ref": state["lock_ref"]})
+    deadline = 500
+    while deadline > 0:
+        if not release.is_set():
+            time.sleep(0.01)
+            deadline -= 1
+            continue
+        time.sleep(0.05)
+        break
 
 
 if __name__ == "__main__":

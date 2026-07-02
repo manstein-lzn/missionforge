@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+import socket
 import threading
 from typing import Any, Callable, Iterable, Mapping
 
@@ -15,8 +16,11 @@ from .workspace import read_json_ref, ref_exists, resolve_workspace_ref
 
 
 WEB_TASK_STATE_REF = "web/tasks/current_task.json"
+WEB_TASK_LOCK_REF = "web/locks/kernel_v2.lock"
+WEB_TASK_LOCK_METADATA_FILE = "lock.json"
 WEB_TASK_SCHEMA_VERSION = "missionforge_deepresearch.web_task_state.v1"
-_TASK_STATUSES = {"idle", "running", "completed", "failed", "interrupted"}
+WEB_TASK_LOCK_SCHEMA_VERSION = "missionforge_deepresearch.web_task_lock.v1"
+_TASK_STATUSES = {"idle", "running", "completed", "failed", "interrupted", "locked"}
 _TASK_FIELDS = (
     "schema_version",
     "task_id",
@@ -27,6 +31,7 @@ _TASK_FIELDS = (
     "finished_at",
     "result_ref",
     "error_summary",
+    "lock_ref",
 )
 
 _TASK_LOCK = threading.Lock()
@@ -36,11 +41,20 @@ _RUNNING_THREADS: dict[str, threading.Thread] = {}
 def read_web_task_state(run_root: str | Path) -> dict[str, Any]:
     try:
         if not ref_exists(run_root, WEB_TASK_STATE_REF):
+            if _lock_exists(run_root):
+                return _locked_state_from_metadata(run_root)
             return _idle_state()
         payload = read_json_ref(run_root, WEB_TASK_STATE_REF, "deepresearch_web_task_state")
     except (json.JSONDecodeError, UnicodeDecodeError, OSError, mf.ContractValidationError):
+        if _lock_exists(run_root):
+            return _locked_state_from_metadata(run_root)
         return _idle_state()
-    return _sanitize_task_state(payload)
+    state = _sanitize_task_state(payload)
+    if state.get("status") == "locked":
+        if _lock_exists(run_root):
+            return _locked_state_from_metadata(run_root, existing=state)
+        return _idle_state()
+    return state
 
 
 def start_background_task(
@@ -71,9 +85,13 @@ def start_background_task(
                 )
                 _write_task_state(run_root, state)
                 return state
+            if _lock_exists(run_root):
+                return _locked_state_from_metadata(run_root, existing=existing)
             interrupted = _interrupted_state(existing)
             _write_task_state(run_root, interrupted)
             return interrupted
+        if existing.get("status") == "locked":
+            return existing
         if existing.get("status") in {"completed", "failed", "interrupted"}:
             return existing
         existing_ref = _first_existing_ref(run_root, existing_result_refs)
@@ -86,6 +104,14 @@ def start_background_task(
             _write_task_state(run_root, state)
             return state
         task_id = f"{task_kind}-{_utc_now().replace(':', '').replace('-', '')}"
+        lock_ref = _acquire_run_lock(
+            run_root=run_root,
+            request_id=request_id,
+            task_kind=task_kind,
+            task_id=task_id,
+        )
+        if not lock_ref:
+            return _locked_state_from_metadata(run_root)
         state = {
             "schema_version": WEB_TASK_SCHEMA_VERSION,
             "task_id": task_id,
@@ -96,20 +122,26 @@ def start_background_task(
             "finished_at": "",
             "result_ref": "",
             "error_summary": "",
+            "lock_ref": lock_ref,
         }
-        _write_task_state(run_root, state)
-        thread = threading.Thread(
-            target=_run_task,
-            kwargs={
-                "run_root": run_root,
-                "task_key": task_key,
-                "state": state,
-                "runner": runner,
-            },
-            daemon=True,
-        )
-        _RUNNING_THREADS[task_key] = thread
-        thread.start()
+        try:
+            _write_task_state(run_root, state)
+            thread = threading.Thread(
+                target=_run_task,
+                kwargs={
+                    "run_root": run_root,
+                    "task_key": task_key,
+                    "state": state,
+                    "runner": runner,
+                },
+                daemon=True,
+            )
+            _RUNNING_THREADS[task_key] = thread
+            thread.start()
+        except Exception:
+            _RUNNING_THREADS.pop(task_key, None)
+            _release_run_lock(run_root, state)
+            raise
         return state
 
 
@@ -141,9 +173,13 @@ def read_or_record_existing_task(
                 )
                 _write_task_state(run_root, state)
                 return state
+            if _lock_exists(run_root):
+                return _locked_state_from_metadata(run_root, existing=existing)
             interrupted = _interrupted_state(existing)
             _write_task_state(run_root, interrupted)
             return interrupted
+        if existing.get("status") == "locked":
+            return existing
         if existing.get("status") in {"completed", "failed", "interrupted"}:
             return existing
         existing_ref = _first_existing_ref(run_root, existing_result_refs)
@@ -188,6 +224,7 @@ def _run_task(
     finally:
         with _TASK_LOCK:
             _RUNNING_THREADS.pop(task_key, None)
+            _release_run_lock(run_root, state)
 
 
 def _thread_alive(task_key: str) -> bool:
@@ -206,6 +243,7 @@ def _idle_state() -> dict[str, Any]:
         "finished_at": "",
         "result_ref": "",
         "error_summary": "",
+        "lock_ref": "",
     }
 
 
@@ -238,6 +276,107 @@ def _write_task_state(run_root: str | Path, payload: Mapping[str, Any]) -> str:
     return WEB_TASK_STATE_REF
 
 
+def _acquire_run_lock(*, run_root: Path, request_id: str, task_kind: str, task_id: str) -> str:
+    lock_dir = resolve_workspace_ref(run_root, WEB_TASK_LOCK_REF)
+    try:
+        lock_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return ""
+    except OSError as exc:
+        raise mf.ContractValidationError(f"cannot create web task lock: {exc}") from exc
+    metadata = {
+        "schema_version": WEB_TASK_LOCK_SCHEMA_VERSION,
+        "lock_ref": WEB_TASK_LOCK_REF,
+        "task_id": task_id,
+        "task_kind": task_kind,
+        "request_id": request_id,
+        "owner_pid": str(os.getpid()),
+        "owner_thread": str(threading.get_ident()),
+        "owner_host": socket.gethostname(),
+        "acquired_at": _utc_now(),
+    }
+    try:
+        _write_lock_metadata(lock_dir, metadata)
+    except OSError as exc:
+        _release_lock_dir(lock_dir)
+        raise mf.ContractValidationError(f"cannot write web task lock metadata: {exc}") from exc
+    return WEB_TASK_LOCK_REF
+
+
+def _release_run_lock(run_root: Path, state: Mapping[str, Any]) -> None:
+    if state.get("lock_ref") != WEB_TASK_LOCK_REF:
+        return
+    lock_dir = resolve_workspace_ref(run_root, WEB_TASK_LOCK_REF)
+    metadata = _read_lock_metadata(run_root)
+    if metadata.get("task_id") != state.get("task_id"):
+        return
+    _release_lock_dir(lock_dir)
+
+
+def _release_lock_dir(lock_dir: Path) -> None:
+    try:
+        (lock_dir / WEB_TASK_LOCK_METADATA_FILE).unlink(missing_ok=True)
+        lock_dir.rmdir()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+def _lock_exists(run_root: str | Path) -> bool:
+    try:
+        return resolve_workspace_ref(run_root, WEB_TASK_LOCK_REF).exists()
+    except mf.ContractValidationError:
+        return False
+
+
+def _locked_state_from_metadata(run_root: str | Path, *, existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    metadata = _read_lock_metadata(run_root)
+    return _locked_state(
+        request_id=_string_field(metadata, "request_id") or _string_field(existing or {}, "request_id"),
+        task_kind=_string_field(metadata, "task_kind") or _string_field(existing or {}, "task_kind"),
+        task_id=_string_field(metadata, "task_id") or _string_field(existing or {}, "task_id"),
+        started_at=_string_field(metadata, "acquired_at") or _string_field(existing or {}, "started_at"),
+    )
+
+
+def _locked_state(*, request_id: str, task_kind: str, task_id: str, started_at: str) -> dict[str, Any]:
+    return {
+        "schema_version": WEB_TASK_SCHEMA_VERSION,
+        "task_id": task_id or f"{task_kind or 'kernel_v2_run'}-locked",
+        "task_kind": task_kind,
+        "request_id": request_id,
+        "status": "locked",
+        "started_at": started_at,
+        "finished_at": "",
+        "result_ref": "",
+        "error_summary": "run lock is held by another process",
+        "lock_ref": WEB_TASK_LOCK_REF,
+    }
+
+
+def _write_lock_metadata(lock_dir: Path, metadata: Mapping[str, Any]) -> None:
+    path = lock_dir / WEB_TASK_LOCK_METADATA_FILE
+    path.write_text(json.dumps(dict(metadata), sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_lock_metadata(run_root: str | Path) -> Mapping[str, Any]:
+    try:
+        path = resolve_workspace_ref(run_root, f"{WEB_TASK_LOCK_REF}/{WEB_TASK_LOCK_METADATA_FILE}")
+        if not path.is_file():
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            return {}
+        if payload.get("schema_version") != WEB_TASK_LOCK_SCHEMA_VERSION:
+            return {}
+        if payload.get("lock_ref") != WEB_TASK_LOCK_REF:
+            return {}
+        return payload
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, mf.ContractValidationError):
+        return {}
+
+
 def _existing_run_state(*, request_id: str, task_kind: str, result_ref: str) -> dict[str, Any]:
     return {
         "schema_version": WEB_TASK_SCHEMA_VERSION,
@@ -249,6 +388,7 @@ def _existing_run_state(*, request_id: str, task_kind: str, result_ref: str) -> 
         "finished_at": "",
         "result_ref": result_ref,
         "error_summary": "",
+        "lock_ref": "",
     }
 
 
