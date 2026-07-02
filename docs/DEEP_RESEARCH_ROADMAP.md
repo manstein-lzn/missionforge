@@ -60,7 +60,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   artifact browser, source/citation tables, Markdown report preview, and
   FrontDesk message submission through the existing FrontDesk PiWorker turn
   boundary. Browser requirements approval is wired through the existing
-  FrontDesk approval boundary and does not yet start long-running research.
+  FrontDesk approval boundary. Browser Start Research starts Kernel v2 as a
+  server-owned background task, records `web/tasks/current_task.json`, and
+  exposes `/api/task` for task state without letting the browser choose provider
+  config or adapter mode.
 
 ## Design Principles
 
@@ -96,7 +99,7 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   DeepResearch.
 - Continue the project-oriented web console. The project dashboard,
   source/citation inspection, artifact browser, Markdown preview, and FrontDesk
-  chat plus requirements approval are active; start-run plus
+  chat plus requirements approval and background start-run are active;
   pause/resume/checkpoint/revision controls remain next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default

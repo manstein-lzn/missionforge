@@ -9,7 +9,9 @@ from typing import Any, Callable, Mapping
 import missionforge as mf
 
 from .frontdesk import FRONTDESK_INITIAL_INPUT_REF, approve_frontdesk_requirements, run_deepresearch_frontdesk_turn
-from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, json_response
+from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
+from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, json_response
+from .web_tasks import read_or_record_existing_task, start_background_task
 from .workspace import resolve_workspace_ref
 
 
@@ -74,6 +76,61 @@ def frontdesk_approve_response(
                 "status": "approved",
                 "research_request": request.to_dict(),
                 "snapshot": snapshot_factory(workspace, request_id),
+            },
+        )
+    except mf.ContractValidationError as exc:
+        return json_response(409, {"status": "error", "message": str(exc)})
+
+
+def research_start_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    config: WebKernelConfig,
+) -> WebConsoleResponse:
+    """Start Kernel v2 in a background task after FrontDesk approval."""
+
+    existing_state = read_or_record_existing_task(
+        workspace=workspace,
+        request_id=request_id,
+        task_kind="kernel_v2_run",
+        existing_result_refs=[KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF],
+    )
+    if existing_state is not None:
+        return json_response(
+            200,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.research_start_result.v1",
+                "status": existing_state.get("status", "idle"),
+                "task": existing_state,
+            },
+        )
+
+    try:
+        request = approve_frontdesk_requirements(request_id=request_id, workspace=workspace)
+
+        def runner() -> Any:
+            return run_deepresearch_kernel_v2(
+                request,
+                workspace=workspace,
+                adapter=config.adapter_factory(request.research_intensity),
+                live_extension_mode=config.live_extension_mode,
+            )
+
+        task_state = start_background_task(
+            workspace=workspace,
+            request_id=request_id,
+            task_kind="kernel_v2_run",
+            runner=runner,
+            existing_result_refs=[KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF],
+        )
+        response_status = 202 if task_state.get("status") == "running" else 200
+        return json_response(
+            response_status,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.research_start_result.v1",
+                "status": task_state.get("status", "running"),
+                "task": task_state,
             },
         )
     except mf.ContractValidationError as exc:

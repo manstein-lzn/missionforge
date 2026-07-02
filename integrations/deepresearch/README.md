@@ -146,9 +146,11 @@ registry, claim-support review, acceptance gate, judge report, usage summary,
 and final Markdown. It also lets the browser submit FrontDesk messages through
 the same `run_deepresearch_frontdesk_turn` path as CLI/TUI. The browser does
 not choose provider config or write product truth directly. Browser approval
-uses the same `approve_frontdesk_requirements` boundary as CLI/TUI; starting
-the long-running research run and runtime controls remain explicit follow-up
-work.
+uses the same `approve_frontdesk_requirements` boundary as CLI/TUI. Start
+Research runs Kernel v2 as a server-owned background task and writes
+`web/tasks/current_task.json`; `/api/task` returns the current task state. The
+browser still cannot choose provider config or adapter mode. Pause, resume,
+cancel, revise, and upload controls remain explicit follow-up work.
 
 ## Product Shape
 

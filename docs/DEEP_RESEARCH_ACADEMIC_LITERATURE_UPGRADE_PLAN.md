@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_web_approval_foundation`; next priority is `m3b_web_start_run_background_task`
+Status: `m3b_web_start_run_background_task`; next priority is `m3b_runtime_controls`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1199,9 +1199,13 @@ Implemented notes:
   FrontDesk PiWorker turn boundary used by CLI/TUI.
 - M3B-B2 foundation is complete for approving FrontDesk requirements from the
   browser without starting a long research run.
-- Remaining M3B work: start-run flow,
-  pause/resume/checkpoint/revise/cancel controls, revision request submission,
-  and upload UI.
+- M3B-B3 is complete for starting Kernel v2 from the browser as a server-owned
+  background task after FrontDesk approval. The browser cannot choose provider
+  config or adapter mode. Existing web tasks or already-written Kernel result
+  refs are surfaced as current task state rather than silently rerunning and
+  overwriting the same project run.
+- Remaining M3B work: pause/resume/checkpoint/revise/cancel controls,
+  revision request submission, and upload UI.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1298,6 +1302,36 @@ Exit criteria:
 - The browser cannot rewrite requirements or mutate task authority directly.
 - Approval and start-run are separate, making the next long-running execution
   design explicit.
+
+### M3B-B3: Web Start Run Background Execution
+
+Status: `complete`
+
+Deliverables:
+
+- `WebKernelConfig` as server-owned Kernel execution configuration.
+- `POST /api/research/start` endpoint.
+- `GET /api/task` endpoint.
+- `web/tasks/current_task.json` as a refs-first web task state artifact.
+- Browser Start Research action that calls the existing FrontDesk approval
+  boundary, then starts `run_deepresearch_kernel_v2` in a process-local
+  background task.
+- Snapshot/dashboard task status card and artifact entry for web task state.
+- CLI wiring for web-console Kernel adapter mode without exposing provider
+  selection to browser requests.
+- Duplicate-start guard: live, completed, failed, or pre-existing Kernel result
+  refs are returned as current task state instead of rerunning the same project.
+
+Exit criteria:
+
+- A browser user can approve requirements and start a long-running research run
+  without blocking the HTTP request.
+- The browser submits only the start command; adapter/provider choices remain
+  process-owned CLI/server configuration.
+- The start endpoint does not bypass FrontDesk approval for new runs.
+- Existing project runs are not silently overwritten by clicking Start Research.
+  Future retry/revise flows must use explicit runtime controls and revision
+  records.
 
 ### M4: Citation Projection
 

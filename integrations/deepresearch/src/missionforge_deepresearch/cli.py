@@ -20,7 +20,7 @@ from .frontdesk import (
 from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from .product_contract import AcademicResearchRequest, ResearchIntensity, SeedPaper, research_intensity_profile
 from .tui import FrontDeskTuiConfig, run_frontdesk_tui
-from .web_console import WebFrontDeskConfig, serve_web_console
+from .web_console import WebFrontDeskConfig, WebKernelConfig, serve_web_console
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -152,6 +152,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return FrontDeskFixtureAdapter()
             return mf.create_default_piworker_adapter(frontdesk_config, environ=frontdesk_env)
 
+        def kernel_adapter_factory(research_intensity: ResearchIntensity | str) -> mf.PiWorkerCallAdapter:
+            kernel_config, kernel_env = _piworker_inputs(args, research_intensity)
+            if args.kernel_v2_adapter_mode == "fixture":
+                return KernelV2FixtureAdapter()
+            return mf.create_default_piworker_adapter(kernel_config, environ=kernel_env)
+
         return serve_web_console(
             workspace=Path(args.workspace),
             request_id=args.request_id,
@@ -162,6 +168,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 audience=args.audience,
                 language=args.language,
                 research_intensity=args.research_intensity,
+                live_extension_mode=args.live_extension_mode,
+            ),
+            kernel_config=WebKernelConfig(
+                adapter_factory=kernel_adapter_factory,
                 live_extension_mode=args.live_extension_mode,
             ),
             output_stream=sys.stderr,
@@ -259,6 +269,7 @@ def _add_web_console_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--live-extension-mode", dest="live_extension_mode", action="store_true", default=True)
     parser.add_argument("--no-live-extension-mode", dest="live_extension_mode", action="store_false")
     parser.add_argument("--frontdesk-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+    parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
 
 
 def _run_and_emit_result(

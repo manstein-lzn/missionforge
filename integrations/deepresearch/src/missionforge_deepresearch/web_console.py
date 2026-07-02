@@ -56,8 +56,9 @@ from .project_lifecycle import (
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
-from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response
-from .web_common import WebConsoleResponse, WebFrontDeskConfig, html_response, json_response
+from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response, research_start_response
+from .web_common import WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
+from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
 from .workspace import resolve_workspace_ref
 
 
@@ -85,6 +86,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
     acceptance_gate = _read_json_if_exists(run_root, KERNEL_V2_ACCEPTANCE_GATE_REF)
     judge_report = _read_json_if_exists(run_root, KERNEL_V2_JUDGE_REPORT_REF)
     usage_summary = _read_json_if_exists(run_root, KERNEL_V2_USAGE_SUMMARY_REF)
+    web_task = read_web_task_state(run_root)
     report_ref = _preferred_report_ref(run_root, lifecycle, run_status)
     report_preview = _read_text_preview_if_exists(run_root, report_ref)
     artifacts = _artifact_entries(
@@ -104,6 +106,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             "run_index": _run_index_summary(run_index),
             "resume_diagnostics": resume_diagnostics or {},
         },
+        "web_task": web_task,
         "status_cards": _status_cards(
             lifecycle=lifecycle,
             run_status=run_status,
@@ -113,6 +116,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             acceptance_gate=acceptance_gate,
             judge_report=judge_report,
             usage_summary=usage_summary,
+            web_task=web_task,
         ),
         "frontdesk": _frontdesk_summary(run_root, lifecycle),
         "frontdesk_dialogue": _frontdesk_dialogue(run_root),
@@ -176,6 +180,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
     citation_rows = _list(snapshot.get("citations"))[:100]
     frontdesk = _mapping(snapshot.get("frontdesk"))
     dialogue = _list(snapshot.get("frontdesk_dialogue"))[-30:]
+    web_task = _mapping(snapshot.get("web_task"))
     claim_support = _mapping(snapshot.get("claim_support"))
     judge = _mapping(snapshot.get("judge"))
     report_preview = _mapping(snapshot.get("report_preview"))
@@ -186,7 +191,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
             [
                 _header(snapshot),
                 _status_grid(status_cards),
-                _frontdesk_chat_panel(frontdesk, dialogue),
+                _frontdesk_chat_panel(frontdesk, dialogue, web_task),
                 _two_column(
                     _frontdesk_panel(frontdesk),
                     _source_summary_panel(source_summary),
@@ -231,6 +236,7 @@ def create_web_console_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     frontdesk_config: WebFrontDeskConfig | None = None,
+    kernel_config: WebKernelConfig | None = None,
 ) -> ThreadingHTTPServer:
     """Create an HTTP server for one DeepResearch project.
 
@@ -254,6 +260,7 @@ def create_web_console_server(
                 path=self.path,
                 body=body,
                 frontdesk_config=frontdesk_config,
+                kernel_config=kernel_config,
             )
             self._write_response(response)
 
@@ -279,6 +286,7 @@ def web_console_response(
     method: str = "GET",
     body: bytes | str = b"",
     frontdesk_config: WebFrontDeskConfig | None = None,
+    kernel_config: WebKernelConfig | None = None,
 ) -> WebConsoleResponse:
     """Return the web-console response for one request path."""
 
@@ -318,6 +326,17 @@ def web_console_response(
             request_id=request_id,
             snapshot_factory=build_project_snapshot,
         )
+    if method == "POST" and parsed.path == "/api/research/start":
+        if kernel_config is None:
+            return json_response(409, {"status": "error", "message": "kernel_not_configured"})
+        return research_start_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            config=kernel_config,
+        )
+    if method == "GET" and parsed.path == "/api/task":
+        run_root = resolve_workspace_ref(workspace_root, _run_ref(request_id))
+        return json_response(200, read_web_task_state(run_root))
     return json_response(404, {"status": "error", "message": "not found"})
 
 
@@ -328,6 +347,7 @@ def serve_web_console(
     host: str = "127.0.0.1",
     port: int = 8765,
     frontdesk_config: WebFrontDeskConfig | None = None,
+    kernel_config: WebKernelConfig | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
     """Serve the web console until interrupted."""
@@ -339,6 +359,7 @@ def serve_web_console(
         host=host,
         port=port,
         frontdesk_config=frontdesk_config,
+        kernel_config=kernel_config,
     )
     actual_host, actual_port = server.server_address[:2]
     stream.write(f"DeepResearch web console: http://{actual_host}:{actual_port}/\n")
@@ -451,6 +472,7 @@ def _artifact_entries(
         ("Revision Request", KERNEL_V2_REVISION_REQUEST_REF, "revisions"),
         ("Run Status", _run_status_ref(lifecycle), "state"),
         ("Usage Summary", KERNEL_V2_USAGE_SUMMARY_REF, "metrics"),
+        ("Web Task State", WEB_TASK_STATE_REF, "web"),
         ("Result Package", _clean((run_status or {}).get("result_ref")) or KERNEL_V2_RESULT_REF, "packages"),
     ]
     entries = []
@@ -492,6 +514,7 @@ def _status_cards(
     acceptance_gate: Mapping[str, Any] | None,
     judge_report: Mapping[str, Any] | None,
     usage_summary: Mapping[str, Any] | None,
+    web_task: Mapping[str, Any] | None,
 ) -> list[dict[str, str]]:
     source_count = _source_count_label(coverage_report)
     totals = _mapping((usage_summary or {}).get("totals"))
@@ -505,6 +528,7 @@ def _status_cards(
         _card("claims", _clean((claim_support_review or {}).get("overall_status")) or _clean((run_status or {}).get("claim_support_review_status")) or "unknown", "Reviewer-authored claim support"),
         _card("acceptance gate", _clean((acceptance_gate or {}).get("status")) or _clean((run_status or {}).get("acceptance_gate_status")) or "unknown", "Mechanical acceptance consistency"),
         _card("judge", _clean((judge_report or {}).get("decision")) or "unknown", "Independent Judge decision"),
+        _card("web task", _clean((web_task or {}).get("status")) or "idle", _clean((web_task or {}).get("task_kind"))),
         _card("tokens", _format_int(totals.get("total_tokens")), "Total recorded tokens"),
     ]
 
@@ -757,7 +781,7 @@ def _frontdesk_panel(frontdesk: Mapping[str, Any]) -> str:
     )
 
 
-def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any]) -> str:
+def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any], web_task: Mapping[str, Any]) -> str:
     rows = []
     for item in dialogue:
         if not isinstance(item, Mapping):
@@ -788,6 +812,14 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any]) -> 
         '<form id="frontdesk-approve-form" class="approve-form">'
         '<button type="submit">Approve Requirements</button>'
         "</form>"
+        '<form id="research-start-form" class="approve-form">'
+        '<button type="submit">Start Research</button>'
+        "</form>"
+        '<div class="task-state">'
+        f'{_row("task", _clean(web_task.get("status")) or "idle")}'
+        f'{_row("kind", _clean(web_task.get("task_kind")))}'
+        f'{_row("error", _clean(web_task.get("error_summary")))}'
+        "</div>"
         f"<script>{_CHAT_SCRIPT}</script>"
         "</section>"
     )
@@ -1137,6 +1169,15 @@ dd { margin: 0; overflow-wrap: anywhere; }
   min-height: 40px;
   padding: 0 14px;
 }
+.task-state {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 6px 12px;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #fbfcfd;
+}
 textarea {
   width: 100%;
   min-height: 92px;
@@ -1210,6 +1251,7 @@ _CHAT_SCRIPT = """
 (() => {
   const form = document.getElementById("frontdesk-form");
   const approveForm = document.getElementById("frontdesk-approve-form");
+  const startForm = document.getElementById("research-start-form");
   const textarea = document.getElementById("frontdesk-message");
   const postJson = async (path, payload) => {
     const response = await fetch(path, {
@@ -1244,6 +1286,19 @@ _CHAT_SCRIPT = """
     if (button) button.disabled = true;
     try {
       await postJson("/api/frontdesk/approve", {});
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+  if (startForm) startForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = startForm.querySelector("button");
+    if (button) button.disabled = true;
+    try {
+      await postJson("/api/research/start", {});
       window.location.reload();
     } catch (error) {
       alert(String(error));

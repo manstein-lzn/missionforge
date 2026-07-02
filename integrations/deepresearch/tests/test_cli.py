@@ -446,6 +446,8 @@ class CliTests(unittest.TestCase):
                     str(root),
                     "--frontdesk-adapter-mode",
                     "fixture",
+                    "--kernel-v2-adapter-mode",
+                    "fixture",
                     "--research-intensity",
                     "intensive",
                     "--no-live-extension-mode",
@@ -454,10 +456,14 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         config = serve_mock.call_args.kwargs["frontdesk_config"]
+        kernel_config = serve_mock.call_args.kwargs["kernel_config"]
         adapter = config.adapter_factory()
+        kernel_adapter = kernel_config.adapter_factory("standard")
         self.assertEqual(adapter.adapter_family, "fixture_deepresearch_frontdesk")
+        self.assertEqual(kernel_adapter.adapter_family, "fixture_deepresearch_kernel_v2")
         self.assertEqual(config.research_intensity, "intensive")
         self.assertFalse(config.live_extension_mode)
+        self.assertFalse(kernel_config.live_extension_mode)
 
     def test_academic_kernel_v2_run_does_not_set_turn_budget_by_default(self) -> None:
         expected = type(

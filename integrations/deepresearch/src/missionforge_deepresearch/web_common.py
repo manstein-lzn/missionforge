@@ -34,6 +34,14 @@ class WebFrontDeskConfig:
     live_extension_mode: bool = False
 
 
+@dataclass(frozen=True)
+class WebKernelConfig:
+    """Server-owned Kernel execution settings for web start-run actions."""
+
+    adapter_factory: Callable[[ResearchIntensity | str], mf.PiWorkerCallAdapter]
+    live_extension_mode: bool = False
+
+
 def html_response(status: int, body: str) -> WebConsoleResponse:
     return WebConsoleResponse(status=status, content_type="text/html; charset=utf-8", body=body)
 
