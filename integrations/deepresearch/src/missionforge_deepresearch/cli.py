@@ -20,6 +20,7 @@ from .frontdesk import (
 from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from .product_contract import AcademicResearchRequest, ResearchIntensity, SeedPaper, research_intensity_profile
 from .tui import FrontDeskTuiConfig, run_frontdesk_tui
+from .web_console import serve_web_console
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -35,6 +36,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_frontdesk_run_arguments(frontdesk_run_parser)
     frontdesk_tui_parser = academic_sub.add_parser("frontdesk-tui")
     _add_frontdesk_tui_arguments(frontdesk_tui_parser)
+    web_console_parser = academic_sub.add_parser("web-console")
+    _add_web_console_arguments(web_console_parser)
     args = parser.parse_args(argv)
 
     if args.profile == "academic" and args.command == "kernel-v2-run":
@@ -141,6 +144,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_stream=sys.stdin,
             output_stream=sys.stdout,
         )
+    if args.profile == "academic" and args.command == "web-console":
+        return serve_web_console(
+            workspace=Path(args.workspace),
+            request_id=args.request_id,
+            host=args.host,
+            port=args.port,
+            output_stream=sys.stderr,
+        )
     parser.error("unsupported command")
     return 2
 
@@ -224,6 +235,13 @@ def _add_frontdesk_tui_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-live-extension-mode", dest="live_extension_mode", action="store_false")
     parser.add_argument("--frontdesk-adapter-mode", choices=["piworker", "fixture"], default="piworker")
     parser.add_argument("--kernel-v2-adapter-mode", choices=["piworker", "fixture"], default="piworker")
+
+
+def _add_web_console_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--request-id", default="deepresearch-kernel-v2")
+    parser.add_argument("--workspace", default=".")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
 
 
 def _run_and_emit_result(

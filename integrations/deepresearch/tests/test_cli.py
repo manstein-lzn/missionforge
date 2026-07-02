@@ -402,6 +402,33 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertTrue(report_exists)
 
+    def test_academic_web_console_invokes_read_only_server(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tempdir,
+            patch("missionforge_deepresearch.cli.serve_web_console", return_value=0) as serve_mock,
+        ):
+            root = Path(tempdir)
+            exit_code = main(
+                [
+                    "academic",
+                    "web-console",
+                    "--request-id",
+                    "web-console-cli",
+                    "--workspace",
+                    str(root),
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(serve_mock.call_args.kwargs["workspace"], root)
+        self.assertEqual(serve_mock.call_args.kwargs["request_id"], "web-console-cli")
+        self.assertEqual(serve_mock.call_args.kwargs["host"], "127.0.0.1")
+        self.assertEqual(serve_mock.call_args.kwargs["port"], 0)
+
     def test_academic_kernel_v2_run_does_not_set_turn_budget_by_default(self) -> None:
         expected = type(
             "Result",

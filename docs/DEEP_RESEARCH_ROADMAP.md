@@ -56,6 +56,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   state, run index, resume diagnostics, and role-local ContextPackage pointers.
   FrontDesk, source mapper, researcher, reviewer, and judge keep isolated
   ContextPackage refs managed by MissionForge ContextEngine.
+- Active web console slice: `academic web-console` serves a read-only project
+  dashboard, artifact browser, source/citation tables, and Markdown report
+  preview from existing refs.
 
 ## Design Principles
 
@@ -89,9 +92,9 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into
   DeepResearch.
-- Add a project-oriented web console MVP for FrontDesk chat, lifecycle status,
-  pause/resume/checkpoint/revision controls, source/citation inspection, and
-  Markdown report preview.
+- Continue the project-oriented web console. The read-only project dashboard,
+  source/citation inspection, artifact browser, and Markdown preview are active;
+  FrontDesk chat plus pause/resume/checkpoint/revision controls remain next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

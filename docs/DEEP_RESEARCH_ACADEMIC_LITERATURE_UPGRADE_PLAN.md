@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m5c_parsed_pdf_evidence_consumption`; next priority is `citation_support_against_parsed_evidence`
+Status: `m3b_read_only_web_console`; next priority is `m3b_interactive_frontdesk_controls`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1159,7 +1159,7 @@ Implemented notes:
 
 ### M3B: Web Console MVP
 
-Status: `pending`
+Status: `partial`
 
 Deliverables:
 
@@ -1183,6 +1183,44 @@ Exit criteria:
   ContextPackage/lifecycle state rather than requiring a new topic.
 - Web console tests or fixtures prove the UI can render lifecycle state and
   artifact refs without depending on live provider calls.
+
+Implemented notes:
+
+- M3B-A is complete for a read-only project web console.
+- `missionforge-deepresearch academic web-console` serves a package-local
+  standard-library HTTP view over existing project refs.
+- The console reads project manifest, lifecycle state, resume diagnostics, run
+  status, source packet, coverage report, citation registry, claim-support
+  review, acceptance gate, judge report, usage summary, artifact refs, and the
+  final Markdown preview.
+- The web layer does not write product truth, mutate lifecycle state, or
+  replace FrontDesk/runtime interaction APIs.
+- Remaining M3B work: browser FrontDesk chat, approval/start-run flow,
+  pause/resume/checkpoint/revise/cancel controls, revision request submission,
+  and upload UI.
+
+### M3B-A: Read-Only Project Web Console
+
+Status: `complete`
+
+Deliverables:
+
+- `missionforge_deepresearch.web_console` snapshot, renderer, artifact preview,
+  and standard-library HTTP adapter.
+- CLI command `academic web-console`.
+- Dashboard cards for lifecycle, active agent, run status, resume diagnostics,
+  source count, citation validation, claim-support status, acceptance gate,
+  Judge decision, and token usage.
+- Artifact table, source table, citation table, and Markdown report preview.
+- Tests proving snapshot rendering, HTML escaping, artifact path safety, and
+  pure request routing without live provider or socket dependency.
+
+Exit criteria:
+
+- Existing project refs can be opened from a browser without starting a new
+  model/provider call.
+- The dashboard is read-only and does not write product authority.
+- Artifact reads are constrained to the selected project workspace.
 
 ### M4: Citation Projection
 

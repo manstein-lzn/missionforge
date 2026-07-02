@@ -130,6 +130,22 @@ missionforge-deepresearch academic frontdesk-run \
   --stream-progress
 ```
 
+Open the read-only project web console for an existing project:
+
+```bash
+missionforge-deepresearch academic web-console \
+  --request-id research-001 \
+  --workspace /tmp/mf-dr \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+The web console reads the same persisted refs as CLI/TUI: project manifest,
+lifecycle state, resume diagnostics, source packet, coverage report, citation
+registry, claim-support review, acceptance gate, judge report, usage summary,
+and final Markdown. The current slice is read-only; it does not write product
+truth or replace FrontDesk/runtime interaction APIs.
+
 ## Product Shape
 
 ```text
