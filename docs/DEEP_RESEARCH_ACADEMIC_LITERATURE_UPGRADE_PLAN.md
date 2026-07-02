@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `seed_upload_ui_first_slice`; next priority is `seed_upload_revision_flow`
+Status: `web_artifact_access_policy`; next priority is OCR/page-span provenance hardening
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1259,14 +1259,20 @@ Implemented notes:
   pointer exists; FrontDesk dialogue is projected by ref/turn metadata instead
   of raw dialogue text; and attempt runtime-progress rows carry attempt refs for
   grouping.
-- M3B-J first slice is complete for Web seed-paper/PDF input. The dashboard
+- M3B-J is complete for Web seed-paper/PDF input. The dashboard
   includes a Seed Inputs panel, `POST /api/seeds/papers`, and
   `POST /api/seeds/pdfs`. Seed inputs are staged as explicit project artifacts
   and merged into `frontdesk/research_request.json` before FrontDesk approval.
-  Once a project is approved, seed additions fail closed and require an
-  explicit contract revision instead of mutating the frozen request.
-- Remaining M3B work: seed upload through explicit revision flow for already
-  approved projects.
+  Once a project is approved, seed additions do not mutate the approved
+  FrontDesk request; they stage `project/seed_inputs.json`, record a refs-first
+  pending revision request, and are frozen into
+  `project/revisions/{revision_id}/revised_research_request.json` only when
+  `POST /api/research/revision/start` consumes that revision request.
+- M3B-K is complete for Web artifact access policy. The artifact browser still
+  exposes refs and byte-size metadata, but sensitive raw user input, uploaded
+  seed files, lifecycle action text, ContextPackage refs, and parsed seed-PDF
+  outputs are `metadata_only` by default and do not return raw content through
+  the web artifact preview/API.
 
 ### M3B-A: Read-Only Project Web Console
 
@@ -1722,17 +1728,19 @@ Implemented notes:
   projection refs and seed packet `parse_refs`.
 - M5C is complete for carrying parsed PDF evidence refs into source packets,
   canonical sources, evidence indexes, and claim indexes.
-- M5D first slice is complete for Web seed upload. Browser seed-paper input and
+- M5D is complete for Web seed upload. Browser seed-paper input and
   PDF upload write `project/seed_inputs.json` and `inputs/seeds/*.pdf` before
   approval. The approved request carries `seed_papers` and `seed_pdf_refs` into
   Kernel v2, where existing `inputs/seed_papers.json`,
   `inputs/seed_pdf_index.json`, and seed-normalizer flow handle parsing and
   source-packet projection. The project snapshot shows seed counts and refs,
-  not raw seed-paper values or PDF bytes.
+  not raw seed-paper values or PDF bytes. After approval, new seed inputs are
+  accepted only through the explicit revision lifecycle; active tasks still
+  reject seed additions until a safe revision boundary is available.
 - DeepResearch does not hand-parse PDF binaries or dump extracted full text
   into context.
-- Remaining M5 work: approved-project seed revision flow, OCR fallback, and
-  richer page/span provenance when GROBID coordinates are available.
+- Remaining M5 work: OCR fallback and richer page/span provenance when GROBID
+  coordinates are available.
 
 ### M6: Citation Support Judge
 

@@ -18,6 +18,10 @@ from .frontdesk import (
     FRONTDESK_RESEARCH_REQUEST_REF,
     FRONTDESK_REQUIREMENTS_REF,
 )
+from .lifecycle_actions import (
+    record_lifecycle_action,
+    require_revise_lifecycle_action_allowed,
+)
 from .product_contract import AcademicResearchRequest, SeedPaper
 from .project_seeds import (
     PROJECT_SEED_INPUTS_REF,
@@ -26,6 +30,7 @@ from .project_seeds import (
     apply_project_seed_inputs,
     project_seed_inputs_hash,
     project_seed_summary,
+    read_project_seed_inputs,
 )
 from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, json_response
 from .workspace import read_json_ref, read_text_ref, ref_exists, resolve_workspace_ref, write_json_ref
@@ -46,14 +51,37 @@ def seed_paper_response(
 
     try:
         run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
-        _require_unapproved(run_root)
         payload = _json_body(body, max_bytes=WEB_POST_MAX_BYTES)
         seed = SeedPaper(
             kind=_clean(payload.get("kind")),
             value=_clean(payload.get("value")),
             note=_clean(payload.get("note")),
         )
+        approved = _is_approved(run_root)
+        if approved:
+            require_revise_lifecycle_action_allowed(workspace=workspace, request_id=request_id)
+        else:
+            _require_preapproval_seed_editable(run_root)
+        previous_state = _seed_rollback_state(run_root) if approved else None
         state = add_project_seed_paper(run_root, request_id=request_id, seed_paper=seed)
+        if approved:
+            try:
+                action = _record_seed_revision_action(workspace=workspace, request_id=request_id, state=state)
+            except Exception:
+                _restore_seed_inputs(run_root, previous_state=previous_state)
+                raise
+            return json_response(
+                202,
+                {
+                    "schema_version": "missionforge_deepresearch.web_seed_paper_result.v1",
+                    "status": "pending_revision",
+                    "seed_inputs_ref": PROJECT_SEED_INPUTS_REF,
+                    "seed_paper_count": len(state.get("seed_papers", [])),
+                    "seed_pdf_count": len(state.get("seed_pdf_refs", [])),
+                    "action": _sanitized_action(action),
+                    "snapshot": snapshot_factory(workspace, request_id),
+                },
+            )
         _sync_frontdesk_research_request(run_root)
         return json_response(
             202,
@@ -83,7 +111,6 @@ def seed_pdf_response(
 
     try:
         run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
-        _require_unapproved(run_root)
         payload = _json_body(body, max_bytes=WEB_SEED_PDF_POST_MAX_BYTES)
         filename = _safe_pdf_filename(_clean(payload.get("filename")))
         encoded = _clean(payload.get("content_base64"))
@@ -91,11 +118,39 @@ def seed_pdf_response(
             raise mf.ContractValidationError("seed PDF content_base64 is required")
         data = base64.b64decode(encoded, validate=True)
         _validate_pdf_data(data)
+        approved = _is_approved(run_root)
+        if approved:
+            require_revise_lifecycle_action_allowed(workspace=workspace, request_id=request_id)
+        else:
+            _require_preapproval_seed_editable(run_root)
+        previous_state = _seed_rollback_state(run_root) if approved else None
         pdf_ref = _next_seed_pdf_ref(run_root, filename)
         pdf_path = resolve_workspace_ref(run_root, pdf_ref)
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(data)
-        state = add_project_seed_pdf_ref(run_root, request_id=request_id, seed_pdf_ref=pdf_ref)
+        try:
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            pdf_path.write_bytes(data)
+            state = add_project_seed_pdf_ref(run_root, request_id=request_id, seed_pdf_ref=pdf_ref)
+            if approved:
+                action = _record_seed_revision_action(workspace=workspace, request_id=request_id, state=state)
+        except Exception:
+            if approved:
+                _restore_seed_inputs(run_root, previous_state=previous_state)
+                _unlink_if_exists(pdf_path)
+            raise
+        if approved:
+            return json_response(
+                202,
+                {
+                    "schema_version": "missionforge_deepresearch.web_seed_pdf_result.v1",
+                    "status": "pending_revision",
+                    "seed_inputs_ref": PROJECT_SEED_INPUTS_REF,
+                    "seed_pdf_ref": pdf_ref,
+                    "seed_paper_count": len(state.get("seed_papers", [])),
+                    "seed_pdf_count": len(state.get("seed_pdf_refs", [])),
+                    "action": _sanitized_action(action),
+                    "snapshot": snapshot_factory(workspace, request_id),
+                },
+            )
         _sync_frontdesk_research_request(run_root)
         return json_response(
             202,
@@ -135,15 +190,92 @@ def _sync_frontdesk_research_request(run_root: Path) -> None:
     write_json_ref(run_root, FRONTDESK_RESEARCH_PROJECTION_REF, projection)
 
 
-def _require_unapproved(run_root: Path) -> None:
-    if ref_exists(run_root, FRONTDESK_APPROVAL_REF):
-        raise mf.ContractValidationError("approved projects require an explicit revision before adding seed inputs")
+def _record_seed_revision_action(
+    *,
+    workspace: Path,
+    request_id: str,
+    state: Mapping[str, Any],
+) -> dict[str, Any]:
+    return record_lifecycle_action(
+        workspace=workspace,
+        request_id=request_id,
+        action="revise",
+        text=_seed_revision_directive(state),
+    )
+
+
+def _seed_rollback_state(run_root: Path) -> dict[str, Any]:
+    existed = ref_exists(run_root, PROJECT_SEED_INPUTS_REF)
+    return {
+        "existed": existed,
+        "seed_inputs": read_json_ref(run_root, PROJECT_SEED_INPUTS_REF, "deepresearch_project_seed_inputs")
+        if existed
+        else read_project_seed_inputs(run_root),
+    }
+
+
+def _restore_seed_inputs(
+    run_root: Path,
+    *,
+    previous_state: Mapping[str, Any] | None,
+) -> None:
+    if not previous_state:
+        return
+    if previous_state.get("existed"):
+        seed_inputs = previous_state.get("seed_inputs")
+        if not isinstance(seed_inputs, Mapping):
+            return
+        write_json_ref(run_root, PROJECT_SEED_INPUTS_REF, dict(seed_inputs))
+        return
+    _unlink_if_exists(resolve_workspace_ref(run_root, PROJECT_SEED_INPUTS_REF))
+
+
+def _unlink_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def _seed_revision_directive(state: Mapping[str, Any]) -> str:
+    seed_papers = state.get("seed_papers", [])
+    seed_pdf_refs = state.get("seed_pdf_refs", [])
+    paper_count = len(seed_papers) if isinstance(seed_papers, list) else 0
+    pdf_count = len(seed_pdf_refs) if isinstance(seed_pdf_refs, list) else 0
+    return "\n".join(
+        [
+            "Apply the newly staged DeepResearch seed inputs to the next revised research request.",
+            f"Seed inputs ref: {PROJECT_SEED_INPUTS_REF}.",
+            f"Seed inputs hash: {mf.stable_json_hash(dict(state))}.",
+            f"Seed paper count: {paper_count}.",
+            f"Seed PDF count: {pdf_count}.",
+            "Do not mutate the previously approved FrontDesk request; "
+            "freeze a new revised request through the revision boundary.",
+        ]
+    )
+
+
+def _sanitized_action(action: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "action_id": _clean(action.get("action_id")),
+        "kind": _clean(action.get("kind")),
+        "status": _clean(action.get("status")),
+        "reason_ref": _clean(action.get("reason_ref")),
+        "next_required_boundary": _clean(action.get("next_required_boundary")),
+    }
+
+
+def _require_preapproval_seed_editable(run_root: Path) -> None:
     if ref_exists(run_root, FRONTDESK_CONTROL_REF):
         control = read_json_ref(run_root, FRONTDESK_CONTROL_REF, "deepresearch_frontdesk_control")
         if control.get("decision") == "ready_for_approval" and ref_exists(run_root, FRONTDESK_REQUIREMENTS_REF):
             # Seed additions are allowed before approval, but they must update the
             # research request projection if it already exists.
             read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
+
+
+def _is_approved(run_root: Path) -> bool:
+    return ref_exists(run_root, FRONTDESK_APPROVAL_REF)
 
 
 def _json_body(body: bytes | str, *, max_bytes: int) -> dict[str, Any]:

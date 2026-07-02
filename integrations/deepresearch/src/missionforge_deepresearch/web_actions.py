@@ -14,7 +14,7 @@ from .frontdesk import (
     run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
-from .lifecycle_actions import record_lifecycle_action
+from .lifecycle_actions import record_lifecycle_action, require_no_pending_revision_request
 from .research_attempts import start_retry_attempt
 from .research_requests import read_current_research_request
 from .research_revisions import start_revision_attempt
@@ -101,6 +101,8 @@ def research_start_response(
     """Start Kernel v2 in a background task after FrontDesk approval."""
 
     try:
+        run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
+        require_no_pending_revision_request(run_root, action="starting research")
         request = read_current_research_request(workspace=workspace, request_id=request_id)
         existing_state = read_or_record_existing_task(
             workspace=workspace,
@@ -125,11 +127,11 @@ def research_start_response(
                 adapter=config.adapter_factory(request.research_intensity),
                 live_extension_mode=config.live_extension_mode,
                 event_sink=lambda event: append_flow_ledger_event(
-                    resolve_workspace_ref(workspace, _run_ref(request_id)),
+                    run_root,
                     event,
                 ),
                 runtime_progress_sink=runtime_progress_sink(
-                    resolve_workspace_ref(workspace, _run_ref(request_id)),
+                    run_root,
                     source="kernel_v2",
                     default_stage="kernel_v2",
                 ),

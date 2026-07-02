@@ -228,6 +228,7 @@ def approve_frontdesk_requirements(
     run_ref = _run_ref(request_id)
     run_root = root / run_ref
     request, requirements_hash = _ready_frontdesk_request(run_root)
+    request_payload = request.to_dict()
     write_json_ref(
         run_root,
         FRONTDESK_APPROVAL_REF,
@@ -238,6 +239,7 @@ def approve_frontdesk_requirements(
             "research_request_ref": FRONTDESK_RESEARCH_REQUEST_REF,
             "research_projection_ref": FRONTDESK_RESEARCH_PROJECTION_REF,
             "requirements_hash": requirements_hash,
+            "research_request_hash": mf.stable_json_hash(request_payload),
         },
     )
     return request
@@ -264,10 +266,20 @@ def read_approved_frontdesk_request(
         raise mf.ContractValidationError("frontdesk approval research_request_ref is invalid")
     if approval.get("research_projection_ref") != FRONTDESK_RESEARCH_PROJECTION_REF:
         raise mf.ContractValidationError("frontdesk approval research_projection_ref is invalid")
-    request, requirements_hash = _ready_frontdesk_request(run_root)
-    if approval.get("requirements_hash") != requirements_hash:
+    approved_request_hash = str(approval.get("research_request_hash") or "")
+    if approved_request_hash:
+        requirements = read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
+        if approval.get("requirements_hash") != _text_hash(requirements):
+            raise mf.ContractValidationError("frontdesk approval is stale")
+        request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
+        if mf.stable_json_hash(request_payload) != approved_request_hash:
+            raise mf.ContractValidationError("frontdesk approved research request changed")
+        return AcademicResearchRequest.from_dict(request_payload)
+    requirements = read_text_ref(run_root, FRONTDESK_REQUIREMENTS_REF)
+    if approval.get("requirements_hash") != _text_hash(requirements):
         raise mf.ContractValidationError("frontdesk approval is stale")
-    return request
+    request_payload = read_json_ref(run_root, FRONTDESK_RESEARCH_REQUEST_REF, "frontdesk_research_request")
+    return AcademicResearchRequest.from_dict(request_payload)
 
 
 def _ready_frontdesk_request(run_root: Path) -> tuple[AcademicResearchRequest, str]:

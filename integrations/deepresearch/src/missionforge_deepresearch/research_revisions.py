@@ -26,6 +26,7 @@ from .lifecycle_actions import (
 )
 from .product_contract import AcademicResearchRequest
 from .project_lifecycle import PROJECT_LIFECYCLE_STATE_REF
+from .project_seeds import apply_project_seed_inputs
 from .research_attempts import (
     attempt_manifest_ref,
     current_contract_hash,
@@ -313,7 +314,7 @@ def _revised_request(
             "constraints": constraints,
         }
     )
-    return AcademicResearchRequest.from_dict(payload)
+    return apply_project_seed_inputs(run_root, AcademicResearchRequest.from_dict(payload))
 
 
 def _revision_proposal(

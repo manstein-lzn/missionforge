@@ -87,6 +87,17 @@ from .workspace import resolve_workspace_ref
 WEB_CONSOLE_SCHEMA_VERSION = "missionforge_deepresearch.web_console.project_snapshot.v1"
 ARTIFACT_PREVIEW_MAX_CHARS = 60000
 ARTIFACT_READ_MAX_BYTES = 2_000_000
+_SENSITIVE_ARTIFACT_REFS = {
+    PROJECT_SEED_INPUTS_REF,
+    FRONTDESK_DIALOGUE_REF,
+    mf.USER_EVENTS_REF,
+}
+_SENSITIVE_ARTIFACT_PREFIXES = (
+    "context/",
+    "inputs/seeds/",
+    "project/lifecycle/action_text/",
+    "sources/seed_pdfs/",
+)
 
 
 def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, Any]:
@@ -194,6 +205,17 @@ def read_project_artifact(
     if not path.is_file():
         raise FileNotFoundError(safe_ref)
     byte_size = path.stat().st_size
+    policy = _artifact_access_policy(safe_ref)
+    if policy["redacted"]:
+        return {
+            "ref": safe_ref,
+            "byte_size": byte_size,
+            "truncated": False,
+            "binary": False,
+            "content": "",
+            "content_type": "text/plain; charset=utf-8",
+            **policy,
+        }
     data = path.read_bytes()[:max_bytes]
     truncated = byte_size > max_bytes
     content = ""
@@ -211,6 +233,7 @@ def read_project_artifact(
         "binary": binary,
         "content": content,
         "content_type": _artifact_content_type(safe_ref, binary=binary),
+        **policy,
     }
 
 
@@ -271,8 +294,14 @@ def render_artifact_page(artifact: Mapping[str, Any]) -> str:
 
     ref = _clean(artifact.get("ref"))
     content = _clean(artifact.get("content"))
+    redacted = artifact.get("redacted") is True
     binary = artifact.get("binary") is True
-    if binary:
+    if redacted:
+        content = (
+            "Content preview restricted by DeepResearch artifact access policy.\n"
+            f"Reason: {_clean(artifact.get('redaction_reason')) or 'sensitive artifact'}"
+        )
+    elif binary:
         content = "Binary artifact preview omitted."
     if artifact.get("truncated") is True:
         content += "\n\n[preview truncated]"
@@ -663,6 +692,7 @@ def _artifact_entry(run_root: Path, *, label: str, ref: str, group: str) -> dict
         "group": group,
         "exists": exists,
         "byte_size": byte_size,
+        **_artifact_access_policy(safe_ref),
     }
 
 
@@ -932,6 +962,26 @@ def _artifact_content_type(ref: str, *, binary: bool) -> str:
     if _looks_like_json_ref(ref):
         return "application/json; charset=utf-8"
     return "text/plain; charset=utf-8"
+
+
+def _artifact_access_policy(ref: str) -> dict[str, Any]:
+    safe_ref = _clean(ref)
+    if safe_ref in _SENSITIVE_ARTIFACT_REFS or any(
+        safe_ref.startswith(prefix)
+        for prefix in _SENSITIVE_ARTIFACT_PREFIXES
+    ):
+        return {
+            "access_level": "sensitive",
+            "preview_policy": "metadata_only",
+            "redacted": True,
+            "redaction_reason": "raw user input, uploaded file, context package, or lifecycle directive",
+        }
+    return {
+        "access_level": "standard",
+        "preview_policy": "text_preview",
+        "redacted": False,
+        "redaction_reason": "",
+    }
 
 
 def _looks_like_json_ref(ref: str) -> bool:
@@ -1300,19 +1350,22 @@ def _artifact_panel(artifacts: list[Any]) -> str:
             continue
         ref = _clean(item.get("ref"))
         exists = item.get("exists") is True
+        redacted = item.get("redacted") is True
+        access_level = _clean(item.get("access_level")) or "standard"
         rows.append(
             "<tr>"
             f"<td>{_e(_clean(item.get('group')))}</td>"
             f"<td>{_artifact_link(ref, _clean(item.get('label'))) if exists else _e(_clean(item.get('label')))}</td>"
             f"<td>{_e(ref)}</td>"
-            f"<td>{'present' if exists else 'missing'}</td>"
+            f"<td>{'restricted' if redacted and exists else 'present' if exists else 'missing'}</td>"
+            f"<td>{_e(access_level)}</td>"
             f"<td>{_e(_format_int(item.get('byte_size')))}</td>"
             "</tr>"
         )
     return (
         '<section class="panel">'
         "<h2>Artifacts</h2>"
-        '<table><thead><tr><th>group</th><th>artifact</th><th>ref</th><th>state</th><th>bytes</th></tr></thead>'
+        '<table><thead><tr><th>group</th><th>artifact</th><th>ref</th><th>state</th><th>access</th><th>bytes</th></tr></thead>'
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
     )

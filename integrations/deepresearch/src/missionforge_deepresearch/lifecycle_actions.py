@@ -33,7 +33,7 @@ LATEST_REVISE_REQUEST_REF = "project/lifecycle/latest_revise_request.json"
 LATEST_LOCK_RECOVERY_REQUEST_REF = "project/lifecycle/latest_lock_recovery_request.json"
 _ACTION_KINDS = {"retry", "revise", "recover_lock"}
 _RETRYABLE_TASK_STATUSES = {"failed", "interrupted"}
-_REVISION_PHASES = {"revision_required", "rejected", "blocked", "accepted", "approved"}
+_REVISION_PHASES = {"revision_required", "rejected", "blocked", "accepted", "approved", "awaiting_approval"}
 
 
 def record_lifecycle_action(
@@ -59,6 +59,34 @@ def record_lifecycle_action(
         payload = _record_lock_recovery_request(run_root=run_root, request_id=request_id, text=text)
     _append_action_index(run_root, payload)
     return payload
+
+
+def require_revise_lifecycle_action_allowed(
+    *,
+    workspace: str | Path,
+    request_id: str,
+) -> None:
+    """Validate that a project can accept an explicit revision request."""
+
+    root = Path(workspace).resolve()
+    run_root = resolve_workspace_ref(root, _run_ref(request_id))
+    read_approved_frontdesk_request(request_id=request_id, workspace=root)
+    _require_revise_request_allowed(run_root)
+
+
+def require_no_pending_revision_request(
+    run_root: str | Path,
+    *,
+    action: str,
+) -> None:
+    """Reject unsafe actions while an explicit contract revision is pending."""
+
+    root = Path(run_root).resolve()
+    if not ref_exists(root, LATEST_REVISE_REQUEST_REF):
+        return
+    revise = read_json_ref(root, LATEST_REVISE_REQUEST_REF, "deepresearch_lifecycle_revise_request")
+    if revise.get("kind") == "revise" and revise.get("status") == "pending_revision":
+        raise mf.ContractValidationError(f"pending revision must be resolved before {action}")
 
 
 def read_latest_lifecycle_actions(run_root: str | Path) -> dict[str, dict[str, Any]]:
@@ -166,11 +194,7 @@ def _record_retry_request(*, run_root: Path, request_id: str, text: str) -> dict
 def _record_revise_request(*, run_root: Path, request_id: str, text: str) -> dict[str, Any]:
     if not _clean(text):
         raise mf.ContractValidationError("revision text is required")
-    _require_no_active_web_task(run_root, action="revise")
-    lifecycle = _read_project_lifecycle(run_root)
-    phase = _clean(lifecycle.get("phase"))
-    if phase not in _REVISION_PHASES:
-        raise mf.ContractValidationError("revise requires an approved or completed project state")
+    phase = _require_revise_request_allowed(run_root)
     text_ref = _write_action_text(run_root, kind="revise", text=text)
     payload = _base_action_payload(
         request_id=request_id,
@@ -187,6 +211,15 @@ def _record_revise_request(*, run_root: Path, request_id: str, text: str) -> dic
     mf.assert_refs_only_payload(payload, "deepresearch_lifecycle_revise_request")
     write_json_ref(run_root, LATEST_REVISE_REQUEST_REF, payload)
     return payload
+
+
+def _require_revise_request_allowed(run_root: Path) -> str:
+    _require_no_active_web_task(run_root, action="revise")
+    lifecycle = _read_project_lifecycle(run_root)
+    phase = _clean(lifecycle.get("phase"))
+    if phase not in _REVISION_PHASES:
+        raise mf.ContractValidationError("revise requires an approved or completed project state")
+    return phase
 
 
 def _require_no_active_web_task(run_root: Path, *, action: str) -> None:

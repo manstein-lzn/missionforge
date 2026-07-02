@@ -93,8 +93,10 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   dialogue remains an explicit artifact read, not default dashboard state.
   The web console also accepts pre-approval seed-paper and seed-PDF inputs,
   stages them as project refs, and merges them into the FrontDesk research
-  request before approval. Approved projects require an explicit revision before
-  adding new seed inputs.
+  request before approval. After approval, new seed inputs are accepted only by
+  staging project seed refs plus a pending lifecycle revision request; the
+  existing approved request remains unchanged until
+  `/api/research/revision/start` freezes a revised request.
 
 ## Design Principles
 
@@ -122,8 +124,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Harden citation and claim support with richer URL accessibility checks,
   page/span-level parsed PDF provenance when available, and live fetched/full-text
   evidence coverage without making Python a semantic judge.
-- Continue seed/PDF ingestion with approved-project seed revision flow, OCR
-  fallback, and richer page/span citation support.
+- Continue seed/PDF ingestion with OCR fallback and richer page/span citation
+  support.
 - Keep hardening persistent project resume: reuse valid role ContextPackages,
   recompile stale packages from refs/checkpoints/working sets, and surface
   restore diagnostics in CLI/TUI/Web without moving token policy into
@@ -135,8 +137,11 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   retry/revise/recover lifecycle requests are active. Retry attempt generation
   from pending retry requests, the refs-first progress timeline, the first
   explicit contract revision flow, and attempt-scoped output projection are
-  active. Attempt-grouped timeline projection and pre-approval seed upload are
-  active.
+  active. Attempt-grouped timeline projection and seed upload through the
+  explicit revision lifecycle are active. The web artifact browser now applies
+  a ref-pattern access policy: sensitive raw user input, uploaded seed files,
+  lifecycle action text, ContextPackage refs, and parsed seed-PDF outputs are
+  metadata-only by default instead of being rendered as text previews.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

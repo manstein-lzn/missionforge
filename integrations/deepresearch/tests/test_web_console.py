@@ -1040,6 +1040,42 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(retry_action["status"], "pending_retry")
         self.assertFalse(attempt_index_exists)
 
+    def test_research_start_rejects_pending_seed_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-start-pending-seed-revision"
+            self._approve_frontdesk_fixture(root, request_id)
+            seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({"kind": "doi", "value": "10.1145/1234567.1234568"}),
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            run_root = root / f"runs/{request_id}"
+            task_exists = (run_root / "web/tasks/current_task.json").exists()
+            contract_exists = (run_root / "contract/task_contract.json").exists()
+
+        payload = json.loads(start.body)
+        self.assertEqual(seed.status, 202)
+        self.assertEqual(json.loads(seed.body)["status"], "pending_revision")
+        self.assertEqual(start.status, 409)
+        self.assertIn("pending revision", payload["message"])
+        self.assertFalse(task_exists)
+        self.assertFalse(contract_exists)
+
     def test_research_revision_start_requires_pending_revision(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -1481,11 +1517,226 @@ class WebConsoleTests(unittest.TestCase):
         self.assertIn("/artifact?ref=inputs/seeds/001-seed-paper.pdf", html)
         self.assertNotIn("fixture seed", json.dumps(snapshot))
 
-    def test_seed_upload_rejects_unsafe_pdf_and_postapproval_changes(self) -> None:
+    def test_seed_paper_postapproval_creates_revision_request_and_revised_seed(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-revision"
+            self._approve_frontdesk_fixture(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            frontdesk_request_before = json.loads(
+                (run_root / "frontdesk/research_request.json").read_text(encoding="utf-8")
+            )
+            approval = json.loads((run_root / "frontdesk/approval.json").read_text(encoding="utf-8"))
+            seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({
+                    "kind": "doi",
+                    "value": "10.1145/1234567.1234568",
+                    "note": "SECRET_TOKEN=seed",
+                }),
+            )
+            action = json.loads(
+                (run_root / "project/lifecycle/latest_revise_request.json").read_text(encoding="utf-8")
+            )
+            snapshot = build_project_snapshot(root, request_id)
+            frontdesk_request_after = json.loads(
+                (run_root / "frontdesk/research_request.json").read_text(encoding="utf-8")
+            )
+            kernel_config = WebKernelConfig(
+                adapter_factory=lambda _intensity: KernelV2FixtureAdapter(),
+                live_extension_mode=False,
+            )
+            revision_start = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/research/revision/start",
+                body=json.dumps({}),
+                kernel_config=kernel_config,
+            )
+            final_task = self._wait_task_terminal(root, request_id)
+            revision_index = json.loads((run_root / "project/revision_index.json").read_text(encoding="utf-8"))
+            revision_ref = revision_index["latest_revision_ref"]
+            revision = json.loads((run_root / revision_ref).read_text(encoding="utf-8"))
+            revised_request = json.loads((run_root / revision["revised_request_ref"]).read_text(encoding="utf-8"))
+            current_request = read_current_research_request(workspace=root, request_id=request_id)
+
+        seed_payload = json.loads(seed.body)
+        self.assertEqual(seed.status, 202)
+        self.assertEqual(seed_payload["status"], "pending_revision")
+        self.assertEqual(seed_payload["action"]["status"], "pending_revision")
+        self.assertEqual(seed_payload["action"]["reason_ref"], action["reason_ref"])
+        self.assertTrue(approval["research_request_hash"].startswith("sha256:"))
+        self.assertEqual(frontdesk_request_before, frontdesk_request_after)
+        self.assertEqual(frontdesk_request_after["seed_papers"], [])
+        self.assertEqual(action["next_required_boundary"], "frontdesk_contract_revision")
+        self.assertEqual(revision_start.status, 202)
+        self.assertEqual(final_task["status"], "completed")
+        self.assertEqual(revised_request["seed_papers"][0]["value"], "10.1145/1234567.1234568")
+        self.assertEqual(current_request.seed_papers[0].value, "10.1145/1234567.1234568")
+        self.assertNotIn("10.1145/1234567.1234568", json.dumps(seed_payload))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(seed_payload))
+        self.assertNotIn("10.1145/1234567.1234568", json.dumps(snapshot))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(snapshot))
+
+    def test_seed_postapproval_revision_supports_legacy_approval_without_request_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-legacy-approval"
+            self._approve_frontdesk_fixture(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            approval_ref = run_root / "frontdesk/approval.json"
+            approval = json.loads(approval_ref.read_text(encoding="utf-8"))
+            approval.pop("research_request_hash", None)
+            approval_ref.write_text(json.dumps(approval), encoding="utf-8")
+
+            seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({"kind": "doi", "value": "10.1145/7654321.7654322"}),
+            )
+            action = json.loads(
+                (run_root / "project/lifecycle/latest_revise_request.json").read_text(encoding="utf-8")
+            )
+
+        seed_payload = json.loads(seed.body)
+        self.assertEqual(seed.status, 202)
+        self.assertEqual(seed_payload["status"], "pending_revision")
+        self.assertEqual(action["status"], "pending_revision")
+        self.assertNotIn("10.1145/7654321.7654322", json.dumps(seed_payload))
+
+    def test_seed_artifacts_are_metadata_only_through_web_artifact_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-artifact-policy"
+            config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 seed artifact policy"}),
+                frontdesk_config=config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于论文综述。"}),
+                frontdesk_config=config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/papers",
+                body=json.dumps({
+                    "kind": "doi",
+                    "value": "10.1145/1234567.1234568",
+                    "note": "SECRET_TOKEN=seed",
+                }),
+            )
+            pdf_body = base64.b64encode(b"%PDF-1.4\nfixture seed\n").decode("ascii")
+            pdf_seed = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                method="POST",
+                path="/api/seeds/pdfs",
+                body=json.dumps({"filename": "seed paper.pdf", "content_base64": pdf_body}),
+            )
+            seed_pdf_ref = json.loads(pdf_seed.body)["seed_pdf_ref"]
+            seed_inputs = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                path="/api/artifact?ref=project/seed_inputs.json",
+            )
+            seed_pdf = web_console_response(
+                workspace=root,
+                request_id=request_id,
+                path=f"/api/artifact?ref={seed_pdf_ref}",
+            )
+            snapshot = build_project_snapshot(root, request_id)
+            html = render_project_dashboard(snapshot)
+
+        seed_inputs_payload = json.loads(seed_inputs.body)
+        seed_pdf_payload = json.loads(seed_pdf.body)
+        self.assertEqual(seed_inputs.status, 200)
+        self.assertEqual(seed_pdf.status, 200)
+        self.assertTrue(seed_inputs_payload["redacted"])
+        self.assertTrue(seed_pdf_payload["redacted"])
+        self.assertEqual(seed_inputs_payload["preview_policy"], "metadata_only")
+        self.assertEqual(seed_pdf_payload["preview_policy"], "metadata_only")
+        self.assertNotIn("10.1145/1234567.1234568", json.dumps(seed_inputs_payload))
+        self.assertNotIn("SECRET_TOKEN", json.dumps(seed_inputs_payload))
+        self.assertNotIn("fixture seed", json.dumps(seed_pdf_payload))
+        seed_entry = next(item for item in snapshot["artifacts"] if item["ref"] == "project/seed_inputs.json")
+        self.assertEqual(seed_entry["access_level"], "sensitive")
+        self.assertIn("restricted", html)
+
+    def test_seed_pdf_postapproval_rolls_back_when_revision_action_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            request_id = "web-seed-revision-rollback"
+            self._approve_frontdesk_fixture(root, request_id)
+            pdf_body = base64.b64encode(b"%PDF-1.4\nfixture seed\n").decode("ascii")
+            with patch(
+                "missionforge_deepresearch.web_seeds.record_lifecycle_action",
+                side_effect=mf.ContractValidationError("revision raced"),
+            ):
+                seed = web_console_response(
+                    workspace=root,
+                    request_id=request_id,
+                    method="POST",
+                    path="/api/seeds/pdfs",
+                    body=json.dumps({"filename": "seed paper.pdf", "content_base64": pdf_body}),
+                )
+            run_root = root / f"runs/{request_id}"
+            seed_inputs_exists = (run_root / "project/seed_inputs.json").exists()
+            pdf_exists = (run_root / "inputs/seeds/001-seed-paper.pdf").exists()
+            latest_revision_exists = (run_root / "project/lifecycle/latest_revise_request.json").exists()
+
+        payload = json.loads(seed.body)
+        self.assertEqual(seed.status, 409)
+        self.assertIn("revision raced", payload["message"])
+        self.assertFalse(seed_inputs_exists)
+        self.assertFalse(pdf_exists)
+        self.assertFalse(latest_revision_exists)
+
+    def test_seed_upload_rejects_unsafe_pdf_and_active_postapproval_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
             request_id = "web-seed-rejects"
             self._approve_frontdesk_fixture(root, request_id)
+            run_root = root / f"runs/{request_id}"
+            task_ref = run_root / "web/tasks/current_task.json"
+            task_ref.parent.mkdir(parents=True, exist_ok=True)
+            task_ref.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "missionforge_deepresearch.web_task_state.v1",
+                        "task_id": "kernel_v2_run-running",
+                        "task_kind": "kernel_v2_run",
+                        "request_id": request_id,
+                        "status": "running",
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "",
+                        "result_ref": "",
+                        "error_summary": "",
+                        "lock_ref": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
             after_approval = web_console_response(
                 workspace=root,
                 request_id=request_id,
@@ -1493,6 +1744,7 @@ class WebConsoleTests(unittest.TestCase):
                 path="/api/seeds/papers",
                 body=json.dumps({"kind": "doi", "value": "10.1145/1234567.1234568"}),
             )
+            seed_inputs_exists = (run_root / "project/seed_inputs.json").exists()
 
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)
@@ -1519,7 +1771,8 @@ class WebConsoleTests(unittest.TestCase):
             )
 
         self.assertEqual(after_approval.status, 409)
-        self.assertIn("explicit revision", json.loads(after_approval.body)["message"])
+        self.assertIn("requires no active web task", json.loads(after_approval.body)["message"])
+        self.assertFalse(seed_inputs_exists)
         self.assertEqual(unsafe_name.status, 409)
         self.assertIn("path separators", json.loads(unsafe_name.body)["message"])
         self.assertEqual(bad_content.status, 409)
