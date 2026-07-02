@@ -20,7 +20,7 @@ from .frontdesk import (
 from .kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from .product_contract import AcademicResearchRequest, ResearchIntensity, SeedPaper, research_intensity_profile
 from .tui import FrontDeskTuiConfig, run_frontdesk_tui
-from .web_console import serve_web_console
+from .web_console import WebFrontDeskConfig, serve_web_console
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -145,11 +145,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_stream=sys.stdout,
         )
     if args.profile == "academic" and args.command == "web-console":
+        frontdesk_config, frontdesk_env = _piworker_inputs(args, args.research_intensity)
+
+        def frontdesk_adapter_factory() -> mf.PiWorkerCallAdapter:
+            if args.frontdesk_adapter_mode == "fixture":
+                return FrontDeskFixtureAdapter()
+            return mf.create_default_piworker_adapter(frontdesk_config, environ=frontdesk_env)
+
         return serve_web_console(
             workspace=Path(args.workspace),
             request_id=args.request_id,
             host=args.host,
             port=args.port,
+            frontdesk_config=WebFrontDeskConfig(
+                adapter_factory=frontdesk_adapter_factory,
+                audience=args.audience,
+                language=args.language,
+                research_intensity=args.research_intensity,
+                live_extension_mode=args.live_extension_mode,
+            ),
             output_stream=sys.stderr,
         )
     parser.error("unsupported command")
@@ -238,10 +252,13 @@ def _add_frontdesk_tui_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_web_console_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--request-id", default="deepresearch-kernel-v2")
-    parser.add_argument("--workspace", default=".")
+    _add_common_runtime_arguments(parser)
+    parser.set_defaults(live_extension_mode=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--live-extension-mode", dest="live_extension_mode", action="store_true", default=True)
+    parser.add_argument("--no-live-extension-mode", dest="live_extension_mode", action="store_false")
+    parser.add_argument("--frontdesk-adapter-mode", choices=["piworker", "fixture"], default="piworker")
 
 
 def _run_and_emit_result(

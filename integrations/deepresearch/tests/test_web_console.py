@@ -8,7 +8,9 @@ import unittest
 import missionforge as mf
 from missionforge_deepresearch.kernel_v2 import KernelV2FixtureAdapter, run_deepresearch_kernel_v2
 from missionforge_deepresearch.product_contract import AcademicResearchRequest
+from missionforge_deepresearch.frontdesk import FrontDeskFixtureAdapter
 from missionforge_deepresearch.web_console import (
+    WebFrontDeskConfig,
     build_project_snapshot,
     read_project_artifact,
     render_project_dashboard,
@@ -130,6 +132,57 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(project_payload["project"]["lifecycle"]["phase"], "accepted")
         self.assertEqual(artifact_payload["ref"], "state/run_status.json")
         self.assertEqual(blocked.status, 404)
+
+    def test_frontdesk_message_post_requires_server_owned_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            response = web_console_response(
+                workspace=root,
+                request_id="web-frontdesk-unconfigured",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "研究 AI 编译器"}),
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertEqual(payload["message"], "frontdesk_not_configured")
+
+    def test_frontdesk_message_post_runs_frontdesk_turn_and_returns_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="intensive",
+                live_extension_mode=False,
+            )
+            first = web_console_response(
+                workspace=root,
+                request_id="web-frontdesk-chat",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 AI 模型到 FPGA 的编译框架"}),
+                frontdesk_config=config,
+            )
+            second = web_console_response(
+                workspace=root,
+                request_id="web-frontdesk-chat",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于工程选型，需要覆盖 MLIR、HLS 和开源实现。"}),
+                frontdesk_config=config,
+            )
+            requirements_exists = (root / "runs/web-frontdesk-chat/frontdesk/research_requirements.md").is_file()
+
+        first_payload = json.loads(first.body)
+        second_payload = json.loads(second.body)
+        self.assertEqual(first.status, 200)
+        self.assertEqual(second.status, 200)
+        self.assertEqual(first_payload["status"], "needs_user_answer")
+        self.assertEqual(second_payload["status"], "ready_for_approval")
+        self.assertEqual(second_payload["snapshot"]["frontdesk"]["status"], "ready_for_approval")
+        self.assertEqual(len(second_payload["snapshot"]["frontdesk_dialogue"]), 2)
+        self.assertTrue(requirements_exists)
 
 
 if __name__ == "__main__":

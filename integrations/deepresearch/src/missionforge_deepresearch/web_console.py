@@ -14,12 +14,18 @@ import html
 import json
 from pathlib import Path
 import sys
-from typing import Any, Mapping, TextIO
+from typing import Any, Callable, Mapping, TextIO
 from urllib.parse import parse_qs, quote, urlparse
 
 import missionforge as mf
 
-from .frontdesk import FRONTDESK_ASSISTANT_TURN_REF, FRONTDESK_CONTROL_REF, FRONTDESK_REQUIREMENTS_REF
+from .frontdesk import (
+    FRONTDESK_ASSISTANT_TURN_REF,
+    FRONTDESK_CONTROL_REF,
+    FRONTDESK_INITIAL_INPUT_REF,
+    FRONTDESK_REQUIREMENTS_REF,
+    run_deepresearch_frontdesk_turn,
+)
 from .kernel_v2 import (
     KERNEL_V2_ACCEPTANCE_GATE_REF,
     KERNEL_V2_CANONICAL_SOURCES_REF,
@@ -53,12 +59,14 @@ from .project_lifecycle import (
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
+from .product_contract import ResearchIntensity
 from .workspace import resolve_workspace_ref
 
 
 WEB_CONSOLE_SCHEMA_VERSION = "missionforge_deepresearch.web_console.project_snapshot.v1"
 ARTIFACT_PREVIEW_MAX_CHARS = 60000
 ARTIFACT_READ_MAX_BYTES = 2_000_000
+WEB_POST_MAX_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -68,6 +76,17 @@ class WebConsoleResponse:
     status: int
     content_type: str
     body: str
+
+
+@dataclass(frozen=True)
+class WebFrontDeskConfig:
+    """Server-owned FrontDesk execution settings for web messages."""
+
+    adapter_factory: Callable[[], mf.PiWorkerCallAdapter]
+    audience: str = "R&D team"
+    language: str = "zh"
+    research_intensity: ResearchIntensity | str = ResearchIntensity.STANDARD
+    live_extension_mode: bool = False
 
 
 def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, Any]:
@@ -119,6 +138,7 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             usage_summary=usage_summary,
         ),
         "frontdesk": _frontdesk_summary(run_root, lifecycle),
+        "frontdesk_dialogue": _frontdesk_dialogue(run_root),
         "source_summary": _source_summary(source_packet, canonical_sources, coverage_report),
         "sources": _source_rows(source_packet, canonical_sources),
         "citations": _citation_rows(citation_registry),
@@ -178,6 +198,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
     source_rows = _list(snapshot.get("sources"))[:100]
     citation_rows = _list(snapshot.get("citations"))[:100]
     frontdesk = _mapping(snapshot.get("frontdesk"))
+    dialogue = _list(snapshot.get("frontdesk_dialogue"))[-30:]
     claim_support = _mapping(snapshot.get("claim_support"))
     judge = _mapping(snapshot.get("judge"))
     report_preview = _mapping(snapshot.get("report_preview"))
@@ -188,6 +209,7 @@ def render_project_dashboard(snapshot: Mapping[str, Any]) -> str:
             [
                 _header(snapshot),
                 _status_grid(status_cards),
+                _frontdesk_chat_panel(frontdesk, dialogue),
                 _two_column(
                     _frontdesk_panel(frontdesk),
                     _source_summary_panel(source_summary),
@@ -231,14 +253,31 @@ def create_web_console_server(
     request_id: str,
     host: str = "127.0.0.1",
     port: int = 8765,
+    frontdesk_config: WebFrontDeskConfig | None = None,
 ) -> ThreadingHTTPServer:
-    """Create a read-only HTTP server for one DeepResearch project."""
+    """Create an HTTP server for one DeepResearch project.
+
+    GET routes are read-only. POST FrontDesk routes only submit user messages
+    through the configured FrontDesk PiWorker boundary.
+    """
 
     workspace_root = Path(workspace).resolve()
 
     class WebConsoleHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
-            response = web_console_response(workspace=workspace_root, request_id=request_id, path=self.path)
+            response = web_console_response(workspace=workspace_root, request_id=request_id, method="GET", path=self.path)
+            self._write_response(response)
+
+        def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+            body = self.rfile.read(_content_length(self.headers.get("Content-Length")))
+            response = web_console_response(
+                workspace=workspace_root,
+                request_id=request_id,
+                method="POST",
+                path=self.path,
+                body=body,
+                frontdesk_config=frontdesk_config,
+            )
             self._write_response(response)
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -255,18 +294,27 @@ def create_web_console_server(
     return ThreadingHTTPServer((host, port), WebConsoleHandler)
 
 
-def web_console_response(*, workspace: str | Path, request_id: str, path: str) -> WebConsoleResponse:
-    """Return the read-only web-console response for one request path."""
+def web_console_response(
+    *,
+    workspace: str | Path,
+    request_id: str,
+    path: str,
+    method: str = "GET",
+    body: bytes | str = b"",
+    frontdesk_config: WebFrontDeskConfig | None = None,
+) -> WebConsoleResponse:
+    """Return the web-console response for one request path."""
 
     workspace_root = Path(workspace).resolve()
+    method = method.upper()
     parsed = urlparse(path)
-    if parsed.path in {"/", "/index.html"}:
+    if method == "GET" and parsed.path in {"/", "/index.html"}:
         snapshot = build_project_snapshot(workspace_root, request_id)
         return _html_response(200, render_project_dashboard(snapshot))
-    if parsed.path == "/api/project":
+    if method == "GET" and parsed.path == "/api/project":
         snapshot = build_project_snapshot(workspace_root, request_id)
         return _json_response(200, snapshot)
-    if parsed.path in {"/artifact", "/api/artifact"}:
+    if method == "GET" and parsed.path in {"/artifact", "/api/artifact"}:
         ref = _single_query_value(parsed.query, "ref")
         if not ref:
             return _json_response(400, {"status": "error", "message": "missing ref"})
@@ -277,6 +325,15 @@ def web_console_response(*, workspace: str | Path, request_id: str, path: str) -
         if parsed.path == "/api/artifact":
             return _json_response(200, artifact)
         return _html_response(200, render_artifact_page(artifact))
+    if method == "POST" and parsed.path == "/api/frontdesk/message":
+        if frontdesk_config is None:
+            return _json_response(409, {"status": "error", "message": "frontdesk_not_configured"})
+        return _frontdesk_message_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            body=body,
+            config=frontdesk_config,
+        )
     return _json_response(404, {"status": "error", "message": "not found"})
 
 
@@ -286,12 +343,19 @@ def serve_web_console(
     request_id: str,
     host: str = "127.0.0.1",
     port: int = 8765,
+    frontdesk_config: WebFrontDeskConfig | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
-    """Serve the read-only web console until interrupted."""
+    """Serve the web console until interrupted."""
 
     stream = output_stream or sys.stderr
-    server = create_web_console_server(workspace=workspace, request_id=request_id, host=host, port=port)
+    server = create_web_console_server(
+        workspace=workspace,
+        request_id=request_id,
+        host=host,
+        port=port,
+        frontdesk_config=frontdesk_config,
+    )
     actual_host, actual_port = server.server_address[:2]
     stream.write(f"DeepResearch web console: http://{actual_host}:{actual_port}/\n")
     try:
@@ -307,6 +371,70 @@ def _run_ref(request_id: str) -> str:
     if not isinstance(request_id, str) or not request_id.strip():
         raise mf.ContractValidationError("DeepResearch request_id is required")
     return mf.validate_ref(f"runs/{request_id.strip()}", "deepresearch_web.run_ref")
+
+
+def _frontdesk_message_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    body: bytes | str,
+    config: WebFrontDeskConfig,
+) -> WebConsoleResponse:
+    try:
+        payload = _json_body(body)
+        message = _clean(payload.get("message"))
+        initial_input = _clean(payload.get("initial_input"))
+        if not message and not initial_input:
+            return _json_response(400, {"status": "error", "message": "message_required"})
+        run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
+        has_initial_input = _ref_is_file(run_root, FRONTDESK_INITIAL_INPUT_REF)
+        result = run_deepresearch_frontdesk_turn(
+            initial_input=initial_input or message if not has_initial_input else None,
+            user_message=message or initial_input,
+            request_id=request_id,
+            workspace=workspace,
+            adapter=config.adapter_factory(),
+            audience=config.audience,
+            language=config.language,
+            research_intensity=config.research_intensity,
+            live_extension_mode=config.live_extension_mode,
+        )
+        return _json_response(
+            200,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.frontdesk_message_result.v1",
+                "status": result.status,
+                "result": result.to_dict(),
+                "snapshot": build_project_snapshot(workspace, request_id),
+            },
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return _json_response(400, {"status": "error", "message": "invalid_json_body"})
+    except mf.ContractValidationError as exc:
+        return _json_response(400, {"status": "error", "message": str(exc)})
+
+
+def _json_body(body: bytes | str) -> dict[str, Any]:
+    if isinstance(body, bytes):
+        if len(body) > WEB_POST_MAX_BYTES:
+            raise mf.ContractValidationError("web console request body is too large")
+        text = body.decode("utf-8")
+    else:
+        if len(body.encode("utf-8")) > WEB_POST_MAX_BYTES:
+            raise mf.ContractValidationError("web console request body is too large")
+        text = body
+    payload = json.loads(text or "{}")
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def _content_length(value: str | None) -> int:
+    try:
+        parsed = int(value or "0")
+    except ValueError:
+        return 0
+    if parsed < 0:
+        return 0
+    return min(parsed, WEB_POST_MAX_BYTES)
 
 
 def _read_json_if_exists(run_root: Path, ref: str) -> dict[str, Any] | None:
@@ -486,11 +614,36 @@ def _frontdesk_summary(run_root: Path, lifecycle: Mapping[str, Any] | None) -> d
     )
     requirements_ref = _clean((lifecycle or {}).get("frontdesk_requirements_ref")) or FRONTDESK_REQUIREMENTS_REF
     return {
-        "status": _clean((control or {}).get("status")) or _clean((lifecycle or {}).get("phase")),
+        "status": _clean((control or {}).get("status")) or _clean((control or {}).get("decision")) or _clean((lifecycle or {}).get("phase")),
         "message": _clean((assistant or {}).get("message")),
         "question_count": len(_list((assistant or {}).get("questions"))),
         "requirements_ref": requirements_ref if _ref_is_file(run_root, requirements_ref) else "",
     }
+
+
+def _frontdesk_dialogue(run_root: Path) -> list[dict[str, str]]:
+    dialogue_ref = "frontdesk/dialogue.jsonl"
+    try:
+        path = resolve_workspace_ref(run_root, dialogue_ref)
+        if not path.is_file():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, Mapping):
+                continue
+            rows.append(
+                {
+                    "role": _clean(payload.get("role")) or "unknown",
+                    "content": _clean(payload.get("content")),
+                    "created_at": _clean(payload.get("created_at")),
+                }
+            )
+        return rows
+    except (OSError, json.JSONDecodeError, mf.ContractValidationError):
+        return []
 
 
 def _source_summary(
@@ -680,6 +833,39 @@ def _frontdesk_panel(frontdesk: Mapping[str, Any]) -> str:
         f'{_row("questions", _format_int(frontdesk.get("question_count")))}'
         f'{_row("requirements", requirements, raw=True)}</dl>'
         f'<p class="message">{_e(_clean(frontdesk.get("message")))}</p>'
+        "</section>"
+    )
+
+
+def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any]) -> str:
+    rows = []
+    for item in dialogue:
+        if not isinstance(item, Mapping):
+            continue
+        role = _clean(item.get("role")) or "unknown"
+        content = _clean(item.get("content"))
+        if not content:
+            continue
+        rows.append(
+            '<div class="chat-row">'
+            f'<span class="chat-role">{_e(role)}</span>'
+            f'<p>{_e(content)}</p>'
+            "</div>"
+        )
+    if not rows:
+        rows.append('<p class="muted">No FrontDesk dialogue yet.</p>')
+    return (
+        '<section class="panel chat-panel">'
+        "<h2>FrontDesk Chat</h2>"
+        f'<p class="muted">status: {_e(_clean(frontdesk.get("status")) or "unknown")}</p>'
+        '<div class="chat-log">'
+        f"{''.join(rows)}"
+        "</div>"
+        '<form id="frontdesk-form" class="chat-form">'
+        '<textarea id="frontdesk-message" name="message" rows="4" placeholder="Send a FrontDesk message"></textarea>'
+        '<button type="submit">Send</button>'
+        "</form>"
+        f"<script>{_CHAT_SCRIPT}</script>"
         "</section>"
     )
 
@@ -1004,6 +1190,56 @@ dd { margin: 0; overflow-wrap: anywhere; }
   margin: 14px 0 0;
   color: var(--ink);
 }
+.chat-panel { margin-top: 18px; }
+.chat-log {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #fbfcfd;
+}
+.chat-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px;
+}
+.chat-row p { margin: 0; overflow-wrap: anywhere; }
+.chat-role {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 10px;
+  margin-top: 12px;
+}
+textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+button {
+  align-self: stretch;
+  border: 1px solid #1b5a49;
+  background: var(--accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 table {
   width: 100%;
   border-collapse: collapse;
@@ -1042,5 +1278,41 @@ pre {
   .two-column { margin: 12px; }
   .two-column .panel { margin-bottom: 12px; }
   dl { grid-template-columns: 110px minmax(0, 1fr); }
+  .chat-row { grid-template-columns: 1fr; }
+  .chat-form { grid-template-columns: 1fr; }
+  button { min-height: 44px; }
 }
+"""
+
+
+_CHAT_SCRIPT = """
+(() => {
+  const form = document.getElementById("frontdesk-form");
+  const textarea = document.getElementById("frontdesk-message");
+  if (!form || !textarea) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = textarea.value.trim();
+    if (!message) return;
+    const button = form.querySelector("button");
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch("/api/frontdesk/message", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message})
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        alert(payload.message || "FrontDesk message failed.");
+        return;
+      }
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+})();
 """

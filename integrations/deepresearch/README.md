@@ -130,7 +130,7 @@ missionforge-deepresearch academic frontdesk-run \
   --stream-progress
 ```
 
-Open the read-only project web console for an existing project:
+Open the project web console:
 
 ```bash
 missionforge-deepresearch academic web-console \
@@ -143,8 +143,10 @@ missionforge-deepresearch academic web-console \
 The web console reads the same persisted refs as CLI/TUI: project manifest,
 lifecycle state, resume diagnostics, source packet, coverage report, citation
 registry, claim-support review, acceptance gate, judge report, usage summary,
-and final Markdown. The current slice is read-only; it does not write product
-truth or replace FrontDesk/runtime interaction APIs.
+and final Markdown. It also lets the browser submit FrontDesk messages through
+the same `run_deepresearch_frontdesk_turn` path as CLI/TUI. The browser does
+not choose provider config or write product truth directly; approval/start-run
+and runtime controls remain explicit follow-up work.
 
 ## Product Shape
 

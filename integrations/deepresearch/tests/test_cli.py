@@ -428,6 +428,36 @@ class CliTests(unittest.TestCase):
         self.assertEqual(serve_mock.call_args.kwargs["request_id"], "web-console-cli")
         self.assertEqual(serve_mock.call_args.kwargs["host"], "127.0.0.1")
         self.assertEqual(serve_mock.call_args.kwargs["port"], 0)
+        self.assertEqual(serve_mock.call_args.kwargs["frontdesk_config"].research_intensity, "standard")
+
+    def test_academic_web_console_frontdesk_config_uses_fixture_adapter_mode(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as tempdir,
+            patch("missionforge_deepresearch.cli.serve_web_console", return_value=0) as serve_mock,
+        ):
+            root = Path(tempdir)
+            exit_code = main(
+                [
+                    "academic",
+                    "web-console",
+                    "--request-id",
+                    "web-console-fixture",
+                    "--workspace",
+                    str(root),
+                    "--frontdesk-adapter-mode",
+                    "fixture",
+                    "--research-intensity",
+                    "intensive",
+                    "--no-live-extension-mode",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        config = serve_mock.call_args.kwargs["frontdesk_config"]
+        adapter = config.adapter_factory()
+        self.assertEqual(adapter.adapter_family, "fixture_deepresearch_frontdesk")
+        self.assertEqual(config.research_intensity, "intensive")
+        self.assertFalse(config.live_extension_mode)
 
     def test_academic_kernel_v2_run_does_not_set_turn_budget_by_default(self) -> None:
         expected = type(

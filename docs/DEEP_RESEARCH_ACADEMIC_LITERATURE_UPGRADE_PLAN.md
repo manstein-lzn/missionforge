@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_read_only_web_console`; next priority is `m3b_interactive_frontdesk_controls`
+Status: `m3b_web_frontdesk_chat`; next priority is `m3b_web_approval_and_runtime_controls`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1195,7 +1195,9 @@ Implemented notes:
   final Markdown preview.
 - The web layer does not write product truth, mutate lifecycle state, or
   replace FrontDesk/runtime interaction APIs.
-- Remaining M3B work: browser FrontDesk chat, approval/start-run flow,
+- M3B-B1 is complete for browser FrontDesk message submission through the same
+  FrontDesk PiWorker turn boundary used by CLI/TUI.
+- Remaining M3B work: approval/start-run flow,
   pause/resume/checkpoint/revise/cancel controls, revision request submission,
   and upload UI.
 
@@ -1221,6 +1223,32 @@ Exit criteria:
   model/provider call.
 - The dashboard is read-only and does not write product authority.
 - Artifact reads are constrained to the selected project workspace.
+
+### M3B-B1: Web FrontDesk Chat And Project Resume
+
+Status: `complete`
+
+Deliverables:
+
+- FrontDesk chat panel in the web console.
+- `POST /api/frontdesk/message` endpoint.
+- Server-owned `WebFrontDeskConfig` with adapter factory, audience, language,
+  intensity, and live-extension settings.
+- Browser messages are submitted to `run_deepresearch_frontdesk_turn`; the
+  browser cannot choose provider config or write project refs directly.
+- Response returns the FrontDesk result plus the latest project snapshot.
+- Tests for unconfigured FrontDesk rejection, fixture FrontDesk chat, resumed
+  dialogue state, and CLI-owned adapter configuration.
+
+Exit criteria:
+
+- A browser user can open an existing or new project and continue FrontDesk
+  requirements discovery through the same persisted refs and ContextPackage
+  lifecycle as CLI/TUI.
+- Web FrontDesk message submission updates project state only through the
+  FrontDesk PiWorker/runtime path.
+- Approval/start-run and runtime controls remain explicit follow-up work, not
+  hidden browser-side mutations.
 
 ### M4: Citation Projection
 
