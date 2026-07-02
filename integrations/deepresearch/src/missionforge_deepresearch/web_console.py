@@ -7,14 +7,13 @@ semantics.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import html
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable, Mapping, TextIO
+from typing import Any, Mapping, TextIO
 from urllib.parse import parse_qs, quote, urlparse
 
 import missionforge as mf
@@ -22,9 +21,7 @@ import missionforge as mf
 from .frontdesk import (
     FRONTDESK_ASSISTANT_TURN_REF,
     FRONTDESK_CONTROL_REF,
-    FRONTDESK_INITIAL_INPUT_REF,
     FRONTDESK_REQUIREMENTS_REF,
-    run_deepresearch_frontdesk_turn,
 )
 from .kernel_v2 import (
     KERNEL_V2_ACCEPTANCE_GATE_REF,
@@ -59,34 +56,14 @@ from .project_lifecycle import (
     PROJECT_RESUME_DIAGNOSTICS_REF,
     PROJECT_RUN_INDEX_REF,
 )
-from .product_contract import ResearchIntensity
+from .web_actions import content_length, frontdesk_approve_response, frontdesk_message_response
+from .web_common import WebConsoleResponse, WebFrontDeskConfig, html_response, json_response
 from .workspace import resolve_workspace_ref
 
 
 WEB_CONSOLE_SCHEMA_VERSION = "missionforge_deepresearch.web_console.project_snapshot.v1"
 ARTIFACT_PREVIEW_MAX_CHARS = 60000
 ARTIFACT_READ_MAX_BYTES = 2_000_000
-WEB_POST_MAX_BYTES = 256 * 1024
-
-
-@dataclass(frozen=True)
-class WebConsoleResponse:
-    """Pure response object used by the stdlib HTTP adapter."""
-
-    status: int
-    content_type: str
-    body: str
-
-
-@dataclass(frozen=True)
-class WebFrontDeskConfig:
-    """Server-owned FrontDesk execution settings for web messages."""
-
-    adapter_factory: Callable[[], mf.PiWorkerCallAdapter]
-    audience: str = "R&D team"
-    language: str = "zh"
-    research_intensity: ResearchIntensity | str = ResearchIntensity.STANDARD
-    live_extension_mode: bool = False
 
 
 def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, Any]:
@@ -269,7 +246,7 @@ def create_web_console_server(
             self._write_response(response)
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
-            body = self.rfile.read(_content_length(self.headers.get("Content-Length")))
+            body = self.rfile.read(content_length(self.headers.get("Content-Length")))
             response = web_console_response(
                 workspace=workspace_root,
                 request_id=request_id,
@@ -310,31 +287,38 @@ def web_console_response(
     parsed = urlparse(path)
     if method == "GET" and parsed.path in {"/", "/index.html"}:
         snapshot = build_project_snapshot(workspace_root, request_id)
-        return _html_response(200, render_project_dashboard(snapshot))
+        return html_response(200, render_project_dashboard(snapshot))
     if method == "GET" and parsed.path == "/api/project":
         snapshot = build_project_snapshot(workspace_root, request_id)
-        return _json_response(200, snapshot)
+        return json_response(200, snapshot)
     if method == "GET" and parsed.path in {"/artifact", "/api/artifact"}:
         ref = _single_query_value(parsed.query, "ref")
         if not ref:
-            return _json_response(400, {"status": "error", "message": "missing ref"})
+            return json_response(400, {"status": "error", "message": "missing ref"})
         try:
             artifact = read_project_artifact(workspace_root, request_id, ref)
         except (FileNotFoundError, mf.ContractValidationError, OSError) as exc:
-            return _json_response(404, {"status": "error", "message": str(exc)})
+            return json_response(404, {"status": "error", "message": str(exc)})
         if parsed.path == "/api/artifact":
-            return _json_response(200, artifact)
-        return _html_response(200, render_artifact_page(artifact))
+            return json_response(200, artifact)
+        return html_response(200, render_artifact_page(artifact))
     if method == "POST" and parsed.path == "/api/frontdesk/message":
         if frontdesk_config is None:
-            return _json_response(409, {"status": "error", "message": "frontdesk_not_configured"})
-        return _frontdesk_message_response(
+            return json_response(409, {"status": "error", "message": "frontdesk_not_configured"})
+        return frontdesk_message_response(
             workspace=workspace_root,
             request_id=request_id,
             body=body,
             config=frontdesk_config,
+            snapshot_factory=build_project_snapshot,
         )
-    return _json_response(404, {"status": "error", "message": "not found"})
+    if method == "POST" and parsed.path == "/api/frontdesk/approve":
+        return frontdesk_approve_response(
+            workspace=workspace_root,
+            request_id=request_id,
+            snapshot_factory=build_project_snapshot,
+        )
+    return json_response(404, {"status": "error", "message": "not found"})
 
 
 def serve_web_console(
@@ -371,70 +355,6 @@ def _run_ref(request_id: str) -> str:
     if not isinstance(request_id, str) or not request_id.strip():
         raise mf.ContractValidationError("DeepResearch request_id is required")
     return mf.validate_ref(f"runs/{request_id.strip()}", "deepresearch_web.run_ref")
-
-
-def _frontdesk_message_response(
-    *,
-    workspace: Path,
-    request_id: str,
-    body: bytes | str,
-    config: WebFrontDeskConfig,
-) -> WebConsoleResponse:
-    try:
-        payload = _json_body(body)
-        message = _clean(payload.get("message"))
-        initial_input = _clean(payload.get("initial_input"))
-        if not message and not initial_input:
-            return _json_response(400, {"status": "error", "message": "message_required"})
-        run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
-        has_initial_input = _ref_is_file(run_root, FRONTDESK_INITIAL_INPUT_REF)
-        result = run_deepresearch_frontdesk_turn(
-            initial_input=initial_input or message if not has_initial_input else None,
-            user_message=message or initial_input,
-            request_id=request_id,
-            workspace=workspace,
-            adapter=config.adapter_factory(),
-            audience=config.audience,
-            language=config.language,
-            research_intensity=config.research_intensity,
-            live_extension_mode=config.live_extension_mode,
-        )
-        return _json_response(
-            200,
-            {
-                "schema_version": "missionforge_deepresearch.web_console.frontdesk_message_result.v1",
-                "status": result.status,
-                "result": result.to_dict(),
-                "snapshot": build_project_snapshot(workspace, request_id),
-            },
-        )
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return _json_response(400, {"status": "error", "message": "invalid_json_body"})
-    except mf.ContractValidationError as exc:
-        return _json_response(400, {"status": "error", "message": str(exc)})
-
-
-def _json_body(body: bytes | str) -> dict[str, Any]:
-    if isinstance(body, bytes):
-        if len(body) > WEB_POST_MAX_BYTES:
-            raise mf.ContractValidationError("web console request body is too large")
-        text = body.decode("utf-8")
-    else:
-        if len(body.encode("utf-8")) > WEB_POST_MAX_BYTES:
-            raise mf.ContractValidationError("web console request body is too large")
-        text = body
-    payload = json.loads(text or "{}")
-    return dict(payload) if isinstance(payload, Mapping) else {}
-
-
-def _content_length(value: str | None) -> int:
-    try:
-        parsed = int(value or "0")
-    except ValueError:
-        return 0
-    if parsed < 0:
-        return 0
-    return min(parsed, WEB_POST_MAX_BYTES)
 
 
 def _read_json_if_exists(run_root: Path, ref: str) -> dict[str, Any] | None:
@@ -865,6 +785,9 @@ def _frontdesk_chat_panel(frontdesk: Mapping[str, Any], dialogue: list[Any]) -> 
         '<textarea id="frontdesk-message" name="message" rows="4" placeholder="Send a FrontDesk message"></textarea>'
         '<button type="submit">Send</button>'
         "</form>"
+        '<form id="frontdesk-approve-form" class="approve-form">'
+        '<button type="submit">Approve Requirements</button>'
+        "</form>"
         f"<script>{_CHAT_SCRIPT}</script>"
         "</section>"
     )
@@ -1032,18 +955,6 @@ def _page(title: str, body: str) -> str:
 def _single_query_value(query: str, key: str) -> str:
     values = parse_qs(query).get(key, [])
     return values[0] if values else ""
-
-
-def _html_response(status: int, body: str) -> WebConsoleResponse:
-    return WebConsoleResponse(status=status, content_type="text/html; charset=utf-8", body=body)
-
-
-def _json_response(status: int, payload: Mapping[str, Any]) -> WebConsoleResponse:
-    return WebConsoleResponse(
-        status=status,
-        content_type="application/json; charset=utf-8",
-        body=json.dumps(payload, sort_keys=True, ensure_ascii=False, indent=2) + "\n",
-    )
 
 
 def _compact_mapping(value: Mapping[str, Any]) -> str:
@@ -1217,6 +1128,15 @@ dd { margin: 0; overflow-wrap: anywhere; }
   gap: 10px;
   margin-top: 12px;
 }
+.approve-form {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.approve-form button {
+  min-height: 40px;
+  padding: 0 14px;
+}
 textarea {
   width: 100%;
   min-height: 92px;
@@ -1280,6 +1200,7 @@ pre {
   dl { grid-template-columns: 110px minmax(0, 1fr); }
   .chat-row { grid-template-columns: 1fr; }
   .chat-form { grid-template-columns: 1fr; }
+  .approve-form { display: grid; }
   button { min-height: 44px; }
 }
 """
@@ -1288,25 +1209,41 @@ pre {
 _CHAT_SCRIPT = """
 (() => {
   const form = document.getElementById("frontdesk-form");
+  const approveForm = document.getElementById("frontdesk-approve-form");
   const textarea = document.getElementById("frontdesk-message");
-  if (!form || !textarea) return;
-  form.addEventListener("submit", async (event) => {
+  const postJson = async (path, payload) => {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload || {})
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || "Request failed.");
+    }
+    return data;
+  };
+  if (form && textarea) form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = textarea.value.trim();
     if (!message) return;
     const button = form.querySelector("button");
     if (button) button.disabled = true;
     try {
-      const response = await fetch("/api/frontdesk/message", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message})
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        alert(payload.message || "FrontDesk message failed.");
-        return;
-      }
+      await postJson("/api/frontdesk/message", {message});
+      window.location.reload();
+    } catch (error) {
+      alert(String(error));
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+  if (approveForm) approveForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = approveForm.querySelector("button");
+    if (button) button.disabled = true;
+    try {
+      await postJson("/api/frontdesk/approve", {});
       window.location.reload();
     } catch (error) {
       alert(String(error));

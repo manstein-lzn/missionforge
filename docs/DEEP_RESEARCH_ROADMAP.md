@@ -59,7 +59,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
 - Active web console slice: `academic web-console` serves a project dashboard,
   artifact browser, source/citation tables, Markdown report preview, and
   FrontDesk message submission through the existing FrontDesk PiWorker turn
-  boundary.
+  boundary. Browser requirements approval is wired through the existing
+  FrontDesk approval boundary and does not yet start long-running research.
 
 ## Design Principles
 
@@ -95,8 +96,8 @@ DeepResearch v2 should stay a thin product package over MissionForge Kernel.
   DeepResearch.
 - Continue the project-oriented web console. The project dashboard,
   source/citation inspection, artifact browser, Markdown preview, and FrontDesk
-  chat are active; approval/start-run plus pause/resume/checkpoint/revision
-  controls remain next.
+  chat plus requirements approval are active; start-run plus
+  pause/resume/checkpoint/revision controls remain next.
 - Continue hardening the no-key provider stack. OpenAlex may enhance coverage
   when configured, but missing OpenAlex credentials must not block the default
   product path.

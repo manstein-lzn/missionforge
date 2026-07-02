@@ -1,6 +1,6 @@
 # DeepResearch Academic Literature Upgrade Plan
 
-Status: `m3b_web_frontdesk_chat`; next priority is `m3b_web_approval_and_runtime_controls`
+Status: `m3b_web_approval_foundation`; next priority is `m3b_web_start_run_background_task`
 
 This document plans the DeepResearch upgrade needed to support an academic
 literature-review product with multi-source paper discovery, seed-paper/PDF
@@ -1197,7 +1197,9 @@ Implemented notes:
   replace FrontDesk/runtime interaction APIs.
 - M3B-B1 is complete for browser FrontDesk message submission through the same
   FrontDesk PiWorker turn boundary used by CLI/TUI.
-- Remaining M3B work: approval/start-run flow,
+- M3B-B2 foundation is complete for approving FrontDesk requirements from the
+  browser without starting a long research run.
+- Remaining M3B work: start-run flow,
   pause/resume/checkpoint/revise/cancel controls, revision request submission,
   and upload UI.
 
@@ -1249,6 +1251,53 @@ Exit criteria:
   FrontDesk PiWorker/runtime path.
 - Approval/start-run and runtime controls remain explicit follow-up work, not
   hidden browser-side mutations.
+
+### M3B-Web Modularization
+
+Status: `first_slice_complete`
+
+Deliverables:
+
+- `web_common.py` for response/config shared types.
+- `web_actions.py` for FrontDesk message and approval actions.
+- `web_console.py` remains the compatibility surface and owns dashboard
+  snapshot/render/server wiring for now.
+
+Exit criteria:
+
+- Mutating web actions are isolated from snapshot/render code.
+- Existing public imports keep working.
+- Future start-run/runtime-control work has a dedicated action module instead
+  of growing the dashboard renderer.
+
+Remaining modularization:
+
+- Split snapshot construction into `web_snapshot.py`.
+- Split HTML/CSS/JS rendering into `web_render.py`.
+- Split stdlib HTTP routing into `web_server.py` once start-run/background
+  task routing is added.
+
+### M3B-B2 Foundation: Web Requirements Approval
+
+Status: `complete`
+
+Deliverables:
+
+- `POST /api/frontdesk/approve` endpoint.
+- Browser approval calls `approve_frontdesk_requirements`.
+- Response returns an approved research request plus the latest project
+  snapshot.
+- Approval does not start `run_deepresearch_kernel_v2`; long-running background
+  execution remains a separate milestone.
+- Tests for not-ready approval rejection and approval-ready success without
+  creating a Kernel final report.
+
+Exit criteria:
+
+- Web approval uses the existing FrontDesk approval boundary.
+- The browser cannot rewrite requirements or mutate task authority directly.
+- Approval and start-run are separate, making the next long-running execution
+  design explicit.
 
 ### M4: Citation Projection
 

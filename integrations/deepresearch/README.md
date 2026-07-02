@@ -145,8 +145,10 @@ lifecycle state, resume diagnostics, source packet, coverage report, citation
 registry, claim-support review, acceptance gate, judge report, usage summary,
 and final Markdown. It also lets the browser submit FrontDesk messages through
 the same `run_deepresearch_frontdesk_turn` path as CLI/TUI. The browser does
-not choose provider config or write product truth directly; approval/start-run
-and runtime controls remain explicit follow-up work.
+not choose provider config or write product truth directly. Browser approval
+uses the same `approve_frontdesk_requirements` boundary as CLI/TUI; starting
+the long-running research run and runtime controls remain explicit follow-up
+work.
 
 ## Product Shape
 

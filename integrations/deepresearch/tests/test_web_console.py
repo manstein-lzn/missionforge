@@ -184,6 +184,62 @@ class WebConsoleTests(unittest.TestCase):
         self.assertEqual(len(second_payload["snapshot"]["frontdesk_dialogue"]), 2)
         self.assertTrue(requirements_exists)
 
+    def test_frontdesk_approve_post_requires_approval_ready_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            response = web_console_response(
+                workspace=root,
+                request_id="web-approve-not-ready",
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 409)
+        self.assertIn("frontdesk_control", payload["message"])
+
+    def test_frontdesk_approve_post_approves_without_starting_research_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            config = WebFrontDeskConfig(
+                adapter_factory=FrontDeskFixtureAdapter,
+                research_intensity="standard",
+                live_extension_mode=False,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-approve-ready",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "我想调研 Deep Research 工具"}),
+                frontdesk_config=config,
+            )
+            web_console_response(
+                workspace=root,
+                request_id="web-approve-ready",
+                method="POST",
+                path="/api/frontdesk/message",
+                body=json.dumps({"message": "用于产品设计，需要比较成熟产品和开源实现。"}),
+                frontdesk_config=config,
+            )
+            response = web_console_response(
+                workspace=root,
+                request_id="web-approve-ready",
+                method="POST",
+                path="/api/frontdesk/approve",
+                body=json.dumps({}),
+            )
+            research_request_exists = (root / "runs/web-approve-ready/frontdesk/research_request.json").is_file()
+            kernel_report_exists = (root / "runs/web-approve-ready/reports/final_report.md").is_file()
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "approved")
+        self.assertEqual(payload["research_request"]["request_id"], "web-approve-ready")
+        self.assertTrue(research_request_exists)
+        self.assertFalse(kernel_report_exists)
+
 
 if __name__ == "__main__":
     unittest.main()

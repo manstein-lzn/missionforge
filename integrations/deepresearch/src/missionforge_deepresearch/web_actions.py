@@ -1,0 +1,120 @@
+"""Web-console actions that mutate DeepResearch projects through product APIs."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+import missionforge as mf
+
+from .frontdesk import FRONTDESK_INITIAL_INPUT_REF, approve_frontdesk_requirements, run_deepresearch_frontdesk_turn
+from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, json_response
+from .workspace import resolve_workspace_ref
+
+
+def frontdesk_message_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    body: bytes | str,
+    config: WebFrontDeskConfig,
+    snapshot_factory: Callable[[Path, str], Mapping[str, Any]],
+) -> WebConsoleResponse:
+    """Submit a browser message through the FrontDesk PiWorker turn boundary."""
+
+    try:
+        payload = json_body(body)
+        message = _clean(payload.get("message"))
+        initial_input = _clean(payload.get("initial_input"))
+        if not message and not initial_input:
+            return json_response(400, {"status": "error", "message": "message_required"})
+        run_root = resolve_workspace_ref(workspace, _run_ref(request_id))
+        has_initial_input = _ref_is_file(run_root, FRONTDESK_INITIAL_INPUT_REF)
+        result = run_deepresearch_frontdesk_turn(
+            initial_input=initial_input or message if not has_initial_input else None,
+            user_message=message or initial_input,
+            request_id=request_id,
+            workspace=workspace,
+            adapter=config.adapter_factory(),
+            audience=config.audience,
+            language=config.language,
+            research_intensity=config.research_intensity,
+            live_extension_mode=config.live_extension_mode,
+        )
+        return json_response(
+            200,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.frontdesk_message_result.v1",
+                "status": result.status,
+                "result": result.to_dict(),
+                "snapshot": snapshot_factory(workspace, request_id),
+            },
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return json_response(400, {"status": "error", "message": "invalid_json_body"})
+    except mf.ContractValidationError as exc:
+        return json_response(400, {"status": "error", "message": str(exc)})
+
+
+def frontdesk_approve_response(
+    *,
+    workspace: Path,
+    request_id: str,
+    snapshot_factory: Callable[[Path, str], Mapping[str, Any]],
+) -> WebConsoleResponse:
+    """Approve FrontDesk requirements without starting a long research run."""
+
+    try:
+        request = approve_frontdesk_requirements(request_id=request_id, workspace=workspace)
+        return json_response(
+            200,
+            {
+                "schema_version": "missionforge_deepresearch.web_console.frontdesk_approval_result.v1",
+                "status": "approved",
+                "research_request": request.to_dict(),
+                "snapshot": snapshot_factory(workspace, request_id),
+            },
+        )
+    except mf.ContractValidationError as exc:
+        return json_response(409, {"status": "error", "message": str(exc)})
+
+
+def json_body(body: bytes | str) -> dict[str, Any]:
+    if isinstance(body, bytes):
+        if len(body) > WEB_POST_MAX_BYTES:
+            raise mf.ContractValidationError("web console request body is too large")
+        text = body.decode("utf-8")
+    else:
+        if len(body.encode("utf-8")) > WEB_POST_MAX_BYTES:
+            raise mf.ContractValidationError("web console request body is too large")
+        text = body
+    payload = json.loads(text or "{}")
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def content_length(value: str | None) -> int:
+    try:
+        parsed = int(value or "0")
+    except ValueError:
+        return 0
+    if parsed < 0:
+        return 0
+    return min(parsed, WEB_POST_MAX_BYTES)
+
+
+def _run_ref(request_id: str) -> str:
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise mf.ContractValidationError("DeepResearch request_id is required")
+    return mf.validate_ref(f"runs/{request_id.strip()}", "deepresearch_web.run_ref")
+
+
+def _ref_is_file(run_root: Path, ref: str) -> bool:
+    try:
+        return resolve_workspace_ref(run_root, ref).is_file()
+    except mf.ContractValidationError:
+        return False
+
+
+def _clean(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
