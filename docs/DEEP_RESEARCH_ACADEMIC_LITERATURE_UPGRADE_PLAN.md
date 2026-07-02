@@ -1336,16 +1336,19 @@ Deliverables:
 - `web_actions.py` for FrontDesk message and approval actions.
 - `web_artifacts.py` for artifact preview, JSON pretty-printing, and sensitive
   ref access-policy projection.
+- `web_snapshot.py` for read-only project snapshot projection from persisted
+  refs, timeline refs, lifecycle refs, attempt refs, and current-output refs.
 - `kernel_refs.py` for stable Kernel v2 artifact refs so modules that only
   need ref names do not import the Kernel execution module.
-- `web_console.py` remains the compatibility surface and owns dashboard
-  snapshot/render/server wiring for now. Existing public imports such as
+- `web_console.py` remains the compatibility surface and owns dashboard render
+  and server routing for now. Existing public imports such as
   `missionforge_deepresearch.web_console.read_project_artifact` remain
   compatible.
 
 Exit criteria:
 
 - Mutating web actions are isolated from snapshot/render code.
+- Snapshot projection is isolated from HTTP routing and HTML rendering.
 - Existing public imports keep working.
 - Future start-run/runtime-control work has a dedicated action module instead
   of growing the dashboard renderer.
