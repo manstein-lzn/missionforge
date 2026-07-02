@@ -15,7 +15,7 @@ from uuid import uuid4
 import missionforge as mf
 
 from .frontdesk import read_approved_frontdesk_request
-from .kernel_v2 import KERNEL_V2_REVISION_REQUEST_REF
+from .kernel_refs import KERNEL_V2_REVISION_REQUEST_REF
 from .web_tasks import (
     WEB_TASK_LOCK_REF,
     WEB_TASK_STATE_REF,

@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 import missionforge as mf
 
-from .kernel_v2 import (
+from .kernel_refs import (
     KERNEL_V2_ACCEPTANCE_GATE_REF,
     KERNEL_V2_CANONICAL_SOURCES_REF,
     KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,

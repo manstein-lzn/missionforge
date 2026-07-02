@@ -1328,14 +1328,20 @@ Exit criteria:
 
 ### M3B-Web Modularization
 
-Status: `first_slice_complete`
+Status: `maintenance_refactor_slice_complete`
 
 Deliverables:
 
 - `web_common.py` for response/config shared types.
 - `web_actions.py` for FrontDesk message and approval actions.
+- `web_artifacts.py` for artifact preview, JSON pretty-printing, and sensitive
+  ref access-policy projection.
+- `kernel_refs.py` for stable Kernel v2 artifact refs so modules that only
+  need ref names do not import the Kernel execution module.
 - `web_console.py` remains the compatibility surface and owns dashboard
-  snapshot/render/server wiring for now.
+  snapshot/render/server wiring for now. Existing public imports such as
+  `missionforge_deepresearch.web_console.read_project_artifact` remain
+  compatible.
 
 Exit criteria:
 

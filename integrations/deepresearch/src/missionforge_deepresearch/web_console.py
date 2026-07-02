@@ -25,7 +25,7 @@ from .frontdesk import (
     FRONTDESK_DIALOGUE_REF,
     FRONTDESK_REQUIREMENTS_REF,
 )
-from .kernel_v2 import (
+from .kernel_refs import (
     KERNEL_V2_ACCEPTANCE_GATE_REF,
     KERNEL_V2_CANONICAL_SOURCES_REF,
     KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
@@ -78,6 +78,7 @@ from .web_actions import (
 )
 from .web_common import WEB_POST_MAX_BYTES, WebConsoleResponse, WebFrontDeskConfig, WebKernelConfig, html_response, json_response
 from .web_controls import runtime_control_response
+from .web_artifacts import ARTIFACT_PREVIEW_MAX_CHARS, artifact_access_policy, read_project_artifact
 from .web_seeds import WEB_SEED_PDF_POST_MAX_BYTES, seed_paper_response, seed_pdf_response, seed_snapshot
 from .web_tasks import WEB_TASK_STATE_REF, read_web_task_state
 from .web_timeline import PROGRESS_TIMELINE_REF, build_project_timeline, build_timeline_attempt_groups
@@ -85,19 +86,6 @@ from .workspace import resolve_workspace_ref
 
 
 WEB_CONSOLE_SCHEMA_VERSION = "missionforge_deepresearch.web_console.project_snapshot.v1"
-ARTIFACT_PREVIEW_MAX_CHARS = 60000
-ARTIFACT_READ_MAX_BYTES = 2_000_000
-_SENSITIVE_ARTIFACT_REFS = {
-    PROJECT_SEED_INPUTS_REF,
-    FRONTDESK_DIALOGUE_REF,
-    mf.USER_EVENTS_REF,
-}
-_SENSITIVE_ARTIFACT_PREFIXES = (
-    "context/",
-    "inputs/seeds/",
-    "project/lifecycle/action_text/",
-    "sources/seed_pdfs/",
-)
 
 
 def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, Any]:
@@ -186,54 +174,6 @@ def build_project_snapshot(workspace: str | Path, request_id: str) -> dict[str, 
             "truncated": len(report_preview) >= ARTIFACT_PREVIEW_MAX_CHARS,
         },
         "artifacts": artifacts,
-    }
-
-
-def read_project_artifact(
-    workspace: str | Path,
-    request_id: str,
-    ref: str,
-    *,
-    max_bytes: int = ARTIFACT_READ_MAX_BYTES,
-) -> dict[str, Any]:
-    """Read one project artifact as a safe text preview."""
-
-    workspace_root = Path(workspace).resolve()
-    run_root = resolve_workspace_ref(workspace_root, _run_ref(request_id))
-    safe_ref = mf.validate_ref(ref, "deepresearch_web.artifact_ref")
-    path = resolve_workspace_ref(run_root, safe_ref)
-    if not path.is_file():
-        raise FileNotFoundError(safe_ref)
-    byte_size = path.stat().st_size
-    policy = _artifact_access_policy(safe_ref)
-    if policy["redacted"]:
-        return {
-            "ref": safe_ref,
-            "byte_size": byte_size,
-            "truncated": False,
-            "binary": False,
-            "content": "",
-            "content_type": "text/plain; charset=utf-8",
-            **policy,
-        }
-    data = path.read_bytes()[:max_bytes]
-    truncated = byte_size > max_bytes
-    content = ""
-    binary = False
-    try:
-        content = data.decode("utf-8")
-    except UnicodeDecodeError:
-        binary = True
-    if not binary and _looks_like_json_ref(safe_ref):
-        content = _pretty_json_text(content)
-    return {
-        "ref": safe_ref,
-        "byte_size": byte_size,
-        "truncated": truncated,
-        "binary": binary,
-        "content": content,
-        "content_type": _artifact_content_type(safe_ref, binary=binary),
-        **policy,
     }
 
 
@@ -692,7 +632,7 @@ def _artifact_entry(run_root: Path, *, label: str, ref: str, group: str) -> dict
         "group": group,
         "exists": exists,
         "byte_size": byte_size,
-        **_artifact_access_policy(safe_ref),
+        **artifact_access_policy(safe_ref),
     }
 
 
@@ -954,57 +894,6 @@ def _first_locator(source: Mapping[str, Any]) -> str:
                 if value:
                     return value
     return _clean(source.get("locator")) or _clean(source.get("url"))
-
-
-def _artifact_content_type(ref: str, *, binary: bool) -> str:
-    if binary:
-        return "application/octet-stream"
-    if _looks_like_json_ref(ref):
-        return "application/json; charset=utf-8"
-    return "text/plain; charset=utf-8"
-
-
-def _artifact_access_policy(ref: str) -> dict[str, Any]:
-    safe_ref = _clean(ref)
-    if safe_ref in _SENSITIVE_ARTIFACT_REFS or any(
-        safe_ref.startswith(prefix)
-        for prefix in _SENSITIVE_ARTIFACT_PREFIXES
-    ):
-        return {
-            "access_level": "sensitive",
-            "preview_policy": "metadata_only",
-            "redacted": True,
-            "redaction_reason": "raw user input, uploaded file, context package, or lifecycle directive",
-        }
-    return {
-        "access_level": "standard",
-        "preview_policy": "text_preview",
-        "redacted": False,
-        "redaction_reason": "",
-    }
-
-
-def _looks_like_json_ref(ref: str) -> bool:
-    return ref.endswith(".json") or ref.endswith(".jsonl")
-
-
-def _pretty_json_text(content: str) -> str:
-    if not content.strip():
-        return content
-    if "\n" in content.strip() and not content.lstrip().startswith("{"):
-        rows = []
-        for line in content.splitlines():
-            if not line.strip():
-                continue
-            try:
-                rows.append(json.dumps(json.loads(line), ensure_ascii=False, sort_keys=True, indent=2))
-            except json.JSONDecodeError:
-                return content
-        return "\n".join(rows)
-    try:
-        return json.dumps(json.loads(content), ensure_ascii=False, sort_keys=True, indent=2)
-    except json.JSONDecodeError:
-        return content
 
 
 def _header(snapshot: Mapping[str, Any]) -> str:

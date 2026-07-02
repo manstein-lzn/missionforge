@@ -51,56 +51,57 @@ from .source_acquisition import (
 )
 from .source_graph import project_source_graph
 from .workspace import read_json_ref, write_json_ref, write_text_ref
+from .kernel_refs import (
+    KERNEL_V2_ACCEPTANCE_GATE_REF,
+    KERNEL_V2_CANONICAL_SOURCES_REF,
+    KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
+    KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF,
+    KERNEL_V2_CITATION_REGISTRY_REF,
+    KERNEL_V2_CLAIM_INDEX_REF,
+    KERNEL_V2_CLAIM_INDEX_VALIDATION_REF,
+    KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF,
+    KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF,
+    KERNEL_V2_CONTRACT_REF,
+    KERNEL_V2_CONTRACT_REVISION_INDEX_REF,
+    KERNEL_V2_COVERAGE_REPORT_REF,
+    KERNEL_V2_DEDUPE_MAP_REF,
+    KERNEL_V2_EVIDENCE_INDEX_REF,
+    KERNEL_V2_FINAL_REPORT_REF,
+    KERNEL_V2_INITIAL_SOURCE_PACKET_REF,
+    KERNEL_V2_INSIGHT_MAP_REF,
+    KERNEL_V2_JUDGE_REPORT_REF,
+    KERNEL_V2_JUDGE_RUBRIC_REF,
+    KERNEL_V2_OUTPUT_CONTRACT_REF,
+    KERNEL_V2_PREVIOUS_RUN_INDEX_REF,
+    KERNEL_V2_PROVIDER_CAPABILITIES_REF,
+    KERNEL_V2_PROVIDER_HITS_REF,
+    KERNEL_V2_REPORT_CITATION_MAP_REF,
+    KERNEL_V2_REPORT_HTML_REF,
+    KERNEL_V2_REQUEST_REF,
+    KERNEL_V2_RESEARCHER_BRIEF_REF,
+    KERNEL_V2_RESEARCHER_CONTROL_REF,
+    KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF,
+    KERNEL_V2_RESEARCH_STATE_REF,
+    KERNEL_V2_RESULT_REF,
+    KERNEL_V2_REVIEWER_OBSERVATION_REF,
+    KERNEL_V2_REVIEWER_RUBRIC_REF,
+    KERNEL_V2_REVISION_REQUEST_REF,
+    KERNEL_V2_RUN_STATUS_REF,
+    KERNEL_V2_SEARCH_PLAN_REF,
+    KERNEL_V2_SOURCE_CONTROL_REF,
+    KERNEL_V2_SOURCE_GAPS_REF,
+    KERNEL_V2_SOURCE_GRAPH_REF,
+    KERNEL_V2_SOURCE_MAPPER_BRIEF_REF,
+    KERNEL_V2_SOURCE_PACKET_REF,
+    KERNEL_V2_USAGE_SUMMARY_REF,
+    KERNEL_V2_WORKSPACE_POLICY_REF,
+)
 
 
 _SOURCE_MAPPER_RUNTIME_MAX_TURNS = {
     ResearchIntensity.STANDARD: 12,
     ResearchIntensity.INTENSIVE: 18,
 }
-
-KERNEL_V2_RESULT_REF = "packages/deepresearch_kernel_v2_result.json"
-KERNEL_V2_CONTRACT_REF = "contract/task_contract.json"
-KERNEL_V2_WORKSPACE_POLICY_REF = "policy/workspace_policy.json"
-KERNEL_V2_REQUEST_REF = "product_contract/research_request.json"
-KERNEL_V2_OUTPUT_CONTRACT_REF = "product_contract/output_contract.json"
-KERNEL_V2_PREVIOUS_RUN_INDEX_REF = "inputs/previous_run_index.json"
-KERNEL_V2_CONTRACT_REVISION_INDEX_REF = "inputs/contract_revision_index.json"
-KERNEL_V2_SOURCE_MAPPER_BRIEF_REF = "manuals/source_mapper.md"
-KERNEL_V2_RESEARCHER_BRIEF_REF = "manuals/researcher.md"
-KERNEL_V2_RESEARCHER_REPAIR_BRIEF_REF = "manuals/researcher_repair.md"
-KERNEL_V2_REVIEWER_RUBRIC_REF = "rubrics/reviewer.md"
-KERNEL_V2_JUDGE_RUBRIC_REF = "rubrics/judge.md"
-KERNEL_V2_INITIAL_SOURCE_PACKET_REF = "sources/initial_source_packet.json"
-KERNEL_V2_PROVIDER_CAPABILITIES_REF = "sources/provider_capabilities.json"
-KERNEL_V2_SEARCH_PLAN_REF = "sources/search_plan.json"
-KERNEL_V2_PROVIDER_HITS_REF = "sources/provider_hits.jsonl"
-KERNEL_V2_SOURCE_PACKET_REF = "sources/source_packet.json"
-KERNEL_V2_CANONICAL_SOURCES_REF = "sources/canonical_sources.json"
-KERNEL_V2_DEDUPE_MAP_REF = "sources/dedupe_map.json"
-KERNEL_V2_SOURCE_GRAPH_REF = "sources/source_graph.json"
-KERNEL_V2_COVERAGE_REPORT_REF = "sources/coverage_report.json"
-KERNEL_V2_FINAL_REPORT_REF = "reports/final_report.md"
-KERNEL_V2_CITATION_PROJECTED_REPORT_REF = "reports/final_report.citation_projected.md"
-KERNEL_V2_EVIDENCE_INDEX_REF = "reports/evidence_index.md"
-KERNEL_V2_SOURCE_GAPS_REF = "reports/source_gaps.md"
-KERNEL_V2_CITATION_REGISTRY_REF = "citations/citation_registry.json"
-KERNEL_V2_REPORT_CITATION_MAP_REF = "citations/report_citation_map.json"
-KERNEL_V2_INSIGHT_MAP_REF = "analysis/insight_map.json"
-KERNEL_V2_CLAIM_INDEX_REF = "claims/claim_index.json"
-KERNEL_V2_CLAIM_INDEX_VALIDATION_REF = "state/claim_index_validation.json"
-KERNEL_V2_CITATION_PROJECTION_VALIDATION_REF = "state/citation_projection_validation.json"
-KERNEL_V2_ACCEPTANCE_GATE_REF = "state/acceptance_gate.json"
-KERNEL_V2_REPORT_HTML_REF = "exports/final_report.html"
-KERNEL_V2_RESEARCH_STATE_REF = "state/research_state.json"
-KERNEL_V2_SOURCE_CONTROL_REF = "state/source_control.json"
-KERNEL_V2_RESEARCHER_CONTROL_REF = "state/researcher_control.json"
-KERNEL_V2_RUN_STATUS_REF = "state/run_status.json"
-KERNEL_V2_REVIEWER_OBSERVATION_REF = "reviews/reviewer_observation.json"
-KERNEL_V2_CLAIM_SUPPORT_REVIEW_REF = "reviews/claim_support_review.json"
-KERNEL_V2_CLAIM_SUPPORT_REVIEW_VALIDATION_REF = "state/claim_support_review_validation.json"
-KERNEL_V2_JUDGE_REPORT_REF = "judge/judge_report.json"
-KERNEL_V2_REVISION_REQUEST_REF = "revisions/revision_request.json"
-KERNEL_V2_USAGE_SUMMARY_REF = "metrics/usage_summary.json"
 
 _CLAIM_SUPPORT_REVIEW_SCHEMA_VERSION = "missionforge_deepresearch.kernel_v2.claim_support_review.v1"
 _CLAIM_SUPPORT_REVIEW_VALIDATION_SCHEMA_VERSION = (

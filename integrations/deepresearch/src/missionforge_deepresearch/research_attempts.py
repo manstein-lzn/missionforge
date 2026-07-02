@@ -17,7 +17,7 @@ from uuid import uuid4
 import missionforge as mf
 
 from .attempt_outputs import write_attempt_output_manifest
-from .kernel_v2 import (
+from .kernel_refs import (
     KERNEL_V2_ACCEPTANCE_GATE_REF,
     KERNEL_V2_CANONICAL_SOURCES_REF,
     KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
@@ -28,8 +28,8 @@ from .kernel_v2 import (
     KERNEL_V2_RESULT_REF,
     KERNEL_V2_RUN_STATUS_REF,
     KERNEL_V2_SOURCE_PACKET_REF,
-    run_deepresearch_kernel_v2,
 )
+from .kernel_v2 import run_deepresearch_kernel_v2
 from .research_requests import read_contract_revision_index, read_current_research_request
 from .lifecycle_actions import (
     LATEST_RETRY_REQUEST_REF,

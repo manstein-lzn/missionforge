@@ -11,14 +11,14 @@ import missionforge as mf
 
 from .attempt_outputs import write_attempt_output_manifest
 from .frontdesk import FRONTDESK_RESEARCH_REQUEST_REF
-from .kernel_v2 import (
+from .kernel_refs import (
     KERNEL_V2_CITATION_PROJECTED_REPORT_REF,
     KERNEL_V2_CONTRACT_REF,
     KERNEL_V2_FINAL_REPORT_REF,
     KERNEL_V2_RESULT_REF,
     KERNEL_V2_RUN_STATUS_REF,
-    run_deepresearch_kernel_v2,
 )
+from .kernel_v2 import run_deepresearch_kernel_v2
 from .lifecycle_actions import (
     LATEST_RETRY_REQUEST_REF,
     LATEST_REVISE_REQUEST_REF,

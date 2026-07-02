@@ -13,7 +13,8 @@ from .frontdesk import (
     approve_frontdesk_requirements,
     run_deepresearch_frontdesk_turn,
 )
-from .kernel_v2 import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF, run_deepresearch_kernel_v2
+from .kernel_refs import KERNEL_V2_RESULT_REF, KERNEL_V2_RUN_STATUS_REF
+from .kernel_v2 import run_deepresearch_kernel_v2
 from .lifecycle_actions import record_lifecycle_action, require_no_pending_revision_request
 from .research_attempts import start_retry_attempt
 from .research_requests import read_current_research_request

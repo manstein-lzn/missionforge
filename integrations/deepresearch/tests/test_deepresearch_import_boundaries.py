@@ -47,6 +47,22 @@ class DeepResearchImportBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_kernel_ref_constants_are_imported_from_data_module(self) -> None:
+        violations: list[str] = []
+        for path in DEEPRESEARCH_ROOT.rglob("*.py"):
+            if path.name == "kernel_v2.py":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.level == 1 and node.module == "kernel_v2":
+                    imported_refs = [alias.name for alias in node.names if alias.name.startswith("KERNEL_V2_")]
+                    if imported_refs:
+                        violations.append(f"{path}: import refs from kernel_v2 instead of kernel_refs: {imported_refs}")
+
+        self.assertEqual(violations, [])
+
 
 if __name__ == "__main__":
     unittest.main()
